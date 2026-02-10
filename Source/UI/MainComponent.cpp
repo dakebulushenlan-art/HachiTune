@@ -576,9 +576,6 @@ void MainComponent::loadAudioFile(const juce::File &file) {
           }
         }
 
-        safeThis->originalWaveform.makeCopyOf(original);
-        safeThis->hasOriginalWaveform = true;
-
         const auto &f0 = audioData.f0;
         if (!f0.empty()) {
           float minF0 = 10000.0f, maxF0 = 0.0f;
@@ -1390,9 +1387,6 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
         safeThis->parameterPanel.setProject(project);
         safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
 
-        safeThis->originalWaveform.makeCopyOf(original);
-        safeThis->hasOriginalWaveform = true;
-
         const auto &f0 = project->getAudioData().f0;
         if (!f0.empty()) {
           float minF0 = 10000.0f, maxF0 = 0.0f;
@@ -1533,15 +1527,15 @@ bool MainComponent::isARAModeActive() const {
 }
 
 void MainComponent::renderProcessedAudio() {
-  if (!isPluginMode() || !hasOriginalWaveform)
+  auto *project = getProject();
+  if (!isPluginMode() || !project ||
+      project->getAudioData().originalWaveform.getNumSamples() == 0)
     return;
 
   // Show progress
   toolbar.showProgress(TR("progress.rendering"));
-
-  auto *project = getProject();
   auto *vocoder = editorController ? editorController->getVocoder() : nullptr;
-  if (!project || !vocoder) {
+  if (!vocoder) {
     toolbar.hideProgress();
     return;
   }

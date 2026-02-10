@@ -96,6 +96,12 @@ private:
   // Fallback segmentation based on F0 changes
   void segmentFallback(Project &project);
 
+  // Compute energy-based VAD mask from waveform
+  void computeVadMask(AudioData &audioData);
+
+  // Extend note start frames backward to capture consonant onsets using VAD
+  void extendNoteBoundariesWithVad(Project &project);
+
   std::unique_ptr<FCPEPitchDetector> fcpeDetector;
   std::unique_ptr<RMVPEPitchDetector> rmvpeDetector;
   std::unique_ptr<SOMEDetector> someDetector;

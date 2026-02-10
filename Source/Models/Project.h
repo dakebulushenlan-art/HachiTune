@@ -11,6 +11,7 @@
 struct AudioData
 {
     juce::AudioBuffer<float> waveform;
+    juce::AudioBuffer<float> originalWaveform;  // pristine copy for blend (never modified after analysis)
     int sampleRate = 44100;
     
     // Extracted features
@@ -19,7 +20,8 @@ struct AudioData
     std::vector<float> baseF0;                        // [T] (cached base pitch in Hz)
     std::vector<float> basePitch;                     // [T] base pitch in MIDI (dense)
     std::vector<float> deltaPitch;                    // [T] delta pitch in MIDI (dense)
-    std::vector<bool> voicedMask;                     // [T] uv mask (true = voiced)
+    std::vector<bool> voicedMask;                     // [T] uv mask (true = voiced, F0-based)
+    std::vector<bool> vadMask;                        // [T] energy-based VAD (true = has audio energy, captures consonants)
     
     float getDuration() const
     {

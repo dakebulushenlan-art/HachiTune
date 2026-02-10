@@ -175,6 +175,7 @@ juce::var ProjectSerializer::pitchDataToJson(const AudioData& audioData) {
     obj->setProperty("basePitch", floatArrayToString(audioData.basePitch, 4));
     obj->setProperty("deltaPitch", floatArrayToString(audioData.deltaPitch, 4));
     obj->setProperty("voicedMask", boolArrayToString(audioData.voicedMask));
+    obj->setProperty("vadMask", boolArrayToString(audioData.vadMask));
 
     return juce::var(obj);
 }
@@ -188,6 +189,7 @@ bool ProjectSerializer::pitchDataFromJson(AudioData& audioData, const juce::var&
     audioData.basePitch = stringToFloatArray(json.getProperty("basePitch", "").toString());
     audioData.deltaPitch = stringToFloatArray(json.getProperty("deltaPitch", "").toString());
     audioData.voicedMask = stringToBoolArray(json.getProperty("voicedMask", "").toString());
+    audioData.vadMask = stringToBoolArray(json.getProperty("vadMask", "").toString());
 
     return true;
 }

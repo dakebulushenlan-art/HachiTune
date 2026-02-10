@@ -129,6 +129,9 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
   if (cancelFlag.load())
     return;
 
+  // Compute energy-based VAD mask (captures consonants that F0 detectors miss)
+  computeVadMask(audioData);
+
   // Segment into notes
   if (onProgress)
     onProgress(0.90, "Segmenting notes...");
@@ -383,6 +386,9 @@ void AudioAnalyzer::segmentWithSOME(Project &project) {
 
   juce::Thread::sleep(100);
 
+  // Extend note boundaries backward to capture consonant onsets
+  extendNoteBoundariesWithVad(project);
+
   if (!audioData.f0.empty())
     PitchCurveProcessor::rebuildCurvesFromSource(project, audioData.f0);
 }
@@ -504,4 +510,77 @@ void AudioAnalyzer::segmentFallback(Project &project) {
 
   if (!audioData.f0.empty())
     PitchCurveProcessor::rebuildCurvesFromSource(project, audioData.f0);
+}
+
+void AudioAnalyzer::computeVadMask(AudioData &audioData) {
+  const int numFrames = audioData.getNumFrames();
+  if (numFrames <= 0 || audioData.waveform.getNumSamples() == 0) {
+    audioData.vadMask.assign(numFrames > 0 ? numFrames : 0, false);
+    return;
+  }
+
+  // RMS threshold for detecting audio energy (including consonants)
+  // Lower than SOME's 0.02 slicer threshold to capture soft consonants
+  constexpr float kVadThreshold = 0.008f;
+
+  const float *samples = audioData.waveform.getReadPointer(0);
+  const int numSamples = audioData.waveform.getNumSamples();
+
+  audioData.vadMask.resize(numFrames);
+  for (int i = 0; i < numFrames; ++i) {
+    int sampleStart = i * HOP_SIZE;
+    int sampleEnd = std::min(sampleStart + HOP_SIZE, numSamples);
+    if (sampleStart >= numSamples) {
+      audioData.vadMask[i] = false;
+      continue;
+    }
+
+    float sumSq = 0.0f;
+    for (int j = sampleStart; j < sampleEnd; ++j)
+      sumSq += samples[j] * samples[j];
+    float rms =
+        std::sqrt(sumSq / static_cast<float>(sampleEnd - sampleStart));
+    audioData.vadMask[i] = rms > kVadThreshold;
+  }
+}
+
+void AudioAnalyzer::extendNoteBoundariesWithVad(Project &project) {
+  auto &audioData = project.getAudioData();
+  auto &notes = project.getNotes();
+
+  if (notes.empty() || audioData.vadMask.empty())
+    return;
+
+  const int totalFrames = static_cast<int>(audioData.vadMask.size());
+
+  // Maximum backward extension for consonant capture (~116ms at 44.1kHz/512hop)
+  constexpr int kMaxConsonantFrames = 10;
+
+  for (size_t ni = 0; ni < notes.size(); ++ni) {
+    auto &note = notes[ni];
+    if (note.isRest())
+      continue;
+
+    // Don't extend past the previous note's end
+    int prevEnd = 0;
+    if (ni > 0 && !notes[ni - 1].isRest())
+      prevEnd = notes[ni - 1].getEndFrame();
+
+    int searchStart =
+        std::max(prevEnd, note.getStartFrame() - kMaxConsonantFrames);
+    searchStart = std::max(0, searchStart);
+
+    // Search backward from note start for energy onset
+    int newStart = note.getStartFrame();
+    for (int i = note.getStartFrame() - 1; i >= searchStart; --i) {
+      if (i < totalFrames && audioData.vadMask[i])
+        newStart = i;
+      else
+        break; // Stop at first silent frame
+    }
+
+    if (newStart < note.getStartFrame()) {
+      note.setStartFrame(newStart);
+    }
+  }
 }

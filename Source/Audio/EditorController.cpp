@@ -279,6 +279,9 @@ void EditorController::loadAudioFileAsync(
 
     updateProgress(0.95, "Finalizing...");
 
+    // Store pristine original waveform in AudioData for blend-based synthesis
+    audioData.originalWaveform.makeCopyOf(audioData.waveform);
+
     juce::AudioBuffer<float> originalWaveform;
     originalWaveform.makeCopyOf(audioData.waveform);
 
@@ -367,6 +370,9 @@ void EditorController::setHostAudioAsync(
       isLoadingAudio = false;
       return;
     }
+
+    // Store pristine original waveform in AudioData for blend-based synthesis
+    projectCopy->getAudioData().originalWaveform.makeCopyOf(projectCopy->getAudioData().waveform);
 
     juce::AudioBuffer<float> originalWaveform;
     originalWaveform.makeCopyOf(projectCopy->getAudioData().waveform);
@@ -669,6 +675,28 @@ void EditorController::analyzeAudio(
       audioData.voicedMask[i] = audioData.f0[i] > 0;
     }
 
+    // Compute energy-based VAD mask (captures consonants)
+    {
+      constexpr float kVadThreshold = 0.008f;
+      const float *vadSamples = audioData.waveform.getReadPointer(0);
+      const int vadNumSamples = audioData.waveform.getNumSamples();
+      const int vadNumFrames = static_cast<int>(audioData.f0.size());
+      audioData.vadMask.resize(vadNumFrames);
+      for (int vi = 0; vi < vadNumFrames; ++vi) {
+        int ss = vi * HOP_SIZE;
+        int se = std::min(ss + HOP_SIZE, vadNumSamples);
+        if (ss >= vadNumSamples) {
+          audioData.vadMask[vi] = false;
+          continue;
+        }
+        float sumSq = 0.0f;
+        for (int vj = ss; vj < se; ++vj)
+          sumSq += vadSamples[vj] * vadSamples[vj];
+        float rms = std::sqrt(sumSq / static_cast<float>(se - ss));
+        audioData.vadMask[vi] = rms > kVadThreshold;
+      }
+    }
+
     onProgress(0.65, "Smoothing pitch curve...");
     audioData.f0 = F0Smoother::smoothF0(audioData.f0, audioData.voicedMask);
     audioData.f0 = PitchCurveProcessor::interpolateWithUvMask(
@@ -731,6 +759,10 @@ void EditorController::analyzeAudioAsync(
       project->getAudioData().f0 = projectCopy->getAudioData().f0;
       project->getAudioData().voicedMask =
           projectCopy->getAudioData().voicedMask;
+      project->getAudioData().vadMask =
+          projectCopy->getAudioData().vadMask;
+      project->getAudioData().originalWaveform.makeCopyOf(
+          projectCopy->getAudioData().originalWaveform);
       project->getAudioData().basePitch =
           projectCopy->getAudioData().basePitch;
       project->getAudioData().deltaPitch =

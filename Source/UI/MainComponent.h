@@ -180,10 +180,6 @@ private:
 
   std::unique_ptr<juce::FileChooser> fileChooser;
 
-  // Original waveform for incremental synthesis
-  juce::AudioBuffer<float> originalWaveform;
-  bool hasOriginalWaveform = false;
-
   bool isPlaying = false;
 
   // Sync flag to prevent infinite loops

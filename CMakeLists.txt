@@ -4,6 +4,9 @@ project(HachiTune VERSION 1.0.0)
 include(FetchContent)
 include(cmake/Asio.cmake)
 
+# Ensure static libs are built with PIC for shared plugin targets (Linux).
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # ONNX Runtime configuration
 option(USE_GPU "Enable GPU acceleration for ONNX Runtime (not supported on macOS)" OFF)
 option(USE_CUDA "Enable CUDA execution provider" OFF)
