@@ -16,6 +16,7 @@ public:
 
   void setProject(Project *project);
   void refreshOverview();
+  void setShowSomeSegmentsDebug(bool show);
   PianoRollComponent &getPianoRoll() { return pianoRoll; }
 
 private:

@@ -23,12 +23,11 @@ EditorController::EditorController(bool enableAudioDevice) {
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
   playbackController = std::make_unique<PlaybackController>();
 
-  auto modelsDir = PlatformPaths::getModelsDirectory();
-  fcpeModelPath = modelsDir.getChildFile("fcpe.onnx");
-  melFilterbankPath = modelsDir.getChildFile("mel_filterbank.bin");
-  centTablePath = modelsDir.getChildFile("cent_table.bin");
-  rmvpeModelPath = modelsDir.getChildFile("rmvpe.onnx");
-  someModelPath = modelsDir.getChildFile("some.onnx");
+  fcpeModelPath = PlatformPaths::getModelFile("fcpe.onnx");
+  melFilterbankPath = PlatformPaths::getModelFile("mel_filterbank.bin");
+  centTablePath = PlatformPaths::getModelFile("cent_table.bin");
+  rmvpeModelPath = PlatformPaths::getModelFile("rmvpe.onnx");
+  someModelPath = PlatformPaths::getModelFile("some.onnx");
 
   audioAnalyzer->setFCPEDetector(fcpePitchDetector.get());
   audioAnalyzer->setRMVPEDetector(rmvpePitchDetector.get());
@@ -568,6 +567,16 @@ void EditorController::analyzeAudio(
               "\n\nPlease install the required model files and try again.");
     });
   };
+  auto showModelLoadFailedAndAbort = [](const juce::String &modelName,
+                                        const juce::File &path) {
+    juce::MessageManager::callAsync([modelName, path]() {
+      juce::AlertWindow::showMessageBoxAsync(
+          juce::AlertWindow::WarningIcon, "Model load failed",
+          modelName + " exists but failed to load:\n" + path.getFullPathName() +
+              "\n\nPlease check inference device settings (CPU/CUDA/DirectML) "
+              "or model compatibility.");
+    });
+  };
 
   // Extract F0
   const float *samples = audioData.waveform.getReadPointer(0);
@@ -583,15 +592,21 @@ void EditorController::analyzeAudio(
   onProgress(0.55, "Extracting pitch (F0)...");
 
   if (pitchDetectorType == PitchDetectorType::RMVPE) {
-    if (!rmvpeModelPath.existsAsFile() || !rmvpePitchDetector ||
-        !rmvpePitchDetector->isLoaded()) {
+    if (!rmvpeModelPath.existsAsFile()) {
       showMissingModelAndAbort("rmvpe.onnx", rmvpeModelPath);
       return;
     }
+    if (!rmvpePitchDetector || !rmvpePitchDetector->isLoaded()) {
+      showModelLoadFailedAndAbort("rmvpe.onnx", rmvpeModelPath);
+      return;
+    }
   } else if (pitchDetectorType == PitchDetectorType::FCPE) {
-    if (!fcpeModelPath.existsAsFile() || !fcpePitchDetector ||
-        !fcpePitchDetector->isLoaded()) {
+    if (!fcpeModelPath.existsAsFile()) {
       showMissingModelAndAbort("fcpe.onnx", fcpeModelPath);
+      return;
+    }
+    if (!fcpePitchDetector || !fcpePitchDetector->isLoaded()) {
+      showModelLoadFailedAndAbort("fcpe.onnx", fcpeModelPath);
       return;
     }
     if (!melFilterbankPath.existsAsFile()) {
@@ -704,8 +719,7 @@ void EditorController::analyzeAudio(
   }
 
   onProgress(0.75, TR("progress.loading_vocoder"));
-  auto modelPath =
-      PlatformPaths::getModelsDirectory().getChildFile("pc_nsf_hifigan.onnx");
+  auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
 
   if (!modelPath.existsAsFile() && !vocoder->isLoaded()) {
     showMissingModelAndAbort("pc_nsf_hifigan.onnx", modelPath);
@@ -809,6 +823,7 @@ void EditorController::segmentIntoNotes(Project &targetProject,
   auto &audioData = targetProject.getAudioData();
   auto &notes = targetProject.getNotes();
   notes.clear();
+  audioData.someChunkRanges.clear();
 
   if (audioData.f0.empty())
     return;
@@ -857,7 +872,13 @@ void EditorController::segmentIntoNotes(Project &targetProject,
             juce::MessageManager::callAsync(onStreamingUpdate);
           }
         },
-        nullptr);
+        nullptr,
+        [&](const std::vector<SOMEDetector::ChunkRange> &chunkRanges) {
+          audioData.someChunkRanges = chunkRanges;
+          if (onStreamingUpdate) {
+            juce::MessageManager::callAsync(onStreamingUpdate);
+          }
+        });
 
     juce::Thread::sleep(100);
 

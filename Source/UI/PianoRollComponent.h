@@ -108,6 +108,18 @@ public:
     showBasePitch = show;
     repaint();
   }
+  void setShowSomeSegmentsDebug(bool show) {
+    showSomeSegmentsDebug = show;
+    repaint();
+  }
+  void setShowUvInterpolationDebug(bool show) {
+    showUvInterpolationDebug = show;
+    repaint();
+  }
+  void setShowActualF0Debug(bool show) {
+    showActualF0Debug = show;
+    repaint();
+  }
   bool getShowDeltaPitch() const { return showDeltaPitch; }
   bool getShowBasePitch() const { return showBasePitch; }
 
@@ -135,6 +147,7 @@ private:
   void drawDrawingCursor(juce::Graphics &g); // Draw mode indicator
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   void drawLoopOverlay(juce::Graphics &g);
+  void drawSomeSegmentDebugOverlay(juce::Graphics &g);
   void drawStretchGuides(juce::Graphics &g);
 
   float midiToY(float midiNote) const;
@@ -226,6 +239,9 @@ private:
   // View settings
   bool showDeltaPitch = true;
   bool showBasePitch = false;
+  bool showSomeSegmentsDebug = false;
+  bool showUvInterpolationDebug = false;
+  bool showActualF0Debug = false;
 
   // Dragging state
   bool isDragging = false;

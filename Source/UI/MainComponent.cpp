@@ -60,6 +60,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Initialize view state from settings
   pianoRoll.setShowDeltaPitch(settingsManager->getShowDeltaPitch());
   pianoRoll.setShowBasePitch(settingsManager->getShowBasePitch());
+  pianoRoll.setShowSomeSegmentsDebug(
+      settingsManager->getShowSomeSegmentsDebug());
+  pianoRoll.setShowUvInterpolationDebug(
+      settingsManager->getShowUvInterpolationDebug());
+  pianoRoll.setShowActualF0Debug(
+      settingsManager->getShowActualF0Debug());
+  pianoRollView.setShowSomeSegmentsDebug(
+      settingsManager->getShowSomeSegmentsDebug());
 
   // Add child components - macOS uses native menu, others use in-app menu bar
 #if JUCE_MAC
@@ -596,8 +604,7 @@ void MainComponent::loadAudioFile(const juce::File &file) {
                                 ? safeThis->editorController->getVocoder()
                                 : nullptr;
             vocoder && !vocoder->isLoaded()) {
-          auto modelPath = PlatformPaths::getModelsDirectory().getChildFile(
-              "pc_nsf_hifigan.onnx");
+          auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
           if (modelPath.existsAsFile()) {
             if (!vocoder->loadModel(modelPath)) {
               juce::AlertWindow::showMessageBoxAsync(
@@ -691,7 +698,7 @@ void MainComponent::exportFile() {
   if (file.getFileExtension().isEmpty())
     file = file.withFileExtension("wav");
 
-    auto &audioData = project->getAudioData();
+  auto &audioData = project->getAudioData();
 
   // Show progress
   toolbar.showProgress(TR("progress.exporting_audio"));
@@ -1319,6 +1326,35 @@ void MainComponent::showSettings() {
           if (editorController)
             editorController->setPitchDetectorType(type);
         };
+    settingsOverlay->getSettingsComponent()->onShowSomeSegmentsDebugChanged =
+        [this](bool show) {
+          if (settingsManager) {
+            settingsManager->setShowSomeSegmentsDebug(show);
+            settingsManager->saveConfig();
+          }
+          pianoRoll.setShowSomeSegmentsDebug(show);
+          pianoRollView.setShowSomeSegmentsDebug(show);
+          pianoRollView.refreshOverview();
+          pianoRoll.repaint();
+        };
+    settingsOverlay->getSettingsComponent()->onShowUvInterpolationDebugChanged =
+        [this](bool show) {
+          if (settingsManager) {
+            settingsManager->setShowUvInterpolationDebug(show);
+            settingsManager->saveConfig();
+          }
+          pianoRoll.setShowUvInterpolationDebug(show);
+          pianoRoll.repaint();
+        };
+    settingsOverlay->getSettingsComponent()->onShowActualF0DebugChanged =
+        [this](bool show) {
+          if (settingsManager) {
+            settingsManager->setShowActualF0Debug(show);
+            settingsManager->saveConfig();
+          }
+          pianoRoll.setShowActualF0Debug(show);
+          pianoRoll.repaint();
+        };
   }
 
   settingsOverlay->setBounds(getLocalBounds());
@@ -1407,8 +1443,7 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
                             ? safeThis->editorController->getVocoder()
                             : nullptr;
         if (vocoder && !vocoder->isLoaded()) {
-          auto modelPath = PlatformPaths::getModelsDirectory().getChildFile(
-              "pc_nsf_hifigan.onnx");
+          auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
           if (modelPath.existsAsFile()) {
             if (!vocoder->loadModel(modelPath)) {
               juce::AlertWindow::showMessageBoxAsync(

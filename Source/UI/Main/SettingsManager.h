@@ -44,8 +44,14 @@ public:
   // View settings
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
   void setShowBasePitch(bool show) { showBasePitch = show; }
+  void setShowSomeSegmentsDebug(bool show) { showSomeSegmentsDebug = show; }
+  void setShowUvInterpolationDebug(bool show) { showUvInterpolationDebug = show; }
+  void setShowActualF0Debug(bool show) { showActualF0Debug = show; }
   bool getShowDeltaPitch() const { return showDeltaPitch; }
   bool getShowBasePitch() const { return showBasePitch; }
+  bool getShowSomeSegmentsDebug() const { return showSomeSegmentsDebug; }
+  bool getShowUvInterpolationDebug() const { return showUvInterpolationDebug; }
+  bool getShowActualF0Debug() const { return showActualF0Debug; }
 
   // Callbacks
   std::function<void()> onSettingsChanged;
@@ -69,6 +75,9 @@ private:
   int windowHeight = 800;
   bool showDeltaPitch = true;
   bool showBasePitch = false;
+  bool showSomeSegmentsDebug = false;
+  bool showUvInterpolationDebug = false;
+  bool showActualF0Debug = false;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsManager)
 };

@@ -1,6 +1,67 @@
 #include "IncrementalSynthesizer.h"
 #include "../../Utils/Localization.h"
 #include <algorithm>
+#include <cstdint>
+#include <cmath>
+
+namespace {
+std::vector<float> makeDenseF0ForInference(const std::vector<float> &f0) {
+  if (f0.empty())
+    return {};
+
+  std::vector<float> dense(f0);
+  const int n = static_cast<int>(dense.size());
+
+  auto isVoiced = [&](int i) { return dense[static_cast<size_t>(i)] > 0.0f; };
+
+  int lastVoiced = -1;
+  int i = 0;
+  while (i < n) {
+    if (isVoiced(i)) {
+      lastVoiced = i;
+      ++i;
+      continue;
+    }
+
+    const int gapStart = i;
+    while (i < n && !isVoiced(i))
+      ++i;
+    const int gapEnd = i; // [gapStart, gapEnd)
+
+    const int nextVoiced = (gapEnd < n) ? gapEnd : -1;
+    const float prevVal =
+        (lastVoiced >= 0) ? dense[static_cast<size_t>(lastVoiced)] : 0.0f;
+    const float nextVal =
+        (nextVoiced >= 0) ? dense[static_cast<size_t>(nextVoiced)] : 0.0f;
+
+    if (prevVal <= 0.0f && nextVal <= 0.0f)
+      continue;
+
+    if (prevVal <= 0.0f) {
+      for (int k = gapStart; k < gapEnd; ++k)
+        dense[static_cast<size_t>(k)] = nextVal;
+      continue;
+    }
+
+    if (nextVal <= 0.0f) {
+      for (int k = gapStart; k < gapEnd; ++k)
+        dense[static_cast<size_t>(k)] = prevVal;
+      continue;
+    }
+
+    const float logA = std::log(prevVal);
+    const float logB = std::log(nextVal);
+    const float denom = static_cast<float>(nextVoiced - lastVoiced);
+    for (int k = gapStart; k < gapEnd; ++k) {
+      const float t = static_cast<float>(k - lastVoiced) / denom;
+      dense[static_cast<size_t>(k)] =
+          std::exp(logA * (1.0f - t) + logB * t);
+    }
+  }
+
+  return dense;
+}
+} // namespace
 
 IncrementalSynthesizer::IncrementalSynthesizer() = default;
 
@@ -28,18 +89,51 @@ IncrementalSynthesizer::computeSynthesisRange(int dirtyStart, int dirtyEnd) {
   dirtyStart = std::max(0, dirtyStart);
   dirtyEnd = std::min(totalFrames, dirtyEnd);
 
-  constexpr int kPadFrames = 3;
+  // Give the vocoder enough temporal context to stabilize local phase when
+  // doing chunked re-synthesis.
+  constexpr int kPadFrames = 24;
+  // Bridge short UV gaps so adjacent notes around consonants are synthesized
+  // together; this avoids junction phase resets between neighboring notes.
+  constexpr int kGapBridgeFrames = 8;
 
-  // Expand backward to include the complete voiced segment at dirtyStart
+  auto isVoiced = [&](int idx) -> bool {
+    return idx >= 0 && idx < totalFrames && static_cast<bool>(voicedMask[idx]);
+  };
+
+  // Expand backward to include neighboring voiced segments across short gaps.
   int start = dirtyStart;
-  while (start > 0 && static_cast<bool>(voicedMask[start - 1]))
-    --start;
+  int backGap = 0;
+  while (start > 0) {
+    if (isVoiced(start - 1)) {
+      --start;
+      backGap = 0;
+      continue;
+    }
+    if (backGap < kGapBridgeFrames) {
+      --start;
+      ++backGap;
+      continue;
+    }
+    break;
+  }
   start = std::max(0, start - kPadFrames);
 
-  // Expand forward to include the complete voiced segment at dirtyEnd
+  // Expand forward to include neighboring voiced segments across short gaps.
   int end = dirtyEnd;
-  while (end < totalFrames && static_cast<bool>(voicedMask[end]))
-    ++end;
+  int fwdGap = 0;
+  while (end < totalFrames) {
+    if (isVoiced(end)) {
+      ++end;
+      fwdGap = 0;
+      continue;
+    }
+    if (fwdGap < kGapBridgeFrames) {
+      ++end;
+      ++fwdGap;
+      continue;
+    }
+    break;
+  }
   end = std::min(totalFrames, end + kPadFrames);
 
   DBG("computeSynthesisRange: [" << dirtyStart << ", " << dirtyEnd
@@ -63,8 +157,51 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
   std::vector<float> frameMask(numFrames, 0.0f);
   for (int i = 0; i < numFrames; ++i) {
     int gf = startFrame + i;
-    if (gf >= 0 && gf < totalFrames && static_cast<bool>(voicedMask[gf]))
+    const bool voiced =
+        gf >= 0 && gf < totalFrames && static_cast<bool>(voicedMask[gf]);
+    if (voiced)
       frameMask[i] = 1.0f;
+  }
+
+  // Remove 1-frame toggles in uv mask to avoid zipper-like stitching artifacts.
+  if (numFrames >= 3) {
+    std::vector<float> cleaned(frameMask);
+    for (int i = 1; i < numFrames - 1; ++i) {
+      const float prev = frameMask[i - 1];
+      const float cur = frameMask[i];
+      const float next = frameMask[i + 1];
+      if (cur == 0.0f && prev == 1.0f && next == 1.0f)
+        cleaned[i] = 1.0f;
+      else if (cur == 1.0f && prev == 0.0f && next == 0.0f)
+        cleaned[i] = 0.0f;
+    }
+    frameMask.swap(cleaned);
+  }
+
+  // Bridge short unvoiced holes between voiced regions to keep local phase
+  // continuity at note junctions (especially consonant transitions).
+  constexpr int kBlendBridgeFrames = 4;
+  if (numFrames >= 3) {
+    int i = 0;
+    while (i < numFrames) {
+      if (frameMask[i] > 0.0f) {
+        ++i;
+        continue;
+      }
+
+      const int gapStart = i;
+      while (i < numFrames && frameMask[i] <= 0.0f)
+        ++i;
+      const int gapEnd = i; // [gapStart, gapEnd)
+      const int gapLen = gapEnd - gapStart;
+      const bool leftVoiced = gapStart > 0 && frameMask[gapStart - 1] > 0.0f;
+      const bool rightVoiced = gapEnd < numFrames && frameMask[gapEnd] > 0.0f;
+
+      if (leftVoiced && rightVoiced && gapLen <= kBlendBridgeFrames) {
+        for (int k = gapStart; k < gapEnd; ++k)
+          frameMask[k] = 1.0f;
+      }
+    }
   }
 
   // Step 2: expand to per-sample (sample-and-hold)
@@ -77,7 +214,8 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
   }
 
   // Step 3: smooth transitions with linear ramp at frame boundaries
-  constexpr int kRampSamples = 128; // ~3ms at 44.1kHz
+  constexpr int kMinRampSamples = 512;
+  const int kRampSamples = std::max(kMinRampSamples, hopSize * 2);
   for (int i = 0; i < numFrames - 1; ++i) {
     if (frameMask[i] == frameMask[i + 1])
       continue;
@@ -184,8 +322,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       audioData.melSpectrogram.begin() + endFrame);
   std::vector<float> adjustedF0Range =
       project->getAdjustedF0ForRange(startFrame, endFrame);
+  std::vector<float> denseF0Range = makeDenseF0ForInference(adjustedF0Range);
 
-  if (melRange.empty() || adjustedF0Range.empty()) {
+  if (melRange.empty() || adjustedF0Range.empty() || denseF0Range.empty()) {
     if (onComplete)
       onComplete(false);
     return;
@@ -209,7 +348,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   DBG("synthesizeRegion: frames [" << startFrame << ", " << endFrame << "]");
 
   vocoder->inferAsync(
-      melRange, adjustedF0Range,
+      melRange, denseF0Range,
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
        blendMask = std::move(blendMask),
@@ -272,53 +411,57 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             return;
           }
 
-          constexpr int kBoundaryXfadeSamples = 256;
-          const int xfadeLen =
-              std::min(kBoundaryXfadeSamples, samplesToWrite / 2);
+          constexpr int kMinBoundaryBlendSamples = 512;
+          constexpr int kMaxBoundaryBlendSamples = 4096;
+          const int preferredBlend =
+              std::max(kMinBoundaryBlendSamples, hopSize * 2);
+          const int boundaryBlendLen = std::min(
+              std::min(kMaxBoundaryBlendSamples, preferredBlend),
+              samplesToWrite / 2);
 
-          // Save boundary samples from current waveform for edge crossfade
-          std::vector<std::vector<float>> oldStart(
-              numChannels, std::vector<float>(xfadeLen));
-          std::vector<std::vector<float>> oldEnd(
-              numChannels, std::vector<float>(xfadeLen));
+          // Snapshot current waveform segment so the replacement can be
+          // stitched back with guaranteed edge continuity.
+          std::vector<std::vector<float>> currentSegment(
+              numChannels, std::vector<float>(samplesToWrite, 0.0f));
           for (int ch = 0; ch < numChannels; ++ch) {
             const float *src = audioData.waveform.getReadPointer(ch);
-            for (int i = 0; i < xfadeLen; ++i) {
-              oldStart[ch][i] = src[startSample + i];
-              oldEnd[ch][i] =
-                  src[startSample + samplesToWrite - xfadeLen + i];
-            }
+            std::copy(src + startSample, src + startSample + samplesToWrite,
+                      currentSegment[ch].begin());
           }
 
-          // === CORE BLEND ===
-          // output = blend * synthesized + (1 - blend) * original
+          // Build target from model/original blend once.
+          std::vector<float> targetSegment(samplesToWrite, 0.0f);
+          for (int i = 0; i < samplesToWrite; ++i) {
+            const float b =
+                (i < static_cast<int>(blendMask.size())) ? blendMask[i] : 0.0f;
+            const float synth = synthesizedAudio[static_cast<size_t>(i)];
+            const float orig = originalSegment[static_cast<size_t>(i)];
+            targetSegment[static_cast<size_t>(i)] =
+                b * synth + (1.0f - b) * orig;
+          }
+
+          // Stitch target into current waveform with a smooth edge envelope:
+          // final = current + edgeEnv * (target - current)
           for (int ch = 0; ch < numChannels; ++ch) {
             float *dst = audioData.waveform.getWritePointer(ch);
             for (int i = 0; i < samplesToWrite; ++i) {
-              float b = blendMask[i];
-              float synth = synthesizedAudio[i];
-              float orig = originalSegment[i];
-              dst[startSample + i] = b * synth + (1.0f - b) * orig;
-            }
-          }
+              float edgeEnv = 1.0f;
+              if (boundaryBlendLen > 1) {
+                if (i < boundaryBlendLen) {
+                  const float t = static_cast<float>(i) /
+                                  static_cast<float>(boundaryBlendLen - 1);
+                  edgeEnv = t * t * (3.0f - 2.0f * t);
+                } else if (i >= samplesToWrite - boundaryBlendLen) {
+                  const int fromEnd = samplesToWrite - 1 - i;
+                  const float t = static_cast<float>(fromEnd) /
+                                  static_cast<float>(boundaryBlendLen - 1);
+                  edgeEnv = t * t * (3.0f - 2.0f * t);
+                }
+              }
 
-          // === BOUNDARY CROSSFADE ===
-          for (int ch = 0; ch < numChannels; ++ch) {
-            float *dst = audioData.waveform.getWritePointer(ch);
-            // Start: old → blended
-            for (int i = 0; i < xfadeLen; ++i) {
-              float t =
-                  static_cast<float>(i) / static_cast<float>(xfadeLen);
-              dst[startSample + i] =
-                  oldStart[ch][i] * (1.0f - t) + dst[startSample + i] * t;
-            }
-            // End: blended → old
-            int endOff = startSample + samplesToWrite - xfadeLen;
-            for (int i = 0; i < xfadeLen; ++i) {
-              float t =
-                  static_cast<float>(i) / static_cast<float>(xfadeLen);
-              dst[endOff + i] =
-                  dst[endOff + i] * (1.0f - t) + oldEnd[ch][i] * t;
+              const float cur = currentSegment[ch][static_cast<size_t>(i)];
+              const float target = targetSegment[static_cast<size_t>(i)];
+              dst[startSample + i] = cur + edgeEnv * (target - cur);
             }
           }
 
@@ -333,3 +476,4 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
         }).detach();
       });
 }
+

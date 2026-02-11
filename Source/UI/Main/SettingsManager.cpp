@@ -100,6 +100,15 @@ void SettingsManager::loadConfig() {
         if (configObj->hasProperty("showBasePitch"))
           showBasePitch =
               static_cast<bool>(configObj->getProperty("showBasePitch"));
+        if (configObj->hasProperty("showSomeSegmentsDebug"))
+          showSomeSegmentsDebug =
+              static_cast<bool>(configObj->getProperty("showSomeSegmentsDebug"));
+        if (configObj->hasProperty("showUvInterpolationDebug"))
+          showUvInterpolationDebug =
+              static_cast<bool>(configObj->getProperty("showUvInterpolationDebug"));
+        if (configObj->hasProperty("showActualF0Debug"))
+          showActualF0Debug =
+              static_cast<bool>(configObj->getProperty("showActualF0Debug"));
       }
     }
   }
@@ -124,6 +133,9 @@ void SettingsManager::saveConfig() {
   config->setProperty("windowHeight", windowHeight);
   config->setProperty("showDeltaPitch", showDeltaPitch);
   config->setProperty("showBasePitch", showBasePitch);
+  config->setProperty("showSomeSegmentsDebug", showSomeSegmentsDebug);
+  config->setProperty("showUvInterpolationDebug", showUvInterpolationDebug);
+  config->setProperty("showActualF0Debug", showActualF0Debug);
 
   juce::String jsonText = juce::JSON::toString(juce::var(config.get()));
   configFile.replaceWithText(jsonText);

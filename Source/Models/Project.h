@@ -4,6 +4,7 @@
 #include "Note.h"
 #include <vector>
 #include <memory>
+#include <utility>
 
 /**
  * Container for audio data and extracted features.
@@ -22,6 +23,7 @@ struct AudioData
     std::vector<float> deltaPitch;                    // [T] delta pitch in MIDI (dense)
     std::vector<bool> voicedMask;                     // [T] uv mask (true = voiced, F0-based)
     std::vector<bool> vadMask;                        // [T] energy-based VAD (true = has audio energy, captures consonants)
+    std::vector<std::pair<int, int>> someChunkRanges; // [N] SOME slicer chunks in frame range [start, end)
     
     float getDuration() const
     {

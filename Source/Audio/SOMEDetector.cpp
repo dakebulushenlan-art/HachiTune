@@ -165,12 +165,14 @@ std::vector<double> SOMEDetector::getRms(const std::vector<float> &samples,
 // Audio slicer based on silence detection
 SOMEDetector::MarkerList
 SOMEDetector::sliceAudio(const std::vector<float> &samples) const {
-  constexpr float threshold = 0.02f;
+  // More conservative slicer: keep weak breaths/fricatives inside chunks.
+  constexpr float threshold = 0.006f;
   constexpr int hopSize = HOP_SIZE;
   constexpr int winSize = HOP_SIZE * 4;
   constexpr int minLength = 500;
-  constexpr int minInterval = 30;
-  constexpr int maxSilKept = 50;
+  constexpr int minInterval = 60;
+  // Keep significantly more silence around split points.
+  constexpr int maxSilKept = 140;
 
   size_t minFrames = static_cast<size_t>(minLength);
   if ((samples.size() + hopSize - 1) / hopSize <= minFrames)
@@ -362,13 +364,11 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
     std::cout << "[SOME] Chunk: " << noteMidi.size() << " notes, " << restCount
               << " rest notes" << std::endl;
 
-    // Calculate start frame for this chunk
-    // DIRECT COPY from ds-editor-lite: use max of chunk start position and last
-    // note end position
-    const auto start_frame =
-        (std::max)(static_cast<int>(beginFrame / HOP_SIZE),
-                   !allNotes.empty() ? allNotes.back().endFrame : 0);
-    int chunkStartFrame = start_frame;
+    // Use chunk-local frame bounds and keep generated notes inside the chunk.
+    const int chunkStartFrame = static_cast<int>(beginFrame / HOP_SIZE);
+    const int chunkEndFrame =
+        std::max(chunkStartFrame + 1,
+                 static_cast<int>((actualEnd + HOP_SIZE - 1) / HOP_SIZE));
 
     // Build notes from this chunk
     // DIRECT COPY from ds-editor-lite Some.cpp, adapted for frames instead of
@@ -401,10 +401,46 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
       }
     }
 
+    // Adaptive rest attachment threshold from SOME output itself.
+    std::vector<int> restFrameLens;
+    restFrameLens.reserve(note_frames.size());
+    for (size_t i = 0; i < note_frames.size() && i < noteRest.size(); ++i) {
+      if (noteRest[i] && note_frames[i] > 0)
+        restFrameLens.push_back(note_frames[i]);
+    }
+    int shortRestThreshold = 0;
+    if (!restFrameLens.empty()) {
+      std::sort(restFrameLens.begin(), restFrameLens.end());
+      const size_t p33 = restFrameLens.size() / 3;
+      shortRestThreshold = restFrameLens[p33];
+    }
+
     // Step 4: Build notes (exactly like build_midi_note in ds-editor-lite)
     int start_frame_temp = chunkStartFrame;
+    int pendingRestFrames = 0;
+    float pendingRestPeakRms = 0.0f;
     int notesCreated = 0;
     int restSkipped = 0;
+
+    auto computeChunkRegionRms = [&](int frameStart, int frameEnd) -> float {
+      if (frameEnd <= frameStart || chunkData.empty())
+        return 0.0f;
+
+      const int localStartFrame = std::max(0, frameStart - chunkStartFrame);
+      const int localEndFrame = std::max(localStartFrame, frameEnd - chunkStartFrame);
+      int sampleStart = localStartFrame * HOP_SIZE;
+      int sampleEnd = localEndFrame * HOP_SIZE;
+      sampleStart = std::max(0, std::min(sampleStart, static_cast<int>(chunkData.size())));
+      sampleEnd = std::max(sampleStart, std::min(sampleEnd, static_cast<int>(chunkData.size())));
+      if (sampleEnd <= sampleStart)
+        return 0.0f;
+
+      double sumSq = 0.0;
+      for (int s = sampleStart; s < sampleEnd; ++s)
+        sumSq += static_cast<double>(chunkData[static_cast<size_t>(s)]) *
+                 static_cast<double>(chunkData[static_cast<size_t>(s)]);
+      return static_cast<float>(std::sqrt(sumSq / static_cast<double>(sampleEnd - sampleStart)));
+    };
     for (size_t i = 0; i < noteMidi.size(); ++i) {
       // CRITICAL: Check bounds for note_frames array
       if (i >= note_frames.size()) {
@@ -419,27 +455,57 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
       if (noteDurationFrames < 1)
         noteDurationFrames = 1;
 
+      int next_frame_temp = start_frame_temp + noteDurationFrames;
+      if (next_frame_temp > chunkEndFrame)
+        next_frame_temp = chunkEndFrame;
+
       if (noteRest[i]) {
-        // Rest note: skip but advance position (creates gap between notes)
+        // Keep short rests for the NEXT note onset only.
         restSkipped++;
-        start_frame_temp += noteDurationFrames;
+        const int restFrames = (next_frame_temp - start_frame_temp);
+        pendingRestFrames += restFrames;
+        pendingRestPeakRms =
+            std::max(pendingRestPeakRms,
+                     computeChunkRegionRms(start_frame_temp, next_frame_temp));
+        start_frame_temp = next_frame_temp;
+        if (start_frame_temp >= chunkEndFrame)
+          break;
         continue;
       }
 
       // Regular note: create event
+      int eventStart = start_frame_temp;
+      if (shortRestThreshold > 0 && pendingRestFrames > 0 &&
+          pendingRestFrames <= shortRestThreshold) {
+        // Prefer plosive/fricative consonants (higher RMS), reject weak breath.
+        constexpr float kConsonantAttachRms = 0.018f;
+        constexpr int kMaxHeadAttachFrames = 9; // ~104 ms at 44.1k/512
+        if (pendingRestPeakRms >= kConsonantAttachRms) {
+          const int attachFrames = std::min(pendingRestFrames, kMaxHeadAttachFrames);
+          eventStart =
+              std::max(chunkStartFrame, start_frame_temp - attachFrames);
+        }
+      }
+
       NoteEvent event;
-      event.startFrame = start_frame_temp;
-      event.endFrame = start_frame_temp + noteDurationFrames;
+      event.startFrame = eventStart;
+      event.endFrame = next_frame_temp;
       event.midiNote = noteMidi[i];
       event.isRest = false;
-      allNotes.push_back(event);
-      notesCreated++;
+      if (event.endFrame > event.startFrame) {
+        allNotes.push_back(event);
+        notesCreated++;
+      }
+      pendingRestFrames = 0;
+      pendingRestPeakRms = 0.0f;
 
       // Log SOME output for debugging
       DBG("SOME note: midi=" << noteMidi[i] << " (raw float from model)");
 
       // Advance position for next note (or rest)
-      start_frame_temp += noteDurationFrames;
+      start_frame_temp = next_frame_temp;
+      if (start_frame_temp >= chunkEndFrame)
+        break;
     }
 
     DBG("SOME chunk built: " << notesCreated << " notes created, "
@@ -468,7 +534,8 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
 void SOMEDetector::detectNotesStreaming(
     const float *audio, int numSamples, int sampleRate,
     std::function<void(const std::vector<NoteEvent> &)> noteCallback,
-    std::function<void(double)> progressCallback) {
+    std::function<void(double)> progressCallback,
+    std::function<void(const std::vector<ChunkRange> &)> chunkCallback) {
 #ifdef HAVE_ONNXRUNTIME
   DBG("=== detectNotesStreaming CALLED: " << numSamples << " samples ===");
 
@@ -492,11 +559,23 @@ void SOMEDetector::detectNotesStreaming(
   if (chunks.empty())
     return;
 
+  if (chunkCallback) {
+    std::vector<ChunkRange> ranges;
+    ranges.reserve(chunks.size());
+    for (const auto &[beginFrame, endFrame] : chunks) {
+      int startFrame = static_cast<int>(beginFrame / HOP_SIZE);
+      int endFrameFrame =
+          static_cast<int>((endFrame + HOP_SIZE - 1) / HOP_SIZE);
+      if (endFrameFrame > startFrame)
+        ranges.emplace_back(startFrame, endFrameFrame);
+    }
+    chunkCallback(ranges);
+  }
+
   int64_t totalFrames = 0;
   for (const auto &[start, end] : chunks)
     totalFrames += (end - start);
 
-  int lastEndFrame = 0;
   int64_t processedFrames = 0;
 
   for (const auto &[beginFrame, endFrame] : chunks) {
@@ -526,8 +605,10 @@ void SOMEDetector::detectNotesStreaming(
     DBG("SOME streaming chunk: " << noteMidi.size()
                                  << " notes, rest count: " << restCount);
 
-    int chunkStartFrame = static_cast<int>(beginFrame / HOP_SIZE);
-    chunkStartFrame = std::max(chunkStartFrame, lastEndFrame);
+    const int chunkStartFrame = static_cast<int>(beginFrame / HOP_SIZE);
+    const int chunkEndFrame =
+        std::max(chunkStartFrame + 1,
+                 static_cast<int>((actualEnd + HOP_SIZE - 1) / HOP_SIZE));
 
     std::vector<NoteEvent> chunkNotes;
     // DIRECT COPY from ds-editor-lite Some.cpp, adapted for frames instead of
@@ -560,10 +641,46 @@ void SOMEDetector::detectNotesStreaming(
       }
     }
 
+    // Adaptive rest attachment threshold from SOME output itself.
+    std::vector<int> restFrameLens;
+    restFrameLens.reserve(note_frames.size());
+    for (size_t i = 0; i < note_frames.size() && i < noteRest.size(); ++i) {
+      if (noteRest[i] && note_frames[i] > 0)
+        restFrameLens.push_back(note_frames[i]);
+    }
+    int shortRestThreshold = 0;
+    if (!restFrameLens.empty()) {
+      std::sort(restFrameLens.begin(), restFrameLens.end());
+      const size_t p33 = restFrameLens.size() / 3;
+      shortRestThreshold = restFrameLens[p33];
+    }
+
     // Step 4: Build notes (exactly like build_midi_note in ds-editor-lite)
     int start_frame_temp = chunkStartFrame;
+    int pendingRestFrames = 0;
+    float pendingRestPeakRms = 0.0f;
     int notesCreated = 0;
     int restSkipped = 0;
+
+    auto computeChunkRegionRms = [&](int frameStart, int frameEnd) -> float {
+      if (frameEnd <= frameStart || chunkData.empty())
+        return 0.0f;
+
+      const int localStartFrame = std::max(0, frameStart - chunkStartFrame);
+      const int localEndFrame = std::max(localStartFrame, frameEnd - chunkStartFrame);
+      int sampleStart = localStartFrame * HOP_SIZE;
+      int sampleEnd = localEndFrame * HOP_SIZE;
+      sampleStart = std::max(0, std::min(sampleStart, static_cast<int>(chunkData.size())));
+      sampleEnd = std::max(sampleStart, std::min(sampleEnd, static_cast<int>(chunkData.size())));
+      if (sampleEnd <= sampleStart)
+        return 0.0f;
+
+      double sumSq = 0.0;
+      for (int s = sampleStart; s < sampleEnd; ++s)
+        sumSq += static_cast<double>(chunkData[static_cast<size_t>(s)]) *
+                 static_cast<double>(chunkData[static_cast<size_t>(s)]);
+      return static_cast<float>(std::sqrt(sumSq / static_cast<double>(sampleEnd - sampleStart)));
+    };
     for (size_t i = 0; i < noteMidi.size(); ++i) {
       // CRITICAL: Check bounds for note_frames array
       if (i >= note_frames.size()) {
@@ -578,34 +695,62 @@ void SOMEDetector::detectNotesStreaming(
       if (noteDurationFrames < 1)
         noteDurationFrames = 1;
 
+      int next_frame_temp = start_frame_temp + noteDurationFrames;
+      if (next_frame_temp > chunkEndFrame)
+        next_frame_temp = chunkEndFrame;
+
       if (noteRest[i]) {
-        // Rest note: skip but advance position (creates gap between notes)
+        // Keep short rests for the NEXT note onset only.
         restSkipped++;
-        start_frame_temp += noteDurationFrames;
+        const int restFrames = (next_frame_temp - start_frame_temp);
+        pendingRestFrames += restFrames;
+        pendingRestPeakRms =
+            std::max(pendingRestPeakRms,
+                     computeChunkRegionRms(start_frame_temp, next_frame_temp));
+        start_frame_temp = next_frame_temp;
+        if (start_frame_temp >= chunkEndFrame)
+          break;
         continue;
       }
 
       // Regular note: create event
+      int eventStart = start_frame_temp;
+      if (shortRestThreshold > 0 && pendingRestFrames > 0 &&
+          pendingRestFrames <= shortRestThreshold) {
+        // Prefer plosive/fricative consonants (higher RMS), reject weak breath.
+        constexpr float kConsonantAttachRms = 0.018f;
+        constexpr int kMaxHeadAttachFrames = 9; // ~104 ms at 44.1k/512
+        if (pendingRestPeakRms >= kConsonantAttachRms) {
+          const int attachFrames = std::min(pendingRestFrames, kMaxHeadAttachFrames);
+          eventStart =
+              std::max(chunkStartFrame, start_frame_temp - attachFrames);
+        }
+      }
+
       NoteEvent event;
-      event.startFrame = start_frame_temp;
-      event.endFrame = start_frame_temp + noteDurationFrames;
+      event.startFrame = eventStart;
+      event.endFrame = next_frame_temp;
       event.midiNote = noteMidi[i];
       event.isRest = false;
-      chunkNotes.push_back(event);
-      notesCreated++;
+      if (event.endFrame > event.startFrame) {
+        chunkNotes.push_back(event);
+        notesCreated++;
+      }
+      pendingRestFrames = 0;
+      pendingRestPeakRms = 0.0f;
 
       // Log SOME output for debugging
       DBG("SOME streaming note: midi=" << noteMidi[i]
                                        << " (raw float from model)");
 
       // Advance position for next note (or rest)
-      start_frame_temp += noteDurationFrames;
+      start_frame_temp = next_frame_temp;
+      if (start_frame_temp >= chunkEndFrame)
+        break;
     }
 
     DBG("SOME streaming chunk built: " << notesCreated << " notes created, "
                                        << restSkipped << " rest skipped");
-
-    lastEndFrame = start_frame_temp;
 
     // Immediately callback with this chunk's notes
     if (noteCallback && !chunkNotes.empty())

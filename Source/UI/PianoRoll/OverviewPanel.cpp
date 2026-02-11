@@ -72,6 +72,44 @@ void OverviewPanel::paint(juce::Graphics &g) {
     g.drawLine(x, y1, x, y2);
   }
 
+  if (showSomeSegmentsDebug && totalTime > 0.0) {
+    g.setColour(juce::Colours::orange.withAlpha(0.16f));
+    for (const auto &range : audioData.someChunkRanges) {
+      const int startFrame = std::max(0, range.first);
+      const int endFrame = std::max(startFrame, range.second);
+      if (endFrame <= startFrame)
+        continue;
+
+      const double startTime =
+          static_cast<double>(startFrame) * HOP_SIZE / SAMPLE_RATE;
+      const double endTime =
+          static_cast<double>(endFrame) * HOP_SIZE / SAMPLE_RATE;
+      const float x1 = content.getX() +
+                       static_cast<float>((startTime / totalTime) *
+                                          content.getWidth());
+      const float x2 = content.getX() +
+                       static_cast<float>((endTime / totalTime) *
+                                          content.getWidth());
+      g.fillRect(juce::Rectangle<float>(x1, content.getY(),
+                                        std::max(1.0f, x2 - x1),
+                                        content.getHeight()));
+    }
+
+    g.setColour(juce::Colours::orange.withAlpha(0.75f));
+    for (const auto &range : audioData.someChunkRanges) {
+      const int startFrame = std::max(0, range.first);
+      const int endFrame = std::max(startFrame, range.second);
+      if (endFrame <= startFrame)
+        continue;
+      const double startTime =
+          static_cast<double>(startFrame) * HOP_SIZE / SAMPLE_RATE;
+      const float x = content.getX() +
+                      static_cast<float>((startTime / totalTime) *
+                                         content.getWidth());
+      g.drawLine(x, content.getY(), x, content.getBottom(), 1.0f);
+    }
+  }
+
   if (totalTime > 0.0) {
     const float pitchRange =
         static_cast<float>(MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1);

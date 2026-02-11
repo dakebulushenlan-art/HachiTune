@@ -143,6 +143,7 @@ void PianoRollComponent::paint(juce::Graphics &g) {
                 headerHeight - static_cast<int>(scrollY));
 
     drawGrid(g);
+    drawSomeSegmentDebugOverlay(g);
     drawLoopOverlay(g);
     drawNotes(g);
     drawStretchGuides(g);
@@ -369,6 +370,41 @@ void PianoRollComponent::drawLoopOverlay(juce::Graphics &g) {
 
   g.setColour(fillColor);
   g.fillRect(startX, 0.0f, endX - startX, height);
+}
+
+void PianoRollComponent::drawSomeSegmentDebugOverlay(juce::Graphics &g) {
+  if (!showSomeSegmentsDebug || !project)
+    return;
+
+  const auto &audioData = project->getAudioData();
+  if (audioData.someChunkRanges.empty())
+    return;
+
+  const float height =
+      (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+
+  g.setColour(juce::Colours::orange.withAlpha(0.10f));
+  for (const auto &range : audioData.someChunkRanges) {
+    int startFrame = std::max(0, range.first);
+    int endFrame = std::max(startFrame, range.second);
+    if (endFrame <= startFrame)
+      continue;
+
+    const float x1 = framesToSeconds(startFrame) * pixelsPerSecond;
+    const float x2 = framesToSeconds(endFrame) * pixelsPerSecond;
+    g.fillRect(x1, 0.0f, std::max(1.0f, x2 - x1), height);
+  }
+
+  g.setColour(juce::Colours::orange.withAlpha(0.75f));
+  for (const auto &range : audioData.someChunkRanges) {
+    int startFrame = std::max(0, range.first);
+    int endFrame = std::max(startFrame, range.second);
+    if (endFrame <= startFrame)
+      continue;
+
+    const float x = framesToSeconds(startFrame) * pixelsPerSecond;
+    g.drawVerticalLine(static_cast<int>(x), 0.0f, height);
+  }
 }
 
 void PianoRollComponent::drawTimeline(juce::Graphics &g) {
@@ -855,33 +891,36 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
   // Draw pitch curves per note with their pitch offsets applied (delta pitch)
   if (showDeltaPitch) {
     g.setColour(APP_COLOR_PITCH_CURVE);
+    if (showUvInterpolationDebug) {
+      const double visibleStartTime = scrollX / pixelsPerSecond;
+      const double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
+      const int visStartFrame = std::max(
+          0,
+          static_cast<int>(visibleStartTime * audioData.sampleRate / HOP_SIZE));
+      const int visEndFrame = std::min(
+          static_cast<int>(audioData.f0.size()),
+          static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
 
-    const bool useLiveBasePreview =
-        (isDragging || pitchEditor->isDraggingMultiNotes());
-    const auto &draggedNotes = pitchEditor->getDraggedNotes();
-
-    for (const auto &note : project->getNotes()) {
-      if (note.isRest())
-        continue;
-
-      const bool isDraggedNote =
-          (isDragging && draggedNote == &note) ||
-          (pitchEditor->isDraggingMultiNotes() &&
-           std::find(draggedNotes.begin(), draggedNotes.end(), &note) !=
-               draggedNotes.end());
-      const bool applyNoteOffset = !(useLiveBasePreview && isDraggedNote);
+      const auto &chunkRanges = audioData.someChunkRanges;
+      size_t chunkIdx = 0;
 
       juce::Path path;
       bool pathStarted = false;
+      for (int i = visStartFrame; i < visEndFrame; ++i) {
+        bool inChunk = true;
+        if (!chunkRanges.empty()) {
+          while (chunkIdx < chunkRanges.size() &&
+                 chunkRanges[chunkIdx].second <= i)
+            ++chunkIdx;
+          inChunk = chunkIdx < chunkRanges.size() &&
+                    chunkRanges[chunkIdx].first <= i &&
+                    chunkRanges[chunkIdx].second > i;
+        }
+        if (!inChunk) {
+          pathStarted = false;
+          continue;
+        }
 
-      int startFrame = note.getStartFrame();
-      int endFrame =
-          std::min(note.getEndFrame(), static_cast<int>(audioData.f0.size()));
-
-      for (int i = startFrame; i < endFrame; ++i) {
-        // Base pitch: during drag, add pitchOffset to simulate the new base
-        // pitch This gives real-time preview of how the curve will look after
-        // drag completes
         float baseMidi =
             (i < static_cast<int>(audioData.basePitch.size()))
                 ? audioData.basePitch[static_cast<size_t>(i)]
@@ -889,31 +928,121 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
                     audioData.f0[static_cast<size_t>(i)] > 0.0f)
                        ? freqToMidi(audioData.f0[static_cast<size_t>(i)])
                        : 0.0f);
-        if (applyNoteOffset)
-          baseMidi += note.getPitchOffset();
         float deltaMidi = (i < static_cast<int>(audioData.deltaPitch.size()))
                               ? audioData.deltaPitch[static_cast<size_t>(i)]
                               : 0.0f;
-        // Final = base (with drag offset) + delta + global offset only
         float finalMidi = baseMidi + deltaMidi + globalOffset;
 
-        if (finalMidi > 0.0f) {
-          float x = framesToSeconds(i) * pixelsPerSecond;
-          float y = midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
+        if (finalMidi <= 0.0f) {
+          pathStarted = false;
+          continue;
+        }
 
-          if (!pathStarted) {
-            path.startNewSubPath(x, y);
-            pathStarted = true;
-          } else {
-            path.lineTo(x, y);
-          }
+        float x = framesToSeconds(i) * pixelsPerSecond;
+        float y = midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
+        if (!pathStarted) {
+          path.startNewSubPath(x, y);
+          pathStarted = true;
+        } else {
+          path.lineTo(x, y);
         }
       }
+      g.strokePath(path, juce::PathStrokeType(2.0f));
+    } else {
+      const bool useLiveBasePreview =
+          (isDragging || pitchEditor->isDraggingMultiNotes());
+      const auto &draggedNotes = pitchEditor->getDraggedNotes();
 
-      if (pathStarted) {
-        g.strokePath(path, juce::PathStrokeType(2.0f));
+      for (const auto &note : project->getNotes()) {
+        if (note.isRest())
+          continue;
+
+        const bool isDraggedNote =
+            (isDragging && draggedNote == &note) ||
+            (pitchEditor->isDraggingMultiNotes() &&
+             std::find(draggedNotes.begin(), draggedNotes.end(), &note) !=
+                 draggedNotes.end());
+        const bool applyNoteOffset = !(useLiveBasePreview && isDraggedNote);
+
+        juce::Path path;
+        bool pathStarted = false;
+
+        int startFrame = note.getStartFrame();
+        int endFrame =
+            std::min(note.getEndFrame(), static_cast<int>(audioData.f0.size()));
+
+        for (int i = startFrame; i < endFrame; ++i) {
+          float baseMidi =
+              (i < static_cast<int>(audioData.basePitch.size()))
+                  ? audioData.basePitch[static_cast<size_t>(i)]
+                  : ((i < static_cast<int>(audioData.f0.size()) &&
+                      audioData.f0[static_cast<size_t>(i)] > 0.0f)
+                         ? freqToMidi(audioData.f0[static_cast<size_t>(i)])
+                         : 0.0f);
+          if (applyNoteOffset)
+            baseMidi += note.getPitchOffset();
+
+          float deltaMidi = (i < static_cast<int>(audioData.deltaPitch.size()))
+                                ? audioData.deltaPitch[static_cast<size_t>(i)]
+                                : 0.0f;
+          float finalMidi = baseMidi + deltaMidi + globalOffset;
+
+          if (finalMidi > 0.0f) {
+            float x = framesToSeconds(i) * pixelsPerSecond;
+            float y = midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
+            if (!pathStarted) {
+              path.startNewSubPath(x, y);
+              pathStarted = true;
+            } else {
+              path.lineTo(x, y);
+            }
+          }
+        }
+
+        if (pathStarted)
+          g.strokePath(path, juce::PathStrokeType(2.0f));
       }
     }
+  }
+
+  if (showActualF0Debug) {
+    const double visibleStartTime = scrollX / pixelsPerSecond;
+    const double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
+    const int visStartFrame =
+        std::max(0, static_cast<int>(visibleStartTime * audioData.sampleRate /
+                                     HOP_SIZE));
+    const int visEndFrame = std::min(
+        static_cast<int>(audioData.f0.size()),
+        static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
+
+    g.setColour(juce::Colours::aqua.withAlpha(0.90f));
+    juce::Path actualPath;
+    bool pathStarted = false;
+
+    for (int i = visStartFrame; i < visEndFrame; ++i) {
+      const float f0 = audioData.f0[static_cast<size_t>(i)];
+      if (f0 <= 0.0f) {
+        if (pathStarted) {
+          g.strokePath(actualPath, juce::PathStrokeType(1.7f));
+          actualPath.clear();
+          pathStarted = false;
+        }
+        continue;
+      }
+
+      const float midi = freqToMidi(f0) + globalOffset;
+      const float x = framesToSeconds(i) * pixelsPerSecond;
+      const float y = midiToY(midi) + pixelsPerSemitone * 0.5f;
+      if (!pathStarted) {
+        actualPath.startNewSubPath(x, y);
+        pathStarted = true;
+      } else {
+        actualPath.lineTo(x, y);
+      }
+    }
+
+    if (pathStarted)
+      g.strokePath(actualPath, juce::PathStrokeType(1.7f));
   }
 
   // Draw base pitch curve as dashed line
@@ -3141,10 +3270,12 @@ void PianoRollComponent::commitPitchDrawing() {
   // Clear deltaPitch for notes in the edited range so they use the drawn F0
   // values
   if (project && minFrame <= maxFrame) {
+    const int maxFrameExclusive = maxFrame + 1;
     auto &notes = project->getNotes();
     for (auto &note : notes) {
       // Check if note overlaps with edited range
-      if (note.getEndFrame() > minFrame && note.getStartFrame() < maxFrame) {
+      if (note.getEndFrame() > minFrame &&
+          note.getStartFrame() < maxFrameExclusive) {
         // Clear deltaPitch so the note will use audioData.f0 instead of
         // computed values
         if (note.hasDeltaPitch()) {
@@ -3156,7 +3287,7 @@ void PianoRollComponent::commitPitchDrawing() {
 
   // Set F0 dirty range in project for incremental synthesis
   if (project && minFrame <= maxFrame) {
-    project->setF0DirtyRange(minFrame, maxFrame);
+    project->setF0DirtyRange(minFrame, maxFrame + 1);
   }
 
   // Create undo action
@@ -3167,7 +3298,7 @@ void PianoRollComponent::commitPitchDrawing() {
         drawingEdits, [this](int minFrame, int maxFrame) {
           // Callback to trigger resynthesis after undo/redo
           if (project) {
-            project->setF0DirtyRange(minFrame, maxFrame);
+            project->setF0DirtyRange(minFrame, maxFrame + 1);
             if (onPitchEditFinished)
               onPitchEditFinished();
           }

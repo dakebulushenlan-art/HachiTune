@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <utility>
 
 #ifdef HAVE_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
@@ -25,6 +26,7 @@ public:
         float midiNote;
         bool isRest;
     };
+    using ChunkRange = std::pair<int, int>; // [startFrame, endFrame)
 
     SOMEDetector();
     ~SOMEDetector();
@@ -42,7 +44,8 @@ public:
     // Streaming detection - calls noteCallback for each chunk's notes as they're detected
     void detectNotesStreaming(const float* audio, int numSamples, int sampleRate,
                               std::function<void(const std::vector<NoteEvent>&)> noteCallback,
-                              std::function<void(double)> progressCallback);
+                              std::function<void(double)> progressCallback,
+                              std::function<void(const std::vector<ChunkRange>&)> chunkCallback = nullptr);
 
     int getFrameForSample(int sampleIndex) const { return sampleIndex / HOP_SIZE; }
     int getSampleForFrame(int frameIndex) const { return frameIndex * HOP_SIZE; }

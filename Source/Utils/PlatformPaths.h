@@ -36,6 +36,44 @@ namespace PlatformPaths
     #endif
     }
 
+    inline juce::File getModelFile(const juce::String& fileName)
+    {
+        auto probe = getModelsDirectory().getChildFile(fileName);
+        if (probe.existsAsFile())
+            return probe;
+
+        // Development fallback: <repo>/Resources/models/
+        auto cwdProbe = juce::File::getCurrentWorkingDirectory()
+                            .getChildFile("Resources/models")
+                            .getChildFile(fileName);
+        if (cwdProbe.existsAsFile())
+            return cwdProbe;
+
+        // Walk up from executable directory and probe both:
+        //   <dir>/models/<file>
+        //   <dir>/Resources/models/<file>
+        auto dir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                       .getParentDirectory();
+        for (int i = 0; i < 8 && dir.exists(); ++i)
+        {
+            auto modelsCandidate = dir.getChildFile("models").getChildFile(fileName);
+            if (modelsCandidate.existsAsFile())
+                return modelsCandidate;
+
+            auto resourcesCandidate = dir.getChildFile("Resources/models").getChildFile(fileName);
+            if (resourcesCandidate.existsAsFile())
+                return resourcesCandidate;
+
+            auto parent = dir.getParentDirectory();
+            if (parent == dir)
+                break;
+            dir = parent;
+        }
+
+        // Default path used in production packaging.
+        return probe;
+    }
+
     inline juce::File getLogsDirectory()
     {
     #if JUCE_MAC

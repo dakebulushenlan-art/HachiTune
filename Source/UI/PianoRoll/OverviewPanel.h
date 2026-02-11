@@ -23,6 +23,10 @@ public:
     drawBackground = shouldDraw;
     repaint();
   }
+  void setShowSomeSegmentsDebug(bool show) {
+    showSomeSegmentsDebug = show;
+    repaint();
+  }
 
   std::function<ViewState()> getViewState;
   std::function<void(double)> onScrollXChanged;
@@ -55,6 +59,7 @@ private:
 
   Project *project = nullptr;
   bool drawBackground = true;
+  bool showSomeSegmentsDebug = false;
   DragMode dragMode = DragMode::None;
   float dragStartX = 0.0f;
   double dragStartStartTime = 0.0;

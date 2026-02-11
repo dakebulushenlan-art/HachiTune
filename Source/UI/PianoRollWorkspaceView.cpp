@@ -171,6 +171,11 @@ void PianoRollWorkspaceView::refreshOverview()
     overviewPanel.repaint();
 }
 
+void PianoRollWorkspaceView::setShowSomeSegmentsDebug(bool show)
+{
+  overviewPanel.setShowSomeSegmentsDebug(show);
+}
+
 void PianoRollWorkspaceView::updateOverviewVisibility()
 {
   overviewCard.setVisible(overviewVisible);

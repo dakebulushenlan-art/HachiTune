@@ -234,15 +234,17 @@ void PitchEditor::endDrawing() {
 
   // Clear deltaPitch for notes in edited range
   if (project && minFrame <= maxFrame) {
+    const int maxFrameExclusive = maxFrame + 1;
     auto &notes = project->getNotes();
     for (auto &note : notes) {
-      if (note.getEndFrame() > minFrame && note.getStartFrame() < maxFrame) {
+      if (note.getEndFrame() > minFrame &&
+          note.getStartFrame() < maxFrameExclusive) {
         if (note.hasDeltaPitch()) {
           note.setDeltaPitch(std::vector<float>());
         }
       }
     }
-    project->setF0DirtyRange(minFrame, maxFrame);
+    project->setF0DirtyRange(minFrame, maxFrameExclusive);
   }
 
   // Create undo action
@@ -252,7 +254,7 @@ void PitchEditor::endDrawing() {
         &audioData.f0, &audioData.deltaPitch, &audioData.voicedMask,
         drawingEdits, [this](int minFrame, int maxFrame) {
           if (project) {
-            project->setF0DirtyRange(minFrame, maxFrame);
+            project->setF0DirtyRange(minFrame, maxFrame + 1);
             if (onPitchEditFinished)
               onPitchEditFinished();
           }

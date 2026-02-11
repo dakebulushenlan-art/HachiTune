@@ -386,9 +386,6 @@ void AudioAnalyzer::segmentWithSOME(Project &project) {
 
   juce::Thread::sleep(100);
 
-  // Extend note boundaries backward to capture consonant onsets
-  extendNoteBoundariesWithVad(project);
-
   if (!audioData.f0.empty())
     PitchCurveProcessor::rebuildCurvesFromSource(project, audioData.f0);
 }
@@ -552,9 +549,13 @@ void AudioAnalyzer::extendNoteBoundariesWithVad(Project &project) {
     return;
 
   const int totalFrames = static_cast<int>(audioData.vadMask.size());
+  const int f0Size = static_cast<int>(audioData.f0.size());
+  if (f0Size <= 0)
+    return;
 
   // Maximum backward extension for consonant capture (~116ms at 44.1kHz/512hop)
   constexpr int kMaxConsonantFrames = 10;
+  constexpr int kMaxTailFrames = 8;
 
   for (size_t ni = 0; ni < notes.size(); ++ni) {
     auto &note = notes[ni];
@@ -565,6 +566,9 @@ void AudioAnalyzer::extendNoteBoundariesWithVad(Project &project) {
     int prevEnd = 0;
     if (ni > 0 && !notes[ni - 1].isRest())
       prevEnd = notes[ni - 1].getEndFrame();
+    int nextStart = totalFrames;
+    if (ni + 1 < notes.size() && !notes[ni + 1].isRest())
+      nextStart = notes[ni + 1].getStartFrame();
 
     int searchStart =
         std::max(prevEnd, note.getStartFrame() - kMaxConsonantFrames);
@@ -582,5 +586,29 @@ void AudioAnalyzer::extendNoteBoundariesWithVad(Project &project) {
     if (newStart < note.getStartFrame()) {
       note.setStartFrame(newStart);
     }
+
+    // Forward extension for note tails (release consonants/noise), bounded by
+    // next note start.
+    int newEnd = note.getEndFrame();
+    int searchEnd = std::min(nextStart, note.getEndFrame() + kMaxTailFrames);
+    searchEnd = std::min(searchEnd, totalFrames);
+    for (int i = note.getEndFrame(); i < searchEnd; ++i) {
+      if (audioData.vadMask[static_cast<size_t>(i)])
+        newEnd = i + 1;
+      else
+        break;
+    }
+    if (newEnd > note.getEndFrame())
+      note.setEndFrame(newEnd);
+
+    // Keep note/f0 slice consistent after boundary change.
+    int clampedStart = std::max(0, std::min(note.getStartFrame(), f0Size - 1));
+    int clampedEnd = std::max(clampedStart + 1, std::min(note.getEndFrame(), f0Size));
+    note.setStartFrame(clampedStart);
+    note.setEndFrame(clampedEnd);
+
+    std::vector<float> f0Values(audioData.f0.begin() + clampedStart,
+                                audioData.f0.begin() + clampedEnd);
+    note.setF0Values(std::move(f0Values));
   }
 }

@@ -144,6 +144,60 @@ SettingsComponent::SettingsComponent(
   pitchDetectorComboBox.setLookAndFeel(&settingsLookAndFeel);
   addAndMakeVisible(pitchDetectorComboBox);
 
+  someSegmentsDebugLabel.setText("Show SOME chunks (debug)",
+                                 juce::dontSendNotification);
+  configureRowLabel(someSegmentsDebugLabel);
+  addAndMakeVisible(someSegmentsDebugLabel);
+
+  someSegmentsDebugToggle.setButtonText("");
+  someSegmentsDebugToggle.setClickingTogglesState(true);
+  someSegmentsDebugToggle.onClick = [this]() {
+    showSomeSegmentsDebug = someSegmentsDebugToggle.getToggleState();
+    if (settingsManager) {
+      settingsManager->setShowSomeSegmentsDebug(showSomeSegmentsDebug);
+      settingsManager->saveConfig();
+    }
+    if (onShowSomeSegmentsDebugChanged)
+      onShowSomeSegmentsDebugChanged(showSomeSegmentsDebug);
+  };
+  addAndMakeVisible(someSegmentsDebugToggle);
+
+  uvInterpolationDebugLabel.setText("Show UV interpolation (debug)",
+                                    juce::dontSendNotification);
+  configureRowLabel(uvInterpolationDebugLabel);
+  addAndMakeVisible(uvInterpolationDebugLabel);
+
+  uvInterpolationDebugToggle.setButtonText("");
+  uvInterpolationDebugToggle.setClickingTogglesState(true);
+  uvInterpolationDebugToggle.onClick = [this]() {
+    showUvInterpolationDebug = uvInterpolationDebugToggle.getToggleState();
+    if (settingsManager) {
+      settingsManager->setShowUvInterpolationDebug(showUvInterpolationDebug);
+      settingsManager->saveConfig();
+    }
+    if (onShowUvInterpolationDebugChanged)
+      onShowUvInterpolationDebugChanged(showUvInterpolationDebug);
+  };
+  addAndMakeVisible(uvInterpolationDebugToggle);
+
+  actualF0DebugLabel.setText("Show actual F0 (debug)",
+                             juce::dontSendNotification);
+  configureRowLabel(actualF0DebugLabel);
+  addAndMakeVisible(actualF0DebugLabel);
+
+  actualF0DebugToggle.setButtonText("");
+  actualF0DebugToggle.setClickingTogglesState(true);
+  actualF0DebugToggle.onClick = [this]() {
+    showActualF0Debug = actualF0DebugToggle.getToggleState();
+    if (settingsManager) {
+      settingsManager->setShowActualF0Debug(showActualF0Debug);
+      settingsManager->saveConfig();
+    }
+    if (onShowActualF0DebugChanged)
+      onShowActualF0DebugChanged(showActualF0Debug);
+  };
+  addAndMakeVisible(actualF0DebugToggle);
+
   // Info label
   infoLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
   infoLabel.setFont(AppFont::getFont(13.0f));
@@ -241,6 +295,9 @@ SettingsComponent::~SettingsComponent() {
   sampleRateComboBox.setLookAndFeel(nullptr);
   bufferSizeComboBox.setLookAndFeel(nullptr);
   outputChannelsComboBox.setLookAndFeel(nullptr);
+  someSegmentsDebugToggle.setLookAndFeel(nullptr);
+  uvInterpolationDebugToggle.setLookAndFeel(nullptr);
+  actualF0DebugToggle.setLookAndFeel(nullptr);
 }
 
 void SettingsComponent::changeListenerCallback(
@@ -344,6 +401,9 @@ void SettingsComponent::resized() {
     }
 
     layoutRow(pitchDetectorLabel, pitchDetectorComboBox);
+    layoutRow(someSegmentsDebugLabel, someSegmentsDebugToggle);
+    layoutRow(uvInterpolationDebugLabel, uvInterpolationDebugToggle);
+    layoutRow(actualF0DebugLabel, actualF0DebugToggle);
 
     infoLabel.setBounds(content.removeFromTop(56));
     content.removeFromTop(12);
@@ -524,6 +584,12 @@ void SettingsComponent::updateTabVisibility() {
   gpuDeviceComboBox.setVisible(showGeneral && showGpuDeviceList);
   pitchDetectorLabel.setVisible(showGeneral);
   pitchDetectorComboBox.setVisible(showGeneral);
+  someSegmentsDebugLabel.setVisible(showGeneral);
+  someSegmentsDebugToggle.setVisible(showGeneral);
+  uvInterpolationDebugLabel.setVisible(showGeneral);
+  uvInterpolationDebugToggle.setVisible(showGeneral);
+  actualF0DebugLabel.setVisible(showGeneral);
+  actualF0DebugToggle.setVisible(showGeneral);
   infoLabel.setVisible(showGeneral);
 
   audioSectionLabel.setVisible(showAudio);
@@ -839,6 +905,9 @@ void SettingsComponent::loadSettings() {
     currentDevice = settingsManager->getDevice();
     gpuDeviceId = settingsManager->getGPUDeviceId();
     pitchDetectorType = settingsManager->getPitchDetectorType();
+    showSomeSegmentsDebug = settingsManager->getShowSomeSegmentsDebug();
+    showUvInterpolationDebug = settingsManager->getShowUvInterpolationDebug();
+    showActualF0Debug = settingsManager->getShowActualF0Debug();
 
     auto langCode = settingsManager->getLanguage();
     if (langCode == "auto") {
@@ -880,6 +949,13 @@ void SettingsComponent::loadSettings() {
   else if (pitchDetectorType == PitchDetectorType::FCPE)
     pitchDetectorComboBox.setSelectedId(2, juce::dontSendNotification);
 
+  someSegmentsDebugToggle.setToggleState(showSomeSegmentsDebug,
+                                         juce::dontSendNotification);
+  uvInterpolationDebugToggle.setToggleState(showUvInterpolationDebug,
+                                            juce::dontSendNotification);
+  actualF0DebugToggle.setToggleState(showActualF0Debug,
+                                     juce::dontSendNotification);
+
   hasLoadedSettings = true;
   lastConfirmedDevice = currentDevice;
   lastConfirmedGpuDeviceId = gpuDeviceId;
@@ -905,6 +981,9 @@ void SettingsComponent::saveSettings() {
     settingsManager->setGPUDeviceId(gpuDeviceId);
     settingsManager->setPitchDetectorType(pitchDetectorType);
     settingsManager->setLanguage(langCode);
+    settingsManager->setShowSomeSegmentsDebug(showSomeSegmentsDebug);
+    settingsManager->setShowUvInterpolationDebug(showUvInterpolationDebug);
+    settingsManager->setShowActualF0Debug(showActualF0Debug);
     settingsManager->saveConfig();
   }
 }

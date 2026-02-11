@@ -64,14 +64,27 @@ namespace PitchCurveProcessor
 
         const int n = static_cast<int>(pitchHz.size());
         std::vector<float> dense(pitchHz);
-        if (uvMask.empty())
-            return dense;
+
+        auto isVoicedFrame = [&](int i) -> bool {
+            if (i < 0 || i >= n)
+                return false;
+
+            const bool hasPitch = pitchHz[static_cast<size_t>(i)] > 0.0f;
+            if (!hasPitch)
+                return false;
+
+            // If uvMask is provided, respect it (out-of-range treated as unvoiced).
+            // If uvMask is missing, fall back to pitch presence.
+            if (!uvMask.empty())
+                return i < static_cast<int>(uvMask.size()) && uvMask[static_cast<size_t>(i)];
+            return true;
+        };
 
         int nextVoiced = -1;
         auto findNext = [&](int idx) -> int {
             for (int i = idx; i < n; ++i)
             {
-                if (uvMask[i] && pitchHz[i] > 0.0f)
+                if (isVoicedFrame(i))
                     return i;
             }
             return -1;
@@ -82,7 +95,7 @@ namespace PitchCurveProcessor
 
         for (int i = 0; i < n; ++i)
         {
-            const bool voiced = i < static_cast<int>(uvMask.size()) && uvMask[i] && pitchHz[i] > 0.0f;
+            const bool voiced = isVoicedFrame(i);
             if (voiced)
             {
                 lastVoiced = i;
@@ -133,6 +146,15 @@ namespace PitchCurveProcessor
         const int totalFrames = static_cast<int>(sourcePitchHz.size());
         ensureSizes(audioData, totalFrames);
 
+        // Ensure delta is built from a dense F0 source that includes UV
+        // head/tail fill (same behavior expectation as F0 interpolation).
+        std::vector<float> denseSource = sourcePitchHz;
+        if (!audioData.voicedMask.empty() &&
+            audioData.voicedMask.size() == sourcePitchHz.size())
+        {
+            denseSource = interpolateWithUvMask(sourcePitchHz, audioData.voicedMask);
+        }
+
         auto segments = collectNoteSegments(project.getNotes());
         if (!segments.empty())
         {
@@ -144,7 +166,7 @@ namespace PitchCurveProcessor
             // Fallback: derive base from source pitch directly
             audioData.basePitch.assign(static_cast<size_t>(totalFrames), 0.0f);
             for (int i = 0; i < totalFrames; ++i)
-                audioData.basePitch[static_cast<size_t>(i)] = safeFreqToMidi(sourcePitchHz[i]);
+                audioData.basePitch[static_cast<size_t>(i)] = safeFreqToMidi(denseSource[i]);
         }
 
         // Dense delta: midi(source) - base
@@ -152,7 +174,7 @@ namespace PitchCurveProcessor
         for (int i = 0; i < totalFrames; ++i)
         {
             const float base = audioData.basePitch[static_cast<size_t>(i)];
-            const float midi = safeFreqToMidi(sourcePitchHz[i]);
+            const float midi = safeFreqToMidi(denseSource[i]);
             audioData.deltaPitch[static_cast<size_t>(i)] = midi - base;
         }
 
@@ -226,5 +248,3 @@ namespace PitchCurveProcessor
         audioData.f0 = std::move(composed);
     }
 } // namespace PitchCurveProcessor
-
-
