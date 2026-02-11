@@ -2553,6 +2553,22 @@ void PianoRollComponent::updateStretchDrag(int targetFrame) {
                                i] = stretchDrag.originalMelRangeFull[i];
   }
 
+  auto smoothResampledVoiced = [](std::vector<bool> &mask) {
+    if (mask.size() < 3)
+      return;
+    std::vector<bool> smoothed(mask);
+    for (size_t i = 1; i + 1 < mask.size(); ++i) {
+      const bool p = mask[i - 1];
+      const bool c = mask[i];
+      const bool n = mask[i + 1];
+      if (!c && p && n)
+        smoothed[i] = true;
+      else if (c && !p && !n)
+        smoothed[i] = false;
+    }
+    mask.swap(smoothed);
+  };
+
   // Update left note if exists
   if (stretchDrag.boundary.left && newLeftLength > 0 && !stretchDrag.leftDelta.empty()) {
     const int leftStart = stretchDrag.originalLeftStart;
@@ -2560,6 +2576,7 @@ void PianoRollComponent::updateStretchDrag(int targetFrame) {
         CurveResampler::resampleLinear(stretchDrag.leftDelta, newLeftLength);
     auto newLeftVoiced =
         CurveResampler::resampleNearest(stretchDrag.leftVoiced, newLeftLength);
+    smoothResampledVoiced(newLeftVoiced);
 
     for (int i = 0; i < newLeftLength; ++i) {
       audioData.deltaPitch[static_cast<size_t>(leftStart + i)] =
@@ -2585,6 +2602,7 @@ void PianoRollComponent::updateStretchDrag(int targetFrame) {
         CurveResampler::resampleLinear(stretchDrag.rightDelta, newRightLength);
     auto newRightVoiced =
         CurveResampler::resampleNearest(stretchDrag.rightVoiced, newRightLength);
+    smoothResampledVoiced(newRightVoiced);
 
     for (int i = 0; i < newRightLength; ++i) {
       audioData.deltaPitch[static_cast<size_t>(targetFrame + i)] =
@@ -2881,11 +2899,17 @@ void PianoRollComponent::finishStretchDrag() {
     undoManager->addAction(std::move(action));
   }
 
-  // Silence waveform regions outside the current note boundaries
-  // This ensures that when a note is shrunk, the previously synthesized audio is cleared
+  // Restore waveform regions outside current note boundaries to original audio.
+  // Writing zeros here creates hard discontinuities and can cause spikes.
   if (audioData.waveform.getNumSamples() > 0) {
     const int totalSamples = audioData.waveform.getNumSamples();
     const int numChannels = audioData.waveform.getNumChannels();
+    const auto &origWave =
+        audioData.originalWaveform.getNumSamples() > 0
+            ? audioData.originalWaveform
+            : audioData.waveform;
+    const int origChannels = origWave.getNumChannels();
+    const int origSamples = origWave.getNumSamples();
 
     // Calculate the sample range that should remain as note audio
     int noteStartSample, noteEndSample;
@@ -2903,27 +2927,31 @@ void PianoRollComponent::finishStretchDrag() {
       noteEndSample = stretchDrag.originalRightEnd * HOP_SIZE;
     }
 
-    // Silence waveform outside the note boundaries
+    // Restore waveform outside the note boundaries
     const int rangeStartSample = stretchDrag.rangeStartFull * HOP_SIZE;
     const int rangeEndSample = stretchDrag.rangeEndFull * HOP_SIZE;
 
     for (int ch = 0; ch < numChannels; ++ch) {
       float* dst = audioData.waveform.getWritePointer(ch);
+      const float* srcOrig =
+          origWave.getReadPointer(std::min(ch, std::max(0, origChannels - 1)));
 
-      // Silence before note start (if within our range)
+      // Restore before note start (if within our range)
       if (rangeStartSample < noteStartSample) {
         const int silenceEnd = std::min(noteStartSample, totalSamples);
         for (int i = std::max(0, rangeStartSample); i < silenceEnd; ++i) {
-          dst[i] = 0.0f;
+          if (i < origSamples)
+            dst[i] = srcOrig[i];
         }
       }
 
-      // Silence after note end (if within our range)
+      // Restore after note end (if within our range)
       if (rangeEndSample > noteEndSample) {
         const int silenceStart = std::max(0, noteEndSample);
         const int silenceEnd = std::min(rangeEndSample, totalSamples);
         for (int i = silenceStart; i < silenceEnd; ++i) {
-          dst[i] = 0.0f;
+          if (i < origSamples)
+            dst[i] = srcOrig[i];
         }
       }
     }

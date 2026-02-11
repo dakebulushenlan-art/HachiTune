@@ -165,9 +165,10 @@ std::vector<float> Project::getAdjustedF0() const
     if (audioData.basePitch.empty() || audioData.deltaPitch.empty())
         return {};
 
-    // Compose base + delta with UV applied and global offset
+    // Compose base + delta as dense curve; UV blending is handled downstream
+    // by synthesis masks, so we do not zero F0 here.
     std::vector<float> adjustedF0 = PitchCurveProcessor::composeF0(*this,
-                                                                   /*applyUvMask=*/true,
+                                                                   /*applyUvMask=*/false,
                                                                    globalPitchOffset);
 
     // Apply vibrato per note on top of composed curve
@@ -220,10 +221,7 @@ std::vector<float> Project::getAdjustedF0ForRange(int startFrame, int endFrame) 
                                 ? audioData.deltaPitch[static_cast<size_t>(globalIdx)]
                                 : 0.0f;
         float midi = base + delta + globalPitchOffset;
-        float freq = midiToFreq(midi);
-        if (globalIdx < static_cast<int>(audioData.voicedMask.size()) && !audioData.voicedMask[globalIdx])
-            freq = 0.0f;
-        adjustedF0[static_cast<size_t>(i)] = freq;
+        adjustedF0[static_cast<size_t>(i)] = midiToFreq(midi);
     }
 
     // Apply vibrato for overlapping notes

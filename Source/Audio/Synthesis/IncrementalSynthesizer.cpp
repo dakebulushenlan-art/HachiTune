@@ -2,66 +2,6 @@
 #include "../../Utils/Localization.h"
 #include <algorithm>
 #include <cstdint>
-#include <cmath>
-
-namespace {
-std::vector<float> makeDenseF0ForInference(const std::vector<float> &f0) {
-  if (f0.empty())
-    return {};
-
-  std::vector<float> dense(f0);
-  const int n = static_cast<int>(dense.size());
-
-  auto isVoiced = [&](int i) { return dense[static_cast<size_t>(i)] > 0.0f; };
-
-  int lastVoiced = -1;
-  int i = 0;
-  while (i < n) {
-    if (isVoiced(i)) {
-      lastVoiced = i;
-      ++i;
-      continue;
-    }
-
-    const int gapStart = i;
-    while (i < n && !isVoiced(i))
-      ++i;
-    const int gapEnd = i; // [gapStart, gapEnd)
-
-    const int nextVoiced = (gapEnd < n) ? gapEnd : -1;
-    const float prevVal =
-        (lastVoiced >= 0) ? dense[static_cast<size_t>(lastVoiced)] : 0.0f;
-    const float nextVal =
-        (nextVoiced >= 0) ? dense[static_cast<size_t>(nextVoiced)] : 0.0f;
-
-    if (prevVal <= 0.0f && nextVal <= 0.0f)
-      continue;
-
-    if (prevVal <= 0.0f) {
-      for (int k = gapStart; k < gapEnd; ++k)
-        dense[static_cast<size_t>(k)] = nextVal;
-      continue;
-    }
-
-    if (nextVal <= 0.0f) {
-      for (int k = gapStart; k < gapEnd; ++k)
-        dense[static_cast<size_t>(k)] = prevVal;
-      continue;
-    }
-
-    const float logA = std::log(prevVal);
-    const float logB = std::log(nextVal);
-    const float denom = static_cast<float>(nextVoiced - lastVoiced);
-    for (int k = gapStart; k < gapEnd; ++k) {
-      const float t = static_cast<float>(k - lastVoiced) / denom;
-      dense[static_cast<size_t>(k)] =
-          std::exp(logA * (1.0f - t) + logB * t);
-    }
-  }
-
-  return dense;
-}
-} // namespace
 
 IncrementalSynthesizer::IncrementalSynthesizer() = default;
 
@@ -94,7 +34,7 @@ IncrementalSynthesizer::computeSynthesisRange(int dirtyStart, int dirtyEnd) {
   constexpr int kPadFrames = 24;
   // Bridge short UV gaps so adjacent notes around consonants are synthesized
   // together; this avoids junction phase resets between neighboring notes.
-  constexpr int kGapBridgeFrames = 8;
+  constexpr int kGapBridgeFrames = 16;
 
   auto isVoiced = [&](int idx) -> bool {
     return idx >= 0 && idx < totalFrames && static_cast<bool>(voicedMask[idx]);
@@ -153,53 +93,39 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
   const int numFrames = endFrame - startFrame;
   const int numSamples = numFrames * hopSize;
 
-  // Step 1: per-frame binary mask
-  std::vector<float> frameMask(numFrames, 0.0f);
-  for (int i = 0; i < numFrames; ++i) {
-    int gf = startFrame + i;
-    const bool voiced =
-        gf >= 0 && gf < totalFrames && static_cast<bool>(voicedMask[gf]);
-    if (voiced)
-      frameMask[i] = 1.0f;
-  }
+  // Step 1: stability-first frame mask.
+  // Default to synthesized audio in the whole region to avoid internal
+  // orig/synth combing artifacts at note junctions.
+  std::vector<float> frameMask(numFrames, 1.0f);
 
-  // Remove 1-frame toggles in uv mask to avoid zipper-like stitching artifacts.
-  if (numFrames >= 3) {
-    std::vector<float> cleaned(frameMask);
-    for (int i = 1; i < numFrames - 1; ++i) {
-      const float prev = frameMask[i - 1];
-      const float cur = frameMask[i];
-      const float next = frameMask[i + 1];
-      if (cur == 0.0f && prev == 1.0f && next == 1.0f)
-        cleaned[i] = 1.0f;
-      else if (cur == 1.0f && prev == 0.0f && next == 0.0f)
-        cleaned[i] = 0.0f;
-    }
-    frameMask.swap(cleaned);
-  }
-
-  // Bridge short unvoiced holes between voiced regions to keep local phase
-  // continuity at note junctions (especially consonant transitions).
-  constexpr int kBlendBridgeFrames = 4;
-  if (numFrames >= 3) {
+  // Keep original audio only for long unvoiced runs (e.g. clear breaths/silence),
+  // not for short UV gaps between notes.
+  constexpr int kKeepOriginalUnvoicedFrames = 24;
+  if (numFrames > 0 && totalFrames > 0) {
     int i = 0;
     while (i < numFrames) {
-      if (frameMask[i] > 0.0f) {
+      const int gf = startFrame + i;
+      const bool voiced =
+          gf >= 0 && gf < totalFrames && static_cast<bool>(voicedMask[gf]);
+      if (voiced) {
         ++i;
         continue;
       }
 
-      const int gapStart = i;
-      while (i < numFrames && frameMask[i] <= 0.0f)
+      const int runStart = i;
+      while (i < numFrames) {
+        const int g = startFrame + i;
+        const bool v =
+            g >= 0 && g < totalFrames && static_cast<bool>(voicedMask[g]);
+        if (v)
+          break;
         ++i;
-      const int gapEnd = i; // [gapStart, gapEnd)
-      const int gapLen = gapEnd - gapStart;
-      const bool leftVoiced = gapStart > 0 && frameMask[gapStart - 1] > 0.0f;
-      const bool rightVoiced = gapEnd < numFrames && frameMask[gapEnd] > 0.0f;
-
-      if (leftVoiced && rightVoiced && gapLen <= kBlendBridgeFrames) {
-        for (int k = gapStart; k < gapEnd; ++k)
-          frameMask[k] = 1.0f;
+      }
+      const int runEnd = i;
+      const int runLen = runEnd - runStart;
+      if (runLen >= kKeepOriginalUnvoicedFrames) {
+        for (int k = runStart; k < runEnd; ++k)
+          frameMask[k] = 0.0f;
       }
     }
   }
@@ -322,9 +248,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       audioData.melSpectrogram.begin() + endFrame);
   std::vector<float> adjustedF0Range =
       project->getAdjustedF0ForRange(startFrame, endFrame);
-  std::vector<float> denseF0Range = makeDenseF0ForInference(adjustedF0Range);
 
-  if (melRange.empty() || adjustedF0Range.empty() || denseF0Range.empty()) {
+  if (melRange.empty() || adjustedF0Range.empty()) {
     if (onComplete)
       onComplete(false);
     return;
@@ -348,7 +273,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   DBG("synthesizeRegion: frames [" << startFrame << ", " << endFrame << "]");
 
   vocoder->inferAsync(
-      melRange, denseF0Range,
+      melRange, adjustedF0Range,
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
        blendMask = std::move(blendMask),
@@ -411,23 +336,13 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             return;
           }
 
-          constexpr int kMinBoundaryBlendSamples = 512;
-          constexpr int kMaxBoundaryBlendSamples = 4096;
+          constexpr int kMinBoundaryBlendSamples = 128;
+          constexpr int kMaxBoundaryBlendSamples = 1024;
           const int preferredBlend =
-              std::max(kMinBoundaryBlendSamples, hopSize * 2);
+              std::max(kMinBoundaryBlendSamples, hopSize);
           const int boundaryBlendLen = std::min(
               std::min(kMaxBoundaryBlendSamples, preferredBlend),
-              samplesToWrite / 2);
-
-          // Snapshot current waveform segment so the replacement can be
-          // stitched back with guaranteed edge continuity.
-          std::vector<std::vector<float>> currentSegment(
-              numChannels, std::vector<float>(samplesToWrite, 0.0f));
-          for (int ch = 0; ch < numChannels; ++ch) {
-            const float *src = audioData.waveform.getReadPointer(ch);
-            std::copy(src + startSample, src + startSample + samplesToWrite,
-                      currentSegment[ch].begin());
-          }
+              std::max(1, samplesToWrite / 8));
 
           // Build target from model/original blend once.
           std::vector<float> targetSegment(samplesToWrite, 0.0f);
@@ -440,8 +355,9 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 b * synth + (1.0f - b) * orig;
           }
 
-          // Stitch target into current waveform with a smooth edge envelope:
-          // final = current + edgeEnv * (target - current)
+          // Stitch target using original segment as reference:
+          // final = original + edgeEnv * (target - original)
+          // This avoids cumulative old/new layering across repeated edits.
           for (int ch = 0; ch < numChannels; ++ch) {
             float *dst = audioData.waveform.getWritePointer(ch);
             for (int i = 0; i < samplesToWrite; ++i) {
@@ -459,7 +375,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 }
               }
 
-              const float cur = currentSegment[ch][static_cast<size_t>(i)];
+              const float cur = originalSegment[static_cast<size_t>(i)];
               const float target = targetSegment[static_cast<size_t>(i)];
               dst[startSample + i] = cur + edgeEnv * (target - cur);
             }
