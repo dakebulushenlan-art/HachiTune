@@ -19,6 +19,8 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addCommandItem(commandManager, CommandIDs::redo);
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::selectAll);
+                menu.addSeparator();
+                menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
             }
         } else if (menuIndex == 1) {
             // View menu
@@ -64,6 +66,8 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                 menu.addCommandItem(commandManager, CommandIDs::redo);
                 menu.addSeparator();
                 menu.addCommandItem(commandManager, CommandIDs::selectAll);
+                menu.addSeparator();
+                menu.addCommandItem(commandManager, CommandIDs::fourierFilter);
             }
         } else if (menuIndex == 2) {
             // View menu

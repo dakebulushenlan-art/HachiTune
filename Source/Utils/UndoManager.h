@@ -730,6 +730,97 @@ private:
 };
 
 /**
+ * Undo action for pitch tool operations (tilt, reduce variance, smooth, fourier).
+ * Stores old and new deltaPitch curves for one or more notes and restores them on undo/redo.
+ */
+class PitchToolAction : public UndoableAction
+{
+public:
+  PitchToolAction(
+      Project* project,
+      std::vector<Note*> affectedNotes,
+      const std::vector<std::vector<float>>& oldPitchCurves,
+      const std::vector<std::vector<float>>& newPitchCurves,
+      std::function<void(int, int)> onRangeChanged = nullptr)
+      : project(project),
+        notes(std::move(affectedNotes)),
+        oldPitchCurves(oldPitchCurves),
+        newPitchCurves(newPitchCurves),
+        onRangeChanged(std::move(onRangeChanged)) {}
+
+  void undo() override
+  {
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+      if (notes[i] && i < oldPitchCurves.size())
+      {
+        notes[i]->setDeltaPitch(oldPitchCurves[i]);
+        
+        // Sync to audioData.deltaPitch
+        if (project)
+        {
+          auto& audioData = project->getAudioData();
+          const int startFrame = notes[i]->getStartFrame();
+          const int endFrame = notes[i]->getEndFrame();
+          const int numFrames = endFrame - startFrame;
+          const auto& curve = oldPitchCurves[i];
+          
+          for (int frameIdx = 0; frameIdx < numFrames && frameIdx < static_cast<int>(curve.size()); ++frameIdx)
+          {
+            const int globalFrameIdx = startFrame + frameIdx;
+            if (globalFrameIdx >= 0 && globalFrameIdx < static_cast<int>(audioData.deltaPitch.size()))
+              audioData.deltaPitch[static_cast<size_t>(globalFrameIdx)] = curve[static_cast<size_t>(frameIdx)];
+          }
+        }
+        
+        if (onRangeChanged)
+          onRangeChanged(notes[i]->getStartFrame(), notes[i]->getEndFrame());
+      }
+    }
+  }
+
+  void redo() override
+  {
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+      if (notes[i] && i < newPitchCurves.size())
+      {
+        notes[i]->setDeltaPitch(newPitchCurves[i]);
+        
+        // Sync to audioData.deltaPitch
+        if (project)
+        {
+          auto& audioData = project->getAudioData();
+          const int startFrame = notes[i]->getStartFrame();
+          const int endFrame = notes[i]->getEndFrame();
+          const int numFrames = endFrame - startFrame;
+          const auto& curve = newPitchCurves[i];
+          
+          for (int frameIdx = 0; frameIdx < numFrames && frameIdx < static_cast<int>(curve.size()); ++frameIdx)
+          {
+            const int globalFrameIdx = startFrame + frameIdx;
+            if (globalFrameIdx >= 0 && globalFrameIdx < static_cast<int>(audioData.deltaPitch.size()))
+              audioData.deltaPitch[static_cast<size_t>(globalFrameIdx)] = curve[static_cast<size_t>(frameIdx)];
+          }
+        }
+        
+        if (onRangeChanged)
+          onRangeChanged(notes[i]->getStartFrame(), notes[i]->getEndFrame());
+      }
+    }
+  }
+
+  juce::String getName() const override { return "Apply Pitch Tool"; }
+
+private:
+  Project* project;
+  std::vector<Note*> notes;
+  std::vector<std::vector<float>> oldPitchCurves;
+  std::vector<std::vector<float>> newPitchCurves;
+  std::function<void(int, int)> onRangeChanged;
+};
+
+/**
  * Simple undo manager for the pitch editor.
  */
 class PitchUndoManager

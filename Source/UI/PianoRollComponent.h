@@ -13,6 +13,8 @@
 #include "PianoRoll/NoteSplitter.h"
 #include "PianoRoll/PianoRollRenderer.h"
 #include "PianoRoll/PitchEditor.h"
+#include "PianoRoll/PitchToolController.h"
+#include "PianoRoll/PitchToolHandles.h"
 #include "PianoRoll/ScrollZoomController.h"
 
 #include <deque>
@@ -70,6 +72,7 @@ public:
   // Project
   void setProject(Project *proj);
   Project *getProject() const { return project; }
+  std::vector<Note *> getSelectedNotes() const;
 
   // Undo Manager
   void setUndoManager(PitchUndoManager *manager);
@@ -155,6 +158,7 @@ private:
   void drawSomeSegmentDebugOverlay(juce::Graphics &g);
   void drawSomeValuesDebugOverlay(juce::Graphics &g);
   void drawStretchGuides(juce::Graphics &g);
+  void updatePitchToolHandlesFromSelection();
 
   float midiToY(float midiNote) const;
   float yToMidi(float y) const;
@@ -225,6 +229,9 @@ private:
   std::unique_ptr<PitchEditor> pitchEditor;
   std::unique_ptr<BoxSelector> boxSelector;
   std::unique_ptr<NoteSplitter> noteSplitter;
+  std::unique_ptr<PitchToolHandles> pitchToolHandles;
+  std::unique_ptr<PitchToolController> pitchToolController;
+  int hoveredPitchToolHandle = -1;
 
   float pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
   float pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;

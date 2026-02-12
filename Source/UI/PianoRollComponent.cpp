@@ -19,6 +19,8 @@ PianoRollComponent::PianoRollComponent() {
   pitchEditor = std::make_unique<PitchEditor>();
   boxSelector = std::make_unique<BoxSelector>();
   noteSplitter = std::make_unique<NoteSplitter>();
+  pitchToolHandles = std::make_unique<PitchToolHandles>();
+  pitchToolController = std::make_unique<PitchToolController>();
   centeredMelComputer = std::make_unique<CenteredMelSpectrogram>(
       SAMPLE_RATE, N_FFT, WIN_SIZE, NUM_MELS, FMIN, FMAX);
 
@@ -55,6 +57,13 @@ PianoRollComponent::PianoRollComponent() {
   };
   pitchEditor->onBasePitchCacheInvalidated = [this]() {
     invalidateBasePitchCache();
+  };
+
+  // Setup pitchToolController callbacks
+  pitchToolController->onPitchEdited = [this]() {
+    repaint();
+    if (onPitchEdited)
+      onPitchEdited();
   };
 
   // Setup noteSplitter callbacks
@@ -110,6 +119,8 @@ int PianoRollComponent::getVisibleContentHeight() const {
 }
 
 void PianoRollComponent::paint(juce::Graphics &g) {
+  updatePitchToolHandlesFromSelection();
+
   // Apply rounded corner clipping
   const float cornerRadius = 8.0f;
   juce::Path clipPath;
@@ -136,7 +147,7 @@ void PianoRollComponent::paint(juce::Graphics &g) {
     drawBackgroundWaveform(g, mainArea);
   }
 
-  // Draw scrolled content (grid, notes, pitch curves)
+  // Draw scrolled content (grid, notes, pitch curves, handles)
   {
     juce::Graphics::ScopedSaveState saveState(g);
     g.reduceClipRegion(mainArea);
@@ -151,6 +162,11 @@ void PianoRollComponent::paint(juce::Graphics &g) {
     drawPitchCurves(g);
     drawSomeValuesDebugOverlay(g);
     drawSelectionRect(g);
+    
+    // Draw pitch tool handles in world space (transform applied by g.setOrigin above)
+    if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty()) {
+      pitchToolHandles->draw(g);
+    }
   }
 
   // Draw timeline (above grid, scrolls horizontally)
@@ -1616,6 +1632,17 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
   if (e.y < headerHeight || e.x < pianoKeysWidth)
     return;
 
+  if (editMode == EditMode::Select && pitchToolController && pitchToolHandles) {
+    // Create adjusted mouse event with world coordinates (adjusted for header/piano keys and scroll)
+    juce::MouseEvent adjustedEvent = e.withNewPosition(
+      juce::Point<float>(adjustedX, adjustedY)
+    );
+    if (pitchToolController->mouseDown(adjustedEvent, *pitchToolHandles, getSelectedNotes(),
+                                       *coordMapper)) {
+      return;
+    }
+  }
+
   if (editMode == EditMode::Stretch) {
     int boundaryIndex =
         findStretchBoundaryIndex(adjustedX, stretchHandleHitPadding);
@@ -1633,6 +1660,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
     if (note) {
       project->deselectAllNotes();
       note->setSelected(true);
+      updatePitchToolHandlesFromSelection();
       if (onNoteSelected)
         onNoteSelected(note);
       repaint();
@@ -1641,6 +1669,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
 
     // Box selection fallback
     project->deselectAllNotes();
+    updatePitchToolHandlesFromSelection();
     boxSelector->startSelection(adjustedX, adjustedY);
     repaint();
     return;
@@ -1847,6 +1876,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
       // Single note selection and drag
       project->deselectAllNotes();
       note->setSelected(true);
+      updatePitchToolHandlesFromSelection();
 
       if (onNoteSelected)
         onNoteSelected(note);
@@ -1893,6 +1923,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
   } else {
     // Clicked on empty area - start box selection
     project->deselectAllNotes();
+    updatePitchToolHandlesFromSelection();
     boxSelector->startSelection(adjustedX, adjustedY);
     repaint();
   }
@@ -1977,6 +2008,24 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e) {
       lastDragRepaintTime = now;
     }
     return;
+  }
+
+  if (editMode == EditMode::Select && pitchToolController &&
+      pitchToolController->isDragging()) {
+    // Create adjusted mouse event with world coordinates (adjusted for header/piano keys and scroll)
+    juce::MouseEvent adjustedEvent = e.withNewPosition(
+      juce::Point<float>(adjustedX, adjustedY)
+    );
+    auto selectedNotes = getSelectedNotes();
+    if (pitchToolController->mouseDrag(adjustedEvent, selectedNotes, *coordMapper)) {
+      if (onPitchEdited)
+        onPitchEdited();
+      if (shouldRepaint) {
+        repaint();
+        lastDragRepaintTime = now;
+      }
+      return;
+    }
   }
 
   if (isDeltaScaleDragging && project) {
@@ -2144,6 +2193,22 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e) {
     return;
   }
 
+  if (editMode == EditMode::Select && pitchToolController &&
+      pitchToolController->isDragging()) {
+    auto onRangeChanged = [this](int startFrame, int endFrame) {
+      if (onReinterpolateUV)
+        onReinterpolateUV(startFrame, endFrame);
+    };
+    pitchToolController->mouseUp(e, undoManager, onRangeChanged);
+    updatePitchToolHandlesFromSelection();
+    if (onPitchEdited)
+      onPitchEdited();
+    if (onPitchEditFinished)
+      onPitchEditFinished();
+    repaint();
+    return;
+  }
+
   if (isDeltaScaleDragging && project) {
     const bool hasChange = std::abs(deltaScaleFactor - 1.0f) >= 0.001f;
     auto &audioData = project->getAudioData();
@@ -2259,6 +2324,7 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e) {
       note->setSelected(true);
     }
     boxSelector->endSelection();
+    updatePitchToolHandlesFromSelection();
     repaint();
     return;
   }
@@ -2450,6 +2516,21 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e) {
     // Clear guide when leaving split mode
     splitGuideX = -1.0f;
     splitGuideNote = nullptr;
+    repaint();
+  }
+
+  if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty() &&
+      e.y >= headerHeight && e.x >= pianoKeysWidth) {
+    int hitIndex = pitchToolHandles->hitTest(e.position.x, e.position.y);
+    if (hitIndex != hoveredPitchToolHandle) {
+      hoveredPitchToolHandle = hitIndex;
+      pitchToolHandles->setHoveredHandleIndex(hitIndex);
+      repaint();
+    }
+  } else if (hoveredPitchToolHandle != -1) {
+    hoveredPitchToolHandle = -1;
+    if (pitchToolHandles)
+      pitchToolHandles->setHoveredHandleIndex(-1);
     repaint();
   }
 }
@@ -2759,6 +2840,7 @@ void PianoRollComponent::setProject(Project *proj) {
   scrollZoomController->setProject(proj);
   pitchEditor->setProject(proj);
   noteSplitter->setProject(proj);
+  pitchToolController->setProject(proj);
 
   // Clear all caches when project changes to free memory
   invalidateBasePitchCache();
@@ -2767,6 +2849,8 @@ void PianoRollComponent::setProject(Project *proj) {
   cachedPixelsPerSecond = -1.0f;
   cachedWidth = 0;
   cachedHeight = 0;
+
+  updatePitchToolHandlesFromSelection();
 
   updateScrollBars();
   repaint();
@@ -2953,7 +3037,45 @@ void PianoRollComponent::setEditMode(EditMode mode) {
     hoveredStretchBoundaryIndex = -1;
   }
 
+  if (mode != EditMode::Select) {
+    hoveredPitchToolHandle = -1;
+    if (pitchToolHandles)
+      pitchToolHandles->setHoveredHandleIndex(-1);
+  }
+  updatePitchToolHandlesFromSelection();
+
   repaint();
+}
+
+std::vector<Note *> PianoRollComponent::getSelectedNotes() const {
+  if (!project)
+    return {};
+
+  std::vector<Note *> selected;
+  for (auto &note : project->getNotes()) {
+    if (note.isSelected())
+      selected.push_back(&note);
+  }
+  return selected;
+}
+
+void PianoRollComponent::updatePitchToolHandlesFromSelection() {
+  if (!pitchToolHandles || !coordMapper)
+    return;
+
+  if (!project || editMode != EditMode::Select) {
+    pitchToolHandles->clear();
+    hoveredPitchToolHandle = -1;
+    pitchToolHandles->setHoveredHandleIndex(-1);
+    return;
+  }
+
+  pitchToolHandles->updateHandles(getSelectedNotes(), *coordMapper);
+  if (hoveredPitchToolHandle >=
+      static_cast<int>(pitchToolHandles->getHandles().size())) {
+    hoveredPitchToolHandle = -1;
+    pitchToolHandles->setHoveredHandleIndex(-1);
+  }
 }
 
 std::vector<PianoRollComponent::StretchBoundary>
