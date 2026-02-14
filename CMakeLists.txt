@@ -226,9 +226,15 @@ add_library(hachitune_ui STATIC ${HACHITUNE_UI_SOURCES})
 
 # Binary data for SVG icons
 file(GLOB SVG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Resources/svg/*.svg")
-juce_add_binary_data(BinaryData SOURCES ${SVG_FILES})
+set(BINARY_DATA_FILES ${SVG_FILES})
+set(EMBED_EN_LANG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang/en.json")
+if(EXISTS "${EMBED_EN_LANG_FILE}")
+    list(APPEND BINARY_DATA_FILES "${EMBED_EN_LANG_FILE}")
+endif()
+juce_add_binary_data(BinaryData SOURCES ${BINARY_DATA_FILES})
 
 target_link_libraries(hachitune_core PUBLIC
+    BinaryData
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_audio_basics
