@@ -136,6 +136,13 @@ juce::var ProjectSerializer::noteToJson(const Note& note) {
     if (note.hasPhoneme())
         obj->setProperty("phoneme", note.getPhoneme());
 
+    // Pitch tool transformation parameters (non-destructive)
+    obj->setProperty("tiltLeft", note.getTiltLeft());
+    obj->setProperty("tiltRight", note.getTiltRight());
+    obj->setProperty("varianceScale", note.getVarianceScale());
+    obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
+    obj->setProperty("smoothRightFrames", note.getSmoothRightFrames());
+
     return juce::var(obj);
 }
 
@@ -167,6 +174,13 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     auto phoneme = json.getProperty("phoneme", juce::var());
     if (!phoneme.isVoid())
         note.setPhoneme(phoneme.toString());
+
+    // Pitch tool transformation parameters (with defaults for backwards compatibility)
+    note.setTiltLeft(static_cast<float>(json.getProperty("tiltLeft", 0.0)));
+    note.setTiltRight(static_cast<float>(json.getProperty("tiltRight", 0.0)));
+    note.setVarianceScale(static_cast<float>(json.getProperty("varianceScale", 1.0)));
+    note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));
+    note.setSmoothRightFrames(json.getProperty("smoothRightFrames", 0));
 
     return true;
 }

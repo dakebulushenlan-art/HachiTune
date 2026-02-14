@@ -1,5 +1,6 @@
 #include "PitchCurveProcessor.h"
 #include "BasePitchCurve.h"
+#include "PitchToolOperations.h"
 #include "../Utils/Constants.h"
 #include <algorithm>
 #include <cmath>
@@ -178,6 +179,28 @@ namespace PitchCurveProcessor
             audioData.deltaPitch[static_cast<size_t>(i)] = midi - base;
         }
 
+        // Initialize originalDeltaPitch in each note from computed deltaPitch
+        // This preserves the pristine pitch curve for non-destructive transformations
+        for (auto& note : project.getNotes())
+        {
+            if (note.isRest()) continue;
+
+            const int startFrame = note.getStartFrame();
+            const int endFrame = note.getEndFrame();
+            const int numFrames = endFrame - startFrame;
+
+            if (numFrames <= 0) continue;
+
+            std::vector<float> origDelta(static_cast<size_t>(numFrames));
+            for (int i = 0; i < numFrames; ++i)
+            {
+                const int globalIdx = startFrame + i;
+                if (globalIdx >= 0 && globalIdx < totalFrames)
+                    origDelta[static_cast<size_t>(i)] = audioData.deltaPitch[static_cast<size_t>(globalIdx)];
+            }
+            note.setOriginalDeltaPitch(std::move(origDelta));
+        }
+
         // Cache base F0 (Hz) for backwards compatibility
         audioData.baseF0.resize(static_cast<size_t>(totalFrames));
         for (int i = 0; i < totalFrames; ++i)
@@ -203,8 +226,93 @@ namespace PitchCurveProcessor
             audioData.basePitch.assign(static_cast<size_t>(totalFrames), 0.0f);
         }
 
-        // Preserve existing delta but clamp size
-        audioData.deltaPitch.resize(static_cast<size_t>(totalFrames), 0.0f);
+        // CRITICAL: Rebuild deltaPitch from Note objects NON-DESTRUCTIVELY
+        // Clear global deltaPitch first
+        audioData.deltaPitch.assign(static_cast<size_t>(totalFrames), 0.0f);
+        
+        // Composite each note's deltaPitch curve (WITH transformations applied) into audioData.deltaPitch
+        const auto& allNotes = project.getNotes();
+        for (const auto& note : allNotes)
+        {
+            if (note.isRest())
+                continue;
+                
+            // Use originalDeltaPitch if available, else fall back to deltaPitch
+            const auto& sourceData = note.hasOriginalDeltaPitch() ? note.getOriginalDeltaPitch() : note.getDeltaPitch();
+            if (sourceData.empty())
+                continue;
+            
+            // Build adjacent note context by searching for temporally adjacent notes
+            PitchToolOperations::AdjacentNoteContext adjacentContext;
+            
+            // Find previous note (closest note ending before this one)
+            const Note* prevNote = nullptr;
+            int prevNoteEndFrame = -1;
+            for (const auto& candidate : allNotes) {
+                if (&candidate == &note || candidate.isRest())
+                    continue;
+                const int candidateEnd = candidate.getEndFrame();
+                if (candidateEnd <= note.getStartFrame() && candidateEnd > prevNoteEndFrame) {
+                    prevNote = &candidate;
+                    prevNoteEndFrame = candidateEnd;
+                }
+            }
+            
+            // Find next note (closest note starting after this one)
+            const Note* nextNote = nullptr;
+            int nextNoteStartFrame = std::numeric_limits<int>::max();
+            for (const auto& candidate : allNotes) {
+                if (&candidate == &note || candidate.isRest())
+                    continue;
+                const int candidateStart = candidate.getStartFrame();
+                if (candidateStart >= note.getEndFrame() && candidateStart < nextNoteStartFrame) {
+                    nextNote = &candidate;
+                    nextNoteStartFrame = candidateStart;
+                }
+            }
+            
+            // Extract boundary delta values
+            if (prevNote) {
+                const auto& prevDelta = prevNote->hasOriginalDeltaPitch() 
+                    ? prevNote->getOriginalDeltaPitch() 
+                    : prevNote->getDeltaPitch();
+                if (!prevDelta.empty()) {
+                    adjacentContext.hasLeft = true;
+                    adjacentContext.leftBoundaryDelta = prevDelta.back();
+                }
+            }
+            if (nextNote) {
+                const auto& nextDelta = nextNote->hasOriginalDeltaPitch() 
+                    ? nextNote->getOriginalDeltaPitch() 
+                    : nextNote->getDeltaPitch();
+                if (!nextDelta.empty()) {
+                    adjacentContext.hasRight = true;
+                    adjacentContext.rightBoundaryDelta = nextDelta.front();
+                }
+            }
+            
+            // Apply all transformation parameters NON-DESTRUCTIVELY
+            std::vector<float> transformedDelta = PitchToolOperations::applyAllTransformations(
+                sourceData,
+                note.getTiltLeft(),
+                note.getTiltRight(),
+                note.getVarianceScale(),
+                note.getSmoothLeftFrames(),
+                note.getSmoothRightFrames(),
+                adjacentContext
+            );
+                
+            const int startFrame = note.getStartFrame();
+            const int endFrame = note.getEndFrame();
+            const int numFrames = endFrame - startFrame;
+            
+            for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
+            {
+                const int globalIdx = startFrame + i;
+                if (globalIdx >= 0 && globalIdx < totalFrames)
+                    audioData.deltaPitch[static_cast<size_t>(globalIdx)] = transformedDelta[static_cast<size_t>(i)];
+            }
+        }
 
         // Update cached baseF0
         audioData.baseF0.resize(static_cast<size_t>(totalFrames));

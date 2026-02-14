@@ -5,6 +5,7 @@
 #include "../../Models/Project.h"
 #include "../../Utils/UndoManager.h"
 #include "../../Utils/PitchToolOperations.h"
+#include "../../Utils/TransformParams.h"
 #include "CoordinateMapper.h"
 #include "PitchToolHandles.h"
 #include <functional>
@@ -68,7 +69,7 @@ private:
   bool dragging = false;
   PitchToolHandles::HandleType activeHandleType = PitchToolHandles::HandleType::None;
   std::vector<Note*> affectedNotes;
-  std::vector<std::vector<float>> originalPitchCurves;
+  std::vector<TransformParams> originalParams;
   juce::Point<float> dragStartPos;
 
   void applyOperation(std::vector<Note*>& notes,

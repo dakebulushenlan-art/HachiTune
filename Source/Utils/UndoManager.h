@@ -3,6 +3,8 @@
 #include "../JuceHeader.h"
 #include "../Models/Note.h"
 #include "../Models/Project.h"
+#include "PitchCurveProcessor.h"
+#include "TransformParams.h"
 #include <vector>
 #include <memory>
 #include <functional>
@@ -730,8 +732,8 @@ private:
 };
 
 /**
- * Undo action for pitch tool operations (tilt, reduce variance, smooth, fourier).
- * Stores old and new deltaPitch curves for one or more notes and restores them on undo/redo.
+ * Undo action for pitch tool operations (tilt, variance, smooth).
+ * Stores transformation parameters, not full pitch curves.
  */
 class PitchToolAction : public UndoableAction
 {
@@ -739,74 +741,112 @@ public:
   PitchToolAction(
       Project* project,
       std::vector<Note*> affectedNotes,
-      const std::vector<std::vector<float>>& oldPitchCurves,
-      const std::vector<std::vector<float>>& newPitchCurves,
+      const std::vector<TransformParams>& oldParams,
+      const std::vector<TransformParams>& newParams,
       std::function<void(int, int)> onRangeChanged = nullptr)
       : project(project),
         notes(std::move(affectedNotes)),
-        oldPitchCurves(oldPitchCurves),
-        newPitchCurves(newPitchCurves),
+        oldParams(oldParams),
+        newParams(newParams),
         onRangeChanged(std::move(onRangeChanged)) {}
 
   void undo() override
   {
+    // Restore old transformation parameters
     for (size_t i = 0; i < notes.size(); ++i)
     {
-      if (notes[i] && i < oldPitchCurves.size())
+      if (notes[i] && i < oldParams.size())
       {
-        notes[i]->setDeltaPitch(oldPitchCurves[i]);
-        
-        // Sync to audioData.deltaPitch
-        if (project)
-        {
-          auto& audioData = project->getAudioData();
-          const int startFrame = notes[i]->getStartFrame();
-          const int endFrame = notes[i]->getEndFrame();
-          const int numFrames = endFrame - startFrame;
-          const auto& curve = oldPitchCurves[i];
-          
-          for (int frameIdx = 0; frameIdx < numFrames && frameIdx < static_cast<int>(curve.size()); ++frameIdx)
-          {
-            const int globalFrameIdx = startFrame + frameIdx;
-            if (globalFrameIdx >= 0 && globalFrameIdx < static_cast<int>(audioData.deltaPitch.size()))
-              audioData.deltaPitch[static_cast<size_t>(globalFrameIdx)] = curve[static_cast<size_t>(frameIdx)];
-          }
-        }
-        
-        if (onRangeChanged)
-          onRangeChanged(notes[i]->getStartFrame(), notes[i]->getEndFrame());
+        const auto& params = oldParams[i];
+        notes[i]->setTiltLeft(params.tiltLeft);
+        notes[i]->setTiltRight(params.tiltRight);
+        notes[i]->setVarianceScale(params.varianceScale);
+        notes[i]->setSmoothLeftFrames(params.smoothLeftFrames);
+        notes[i]->setSmoothRightFrames(params.smoothRightFrames);
       }
+    }
+    
+    // Recompose audioData from originalDeltaPitch + restored parameters
+    if (project)
+    {
+      PitchCurveProcessor::rebuildBaseFromNotes(*project);
+      PitchCurveProcessor::composeF0InPlace(*project, /*applyUvMask=*/false);
+      
+      // Mark dirty range for synthesis
+      if (!notes.empty())
+      {
+        int minFrame = std::numeric_limits<int>::max();
+        int maxFrame = std::numeric_limits<int>::min();
+        for (const auto* note : notes)
+        {
+          minFrame = std::min(minFrame, note->getStartFrame());
+          maxFrame = std::max(maxFrame, note->getEndFrame());
+        }
+        project->setF0DirtyRange(minFrame, maxFrame);
+      }
+    }
+    
+    // Trigger callbacks for visual updates
+    if (onRangeChanged && !notes.empty())
+    {
+      int minFrame = notes[0]->getStartFrame();
+      int maxFrame = notes[0]->getEndFrame();
+      for (const auto* note : notes)
+      {
+        minFrame = std::min(minFrame, note->getStartFrame());
+        maxFrame = std::max(maxFrame, note->getEndFrame());
+      }
+      onRangeChanged(minFrame, maxFrame);
     }
   }
 
   void redo() override
   {
+    // Restore new transformation parameters
     for (size_t i = 0; i < notes.size(); ++i)
     {
-      if (notes[i] && i < newPitchCurves.size())
+      if (notes[i] && i < newParams.size())
       {
-        notes[i]->setDeltaPitch(newPitchCurves[i]);
-        
-        // Sync to audioData.deltaPitch
-        if (project)
-        {
-          auto& audioData = project->getAudioData();
-          const int startFrame = notes[i]->getStartFrame();
-          const int endFrame = notes[i]->getEndFrame();
-          const int numFrames = endFrame - startFrame;
-          const auto& curve = newPitchCurves[i];
-          
-          for (int frameIdx = 0; frameIdx < numFrames && frameIdx < static_cast<int>(curve.size()); ++frameIdx)
-          {
-            const int globalFrameIdx = startFrame + frameIdx;
-            if (globalFrameIdx >= 0 && globalFrameIdx < static_cast<int>(audioData.deltaPitch.size()))
-              audioData.deltaPitch[static_cast<size_t>(globalFrameIdx)] = curve[static_cast<size_t>(frameIdx)];
-          }
-        }
-        
-        if (onRangeChanged)
-          onRangeChanged(notes[i]->getStartFrame(), notes[i]->getEndFrame());
+        const auto& params = newParams[i];
+        notes[i]->setTiltLeft(params.tiltLeft);
+        notes[i]->setTiltRight(params.tiltRight);
+        notes[i]->setVarianceScale(params.varianceScale);
+        notes[i]->setSmoothLeftFrames(params.smoothLeftFrames);
+        notes[i]->setSmoothRightFrames(params.smoothRightFrames);
       }
+    }
+    
+    // Recompose audioData from originalDeltaPitch + new parameters
+    if (project)
+    {
+      PitchCurveProcessor::rebuildBaseFromNotes(*project);
+      PitchCurveProcessor::composeF0InPlace(*project, /*applyUvMask=*/false);
+      
+      // Mark dirty range for synthesis
+      if (!notes.empty())
+      {
+        int minFrame = std::numeric_limits<int>::max();
+        int maxFrame = std::numeric_limits<int>::min();
+        for (const auto* note : notes)
+        {
+          minFrame = std::min(minFrame, note->getStartFrame());
+          maxFrame = std::max(maxFrame, note->getEndFrame());
+        }
+        project->setF0DirtyRange(minFrame, maxFrame);
+      }
+    }
+    
+    // Trigger callbacks for visual updates
+    if (onRangeChanged && !notes.empty())
+    {
+      int minFrame = notes[0]->getStartFrame();
+      int maxFrame = notes[0]->getEndFrame();
+      for (const auto* note : notes)
+      {
+        minFrame = std::min(minFrame, note->getStartFrame());
+        maxFrame = std::max(maxFrame, note->getEndFrame());
+      }
+      onRangeChanged(minFrame, maxFrame);
     }
   }
 
@@ -815,8 +855,8 @@ public:
 private:
   Project* project;
   std::vector<Note*> notes;
-  std::vector<std::vector<float>> oldPitchCurves;
-  std::vector<std::vector<float>> newPitchCurves;
+  std::vector<TransformParams> oldParams;
+  std::vector<TransformParams> newParams;
   std::function<void(int, int)> onRangeChanged;
 };
 

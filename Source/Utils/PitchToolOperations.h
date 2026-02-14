@@ -42,4 +42,41 @@ std::vector<float> smoothBoundary(const std::vector<float>& deltaPitch,
  */
 float computeMean(const std::vector<float>& deltaPitch);
 
+/**
+ * Context for adjacent notes (for boundary smoothing).
+ * Stores boundary delta pitch values from temporally adjacent notes.
+ */
+struct AdjacentNoteContext
+{
+  bool hasLeft = false;           // True if a previous note exists
+  bool hasRight = false;          // True if a next note exists
+  float leftBoundaryDelta = 0.0f;  // Last delta value of previous note
+  float rightBoundaryDelta = 0.0f; // First delta value of next note
+};
+
+/**
+ * Applies all transformation parameters non-destructively.
+ * 
+ * This function chains multiple transformations in order:
+ * 1. Tilt (left and right combined)
+ * 2. Variance scaling
+ * 3. Boundary smoothing (left and right)
+ * 
+ * @param originalDelta The pristine deltaPitch curve from analysis (never modified)
+ * @param tiltLeft Tilt amount at left edge in semitones
+ * @param tiltRight Tilt amount at right edge in semitones
+ * @param varianceScale Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
+ * @param smoothLeftFrames Smoothing transition length at left boundary
+ * @param smoothRightFrames Smoothing transition length at right boundary
+ * @param adjacentContext Context for adjacent notes (for boundary smoothing)
+ * @return Transformed deltaPitch curve
+ */
+std::vector<float> applyAllTransformations(const std::vector<float>& originalDelta,
+                                           float tiltLeft,
+                                           float tiltRight,
+                                           float varianceScale,
+                                           int smoothLeftFrames,
+                                           int smoothRightFrames,
+                                           const AdjacentNoteContext& adjacentContext = {});
+
 } // namespace PitchToolOperations

@@ -1,6 +1,8 @@
 #include "PitchToolController.h"
+#include "../../Utils/PitchCurveProcessor.h"
 
 #include <algorithm>
+#include <limits>
 
 PitchToolController::PitchToolController()
 {
@@ -31,14 +33,26 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
   DBG("  → HIT! handleType=" << static_cast<int>(activeHandleType));
   
   affectedNotes = selectedNotes;
-  originalPitchCurves.clear();
-  originalPitchCurves.reserve(affectedNotes.size());
+  
+  // Capture original transformation parameters (not curves)
+  originalParams.clear();
+  originalParams.reserve(affectedNotes.size());
   for (auto* note : affectedNotes)
   {
     if (note)
-      originalPitchCurves.push_back(note->getDeltaPitch());
+    {
+      TransformParams params;
+      params.tiltLeft = note->getTiltLeft();
+      params.tiltRight = note->getTiltRight();
+      params.varianceScale = note->getVarianceScale();
+      params.smoothLeftFrames = note->getSmoothLeftFrames();
+      params.smoothRightFrames = note->getSmoothRightFrames();
+      originalParams.push_back(params);
+    }
     else
-      originalPitchCurves.emplace_back();
+    {
+      originalParams.emplace_back();  // Default params for null note
+    }
   }
 
   dragStartPos = e.position;
@@ -71,18 +85,29 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
   if (!dragging)
     return false;
 
-  std::vector<std::vector<float>> newPitchCurves;
-  newPitchCurves.reserve(affectedNotes.size());
+  // Capture new transformation parameters (not curves)
+  std::vector<TransformParams> newParams;
+  newParams.reserve(affectedNotes.size());
   for (auto* note : affectedNotes)
   {
     if (note)
-      newPitchCurves.push_back(note->getDeltaPitch());
+    {
+      TransformParams params;
+      params.tiltLeft = note->getTiltLeft();
+      params.tiltRight = note->getTiltRight();
+      params.varianceScale = note->getVarianceScale();
+      params.smoothLeftFrames = note->getSmoothLeftFrames();
+      params.smoothRightFrames = note->getSmoothRightFrames();
+      newParams.push_back(params);
+    }
     else
-      newPitchCurves.emplace_back();
+    {
+      newParams.emplace_back();  // Default params for null note
+    }
   }
 
   auto action = std::make_unique<PitchToolAction>(
-      project, affectedNotes, originalPitchCurves, newPitchCurves, onRangeChanged);
+      project, affectedNotes, originalParams, newParams, onRangeChanged);
 
   if (undoManager)
     undoManager->addAction(std::move(action));
@@ -99,7 +124,7 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
   dragging = false;
   activeHandleType = PitchToolHandles::HandleType::None;
   affectedNotes.clear();
-  originalPitchCurves.clear();
+  originalParams.clear();
   return true;
 }
 
@@ -120,41 +145,47 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       << ", deltaX=" << dragDeltaX << ", deltaY=" << dragDeltaY 
       << ", semitoneDelta=" << semitoneDelta << ", notes=" << notes.size());
 
-  auto& audioData = project->getAudioData();
-
   for (size_t i = 0; i < notes.size(); ++i)
   {
     auto* note = notes[i];
-    if (!note || i >= originalPitchCurves.size())
+    if (!note || i >= originalParams.size())
       continue;
 
-    const auto& originalCurve = originalPitchCurves[i];
-    std::vector<float> newCurve;
+    // Restore original parameters before applying new transformation
+    const auto& origParams = originalParams[i];
+    note->setTiltLeft(origParams.tiltLeft);
+    note->setTiltRight(origParams.tiltRight);
+    note->setVarianceScale(origParams.varianceScale);
+    note->setSmoothLeftFrames(origParams.smoothLeftFrames);
+    note->setSmoothRightFrames(origParams.smoothRightFrames);
 
+    // Apply new transformation by updating the appropriate parameter
     switch (type)
     {
       case PitchToolHandles::HandleType::TiltLeft:
       {
         // Negate amount so drag UP moves left edge UP (positive direction)
         const float amount = -semitoneDelta;
-        DBG("  TiltLeft: amount=" << amount << " semitones, pivot=1.0 (RIGHT fixed)");
-        newCurve = PitchToolOperations::tiltDeltaPitch(originalCurve, 1.0f, amount);
+        DBG("  TiltLeft: amount=" << amount << " semitones");
+        note->setTiltLeft(origParams.tiltLeft + amount);
         break;
       }
       case PitchToolHandles::HandleType::TiltRight:
       {
         const float amount = semitoneDelta;
-        DBG("  TiltRight: amount=" << amount << " semitones, pivot=0.0 (LEFT fixed)");
-        newCurve = PitchToolOperations::tiltDeltaPitch(originalCurve, 0.0f, amount);
+        DBG("  TiltRight: amount=" << amount << " semitones");
+        note->setTiltRight(origParams.tiltRight + amount);
         break;
       }
       case PitchToolHandles::HandleType::ReduceVariance:
       {
-        // 100px drag DOWN = factor 0.0 (fully flatten)
-        // 100px drag UP = factor 1.0+ (restore/enhance)
-        const float factor = juce::jlimit(0.0f, 1.0f, 1.0f - dragDeltaY / 100.0f);
-        DBG("  ReduceVariance: factor=" << factor << " (1.0=unchanged, 0.0=flat)");
-        newCurve = PitchToolOperations::reduceVariance(originalCurve, factor);
+        // Additive accumulation from original value (consistent with tilt handles)
+        // Drag UP (negative Y) = increase variance, drag DOWN (positive Y) = decrease
+        const float dragDelta = -dragDeltaY / 100.0f;
+        const float newScale = origParams.varianceScale + dragDelta;
+        DBG("  ReduceVariance: newScale=" << newScale << " (orig=" << origParams.varianceScale 
+            << ", delta=" << dragDelta << ")");
+        note->setVarianceScale(newScale);
         break;
       }
       case PitchToolHandles::HandleType::SmoothLeft:
@@ -162,9 +193,8 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Drag RIGHT (positive X) into note = more smoothing
         // 5px per additional frame, range [5, 50]
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(dragDeltaX / 5.0f));
-        const float targetPitch = 0.0f;
         DBG("  SmoothLeft: transitionFrames=" << transitionFrames << " (dragX=" << dragDeltaX << ")");
-        newCurve = PitchToolOperations::smoothBoundary(originalCurve, 0, transitionFrames, targetPitch);
+        note->setSmoothLeftFrames(transitionFrames);
         break;
       }
       case PitchToolHandles::HandleType::SmoothRight:
@@ -172,9 +202,8 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Drag LEFT (negative X) into note = more smoothing
         // Use -dragDeltaX so LEFT drag increases frames
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(-dragDeltaX / 5.0f));
-        const float targetPitch = 0.0f;
         DBG("  SmoothRight: transitionFrames=" << transitionFrames << " (dragX=" << dragDeltaX << ")");
-        newCurve = PitchToolOperations::smoothBoundary(originalCurve, 1, transitionFrames, targetPitch);
+        note->setSmoothRightFrames(transitionFrames);
         break;
       }
       case PitchToolHandles::HandleType::None:
@@ -182,26 +211,25 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         continue;  // Skip this note
     }
 
-    // Update Note object
-    note->setDeltaPitch(newCurve);
     note->markDirty();
+  }
 
-    // CRITICAL: Propagate to audioData.deltaPitch for visual updates
-    const int startFrame = note->getStartFrame();
-    const int endFrame = note->getEndFrame();
-    const int numFrames = endFrame - startFrame;
-
-    // Ensure audioData.deltaPitch is sized correctly
-    if (audioData.deltaPitch.size() < audioData.f0.size())
-      audioData.deltaPitch.resize(audioData.f0.size(), 0.0f);
-
-    // Write the modified curve to global audioData
-    for (int frameIdx = 0; frameIdx < numFrames && frameIdx < static_cast<int>(newCurve.size()); ++frameIdx)
+  // NON-DESTRUCTIVE: Recompose audioData from Note properties
+  // This reads originalDeltaPitch and applies all transformation parameters
+  PitchCurveProcessor::rebuildBaseFromNotes(*project);
+  PitchCurveProcessor::composeF0InPlace(*project, /*applyUvMask=*/false);
+  
+  // Mark dirty range for synthesis
+  if (!notes.empty())
+  {
+    int minFrame = std::numeric_limits<int>::max();
+    int maxFrame = std::numeric_limits<int>::min();
+    for (const auto* note : notes)
     {
-      const int globalFrameIdx = startFrame + frameIdx;
-      if (globalFrameIdx >= 0 && globalFrameIdx < static_cast<int>(audioData.deltaPitch.size()))
-        audioData.deltaPitch[static_cast<size_t>(globalFrameIdx)] = newCurve[static_cast<size_t>(frameIdx)];
+      minFrame = std::min(minFrame, note->getStartFrame());
+      maxFrame = std::max(maxFrame, note->getEndFrame());
     }
+    project->setF0DirtyRange(minFrame, maxFrame);
   }
 
   // Trigger visual update
@@ -214,14 +242,22 @@ void PitchToolController::cancel()
   if (!dragging)
     return;
 
+  // Restore original transformation parameters
   for (size_t i = 0; i < affectedNotes.size(); ++i)
   {
-    if (i < originalPitchCurves.size() && affectedNotes[i])
-      affectedNotes[i]->setDeltaPitch(originalPitchCurves[i]);
+    if (i < originalParams.size() && affectedNotes[i])
+    {
+      const auto& params = originalParams[i];
+      affectedNotes[i]->setTiltLeft(params.tiltLeft);
+      affectedNotes[i]->setTiltRight(params.tiltRight);
+      affectedNotes[i]->setVarianceScale(params.varianceScale);
+      affectedNotes[i]->setSmoothLeftFrames(params.smoothLeftFrames);
+      affectedNotes[i]->setSmoothRightFrames(params.smoothRightFrames);
+    }
   }
 
   dragging = false;
   activeHandleType = PitchToolHandles::HandleType::None;
   affectedNotes.clear();
-  originalPitchCurves.clear();
+  originalParams.clear();
 }

@@ -72,6 +72,23 @@ public:
     void setDeltaPitch(std::vector<float> delta) { deltaPitch = std::move(delta); }
     bool hasDeltaPitch() const { return !deltaPitch.empty(); }
 
+    // Original delta pitch (pristine curve from analysis, never modified)
+    const std::vector<float>& getOriginalDeltaPitch() const { return originalDeltaPitch; }
+    void setOriginalDeltaPitch(std::vector<float> delta) { originalDeltaPitch = std::move(delta); }
+    bool hasOriginalDeltaPitch() const { return !originalDeltaPitch.empty(); }
+
+    // Pitch tool transformation parameters (non-destructive)
+    float getTiltLeft() const { return tiltLeft; }
+    void setTiltLeft(float tilt) { tiltLeft = tilt; }
+    float getTiltRight() const { return tiltRight; }
+    void setTiltRight(float tilt) { tiltRight = tilt; }
+    float getVarianceScale() const { return varianceScale; }
+    void setVarianceScale(float scale) { varianceScale = scale; }
+    int getSmoothLeftFrames() const { return smoothLeftFrames; }
+    void setSmoothLeftFrames(int frames) { smoothLeftFrames = frames; }
+    int getSmoothRightFrames() const { return smoothRightFrames; }
+    void setSmoothRightFrames(int frames) { smoothRightFrames = frames; }
+
     // Vibrato
     bool isVibratoEnabled() const { return vibratoEnabled; }
     void setVibratoEnabled(bool enabled) { vibratoEnabled = enabled; }
@@ -141,6 +158,14 @@ private:
     float volumeDb = 0.0f; // Per-note gain in dB (0 = unity)
 
     std::vector<float> deltaPitch;  // Per-frame deviation from midiNote in semitones
+    std::vector<float> originalDeltaPitch;  // Pristine curve from analysis (never modified)
+
+    // Pitch tool transformation parameters (non-destructive, stored as parameters)
+    float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)
+    float tiltRight = 0.0f;          // Tilt amount at right edge (semitones)
+    float varianceScale = 1.0f;      // Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
+    int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
+    int smoothRightFrames = 0;       // Smoothing transition length at right boundary
 
     bool vibratoEnabled = false;
     float vibratoRateHz = 5.0f;
