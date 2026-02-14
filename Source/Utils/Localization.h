@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "../JuceHeader.h"
 #include "PlatformPaths.h"
@@ -109,11 +109,11 @@ public:
       if (code == "en")
         return juce::String("English");
       if (code == "zh")
-        return juce::String("简体中文");
+        return juce::String::fromUTF8(u8"\u7b80\u4f53\u4e2d\u6587");
       if (code == "zh-TW")
-        return juce::String("繁體中文");
+        return juce::String::fromUTF8(u8"\u7e41\u9ad4\u4e2d\u6587");
       if (code == "ja")
-        return juce::String("日本語");
+        return juce::String::fromUTF8(u8"\u65e5\u672c\u8a9e");
       return code;
     };
 
@@ -230,3 +230,4 @@ private:
 };
 
 #define TR(key) Localization::getInstance().get(key)
+
