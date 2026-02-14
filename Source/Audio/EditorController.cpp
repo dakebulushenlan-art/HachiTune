@@ -824,6 +824,7 @@ void EditorController::segmentIntoNotes(Project &targetProject,
   auto &notes = targetProject.getNotes();
   notes.clear();
   audioData.someChunkRanges.clear();
+  audioData.someDebugChunks.clear();
 
   if (audioData.f0.empty())
     return;
@@ -878,7 +879,144 @@ void EditorController::segmentIntoNotes(Project &targetProject,
           if (onStreamingUpdate) {
             juce::MessageManager::callAsync(onStreamingUpdate);
           }
+        },
+        [&](const SOMEDetector::DebugChunk &debugChunk) {
+          AudioData::SomeDebugChunk chunk;
+          chunk.chunkIndex = debugChunk.chunkIndex;
+          chunk.startFrame = debugChunk.startFrame;
+          chunk.endFrame = debugChunk.endFrame;
+          chunk.shortRestThreshold = debugChunk.shortRestThreshold;
+          chunk.events.reserve(debugChunk.events.size());
+          for (const auto &ev : debugChunk.events) {
+            AudioData::SomeDebugEvent out;
+            out.startFrame = ev.startFrame;
+            out.endFrame = ev.endFrame;
+            out.attachedStartFrame = ev.attachedStartFrame;
+            out.midiNote = ev.midiNote;
+            out.isRest = ev.isRest;
+            out.durationSeconds = ev.durationSeconds;
+            out.durationFrames = ev.durationFrames;
+            chunk.events.push_back(out);
+          }
+          audioData.someDebugChunks.push_back(std::move(chunk));
+          if (onStreamingUpdate) {
+            juce::MessageManager::callAsync(onStreamingUpdate);
+          }
         });
+
+    // VAD + SOME rest guided boundary refinement:
+    // expand note heads/tails into energetic consonant regions so note lengths
+    // better cover pre/post-consonants.
+    if (!notes.empty() && !audioData.vadMask.empty()) {
+      struct RestRange {
+        int start = 0;
+        int end = 0;
+      };
+      std::vector<RestRange> rests;
+      for (const auto &chunk : audioData.someDebugChunks) {
+        for (const auto &ev : chunk.events) {
+          if (!ev.isRest)
+            continue;
+          if (ev.endFrame <= ev.startFrame)
+            continue;
+          rests.push_back({ev.startFrame, ev.endFrame});
+        }
+      }
+
+      auto vadRatioInRange = [&](int s, int e) -> float {
+        if (e <= s || audioData.vadMask.empty())
+          return 0.0f;
+        s = std::max(0, s);
+        e = std::min(e, static_cast<int>(audioData.vadMask.size()));
+        if (e <= s)
+          return 0.0f;
+        int voiced = 0;
+        for (int i = s; i < e; ++i) {
+          if (audioData.vadMask[static_cast<size_t>(i)])
+            ++voiced;
+        }
+        return static_cast<float>(voiced) / static_cast<float>(e - s);
+      };
+
+      constexpr int kMaxHeadFrames = 14;     // ~162ms
+      constexpr int kMaxTailFrames = 10;     // ~116ms
+      constexpr int kRestBridgeGap = 4;      // allow tiny gap
+      constexpr int kMaxRestAttach = 18;     // max attached rest length
+      constexpr float kVadAttachRatio = 0.30f; // energetic enough to attach
+
+      const int f0Size = static_cast<int>(audioData.f0.size());
+
+      for (size_t ni = 0; ni < notes.size(); ++ni) {
+        auto &note = notes[ni];
+        int start = note.getStartFrame();
+        int end = note.getEndFrame();
+        if (end <= start)
+          continue;
+
+        int prevEnd = 0;
+        if (ni > 0)
+          prevEnd = notes[ni - 1].getEndFrame();
+        int nextStart = static_cast<int>(audioData.vadMask.size());
+        if (ni + 1 < notes.size())
+          nextStart = notes[ni + 1].getStartFrame();
+
+        // 1) Plain VAD backward/forward expansion.
+        int newStart = start;
+        for (int i = start - 1; i >= std::max(prevEnd, start - kMaxHeadFrames);
+             --i) {
+          if (i >= 0 && i < static_cast<int>(audioData.vadMask.size()) &&
+              audioData.vadMask[static_cast<size_t>(i)])
+            newStart = i;
+          else
+            break;
+        }
+
+        int newEnd = end;
+        for (int i = end; i < std::min(nextStart, end + kMaxTailFrames); ++i) {
+          if (i >= 0 && i < static_cast<int>(audioData.vadMask.size()) &&
+              audioData.vadMask[static_cast<size_t>(i)])
+            newEnd = i + 1;
+          else
+            break;
+        }
+
+        // 2) Rest-guided attach (front/back) gated by VAD ratio.
+        for (const auto &rr : rests) {
+          const int restLen = rr.end - rr.start;
+          if (restLen <= 0 || restLen > kMaxRestAttach)
+            continue;
+
+          // Front rest -> note head
+          if (rr.end <= start && start - rr.end <= kRestBridgeGap) {
+            const int candStart = std::max(prevEnd, rr.start);
+            if (candStart < newStart &&
+                vadRatioInRange(candStart, start) >= kVadAttachRatio) {
+              newStart = std::max(candStart, start - kMaxHeadFrames);
+            }
+          }
+
+          // Back rest -> note tail
+          if (rr.start >= end && rr.start - end <= kRestBridgeGap) {
+            const int candEnd = std::min(nextStart, rr.end);
+            if (candEnd > newEnd &&
+                vadRatioInRange(end, candEnd) >= kVadAttachRatio) {
+              newEnd = std::min(candEnd, end + kMaxTailFrames);
+            }
+          }
+        }
+
+        newStart = std::max(prevEnd, newStart);
+        newEnd = std::max(newStart + 1, std::min(nextStart, newEnd));
+        newStart = std::max(0, std::min(newStart, f0Size - 1));
+        newEnd = std::max(newStart + 1, std::min(newEnd, f0Size));
+
+        note.setStartFrame(newStart);
+        note.setEndFrame(newEnd);
+        std::vector<float> f0Values(audioData.f0.begin() + newStart,
+                                    audioData.f0.begin() + newEnd);
+        note.setF0Values(std::move(f0Values));
+      }
+    }
 
     juce::Thread::sleep(100);
 

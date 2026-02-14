@@ -47,6 +47,7 @@ public:
   std::function<void()> onLanguageChanged;
   std::function<void(PitchDetectorType)> onPitchDetectorChanged;
   std::function<void(bool)> onShowSomeSegmentsDebugChanged;
+  std::function<void(bool)> onShowSomeValuesDebugChanged;
   std::function<void(bool)> onShowUvInterpolationDebugChanged;
   std::function<void(bool)> onShowActualF0DebugChanged;
   std::function<bool()> canChangeDevice;
@@ -110,6 +111,8 @@ private:
   StyledComboBox pitchDetectorComboBox;
   juce::Label someSegmentsDebugLabel;
   juce::ToggleButton someSegmentsDebugToggle;
+  juce::Label someValuesDebugLabel;
+  juce::ToggleButton someValuesDebugToggle;
   juce::Label uvInterpolationDebugLabel;
   juce::ToggleButton uvInterpolationDebugToggle;
   juce::Label actualF0DebugLabel;
@@ -142,6 +145,7 @@ private:
   int lastConfirmedGpuDeviceId = 0;
   PitchDetectorType pitchDetectorType = PitchDetectorType::RMVPE;
   bool showSomeSegmentsDebug = false;
+  bool showSomeValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
   SettingsTab activeTab = SettingsTab::General;

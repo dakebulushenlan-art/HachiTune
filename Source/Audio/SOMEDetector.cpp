@@ -535,7 +535,8 @@ void SOMEDetector::detectNotesStreaming(
     const float *audio, int numSamples, int sampleRate,
     std::function<void(const std::vector<NoteEvent> &)> noteCallback,
     std::function<void(double)> progressCallback,
-    std::function<void(const std::vector<ChunkRange> &)> chunkCallback) {
+    std::function<void(const std::vector<ChunkRange> &)> chunkCallback,
+    std::function<void(const DebugChunk &)> debugChunkCallback) {
 #ifdef HAVE_ONNXRUNTIME
   DBG("=== detectNotesStreaming CALLED: " << numSamples << " samples ===");
 
@@ -578,7 +579,9 @@ void SOMEDetector::detectNotesStreaming(
 
   int64_t processedFrames = 0;
 
+  int chunkIndex = 0;
   for (const auto &[beginFrame, endFrame] : chunks) {
+    const int currentChunkIndex = chunkIndex++;
     if (endFrame <= beginFrame || beginFrame >= totalSize)
       continue;
 
@@ -609,6 +612,10 @@ void SOMEDetector::detectNotesStreaming(
     const int chunkEndFrame =
         std::max(chunkStartFrame + 1,
                  static_cast<int>((actualEnd + HOP_SIZE - 1) / HOP_SIZE));
+    DebugChunk debugChunk;
+    debugChunk.chunkIndex = currentChunkIndex;
+    debugChunk.startFrame = chunkStartFrame;
+    debugChunk.endFrame = chunkEndFrame;
 
     std::vector<NoteEvent> chunkNotes;
     // DIRECT COPY from ds-editor-lite Some.cpp, adapted for frames instead of
@@ -654,6 +661,7 @@ void SOMEDetector::detectNotesStreaming(
       const size_t p33 = restFrameLens.size() / 3;
       shortRestThreshold = restFrameLens[p33];
     }
+    debugChunk.shortRestThreshold = shortRestThreshold;
 
     // Step 4: Build notes (exactly like build_midi_note in ds-editor-lite)
     int start_frame_temp = chunkStartFrame;
@@ -699,6 +707,15 @@ void SOMEDetector::detectNotesStreaming(
       if (next_frame_temp > chunkEndFrame)
         next_frame_temp = chunkEndFrame;
 
+      DebugEvent debugEvent;
+      debugEvent.startFrame = start_frame_temp;
+      debugEvent.endFrame = next_frame_temp;
+      debugEvent.attachedStartFrame = start_frame_temp;
+      debugEvent.midiNote = noteMidi[i];
+      debugEvent.isRest = noteRest[i];
+      debugEvent.durationSeconds = noteDur[i];
+      debugEvent.durationFrames = noteDurationFrames;
+
       if (noteRest[i]) {
         // Keep short rests for the NEXT note onset only.
         restSkipped++;
@@ -710,6 +727,7 @@ void SOMEDetector::detectNotesStreaming(
         start_frame_temp = next_frame_temp;
         if (start_frame_temp >= chunkEndFrame)
           break;
+        debugChunk.events.push_back(debugEvent);
         continue;
       }
 
@@ -726,6 +744,8 @@ void SOMEDetector::detectNotesStreaming(
               std::max(chunkStartFrame, start_frame_temp - attachFrames);
         }
       }
+      debugEvent.attachedStartFrame = eventStart;
+      debugChunk.events.push_back(debugEvent);
 
       NoteEvent event;
       event.startFrame = eventStart;
@@ -755,6 +775,8 @@ void SOMEDetector::detectNotesStreaming(
     // Immediately callback with this chunk's notes
     if (noteCallback && !chunkNotes.empty())
       noteCallback(chunkNotes);
+    if (debugChunkCallback)
+      debugChunkCallback(debugChunk);
 
     processedFrames += (actualEnd - beginFrame);
     if (progressCallback)

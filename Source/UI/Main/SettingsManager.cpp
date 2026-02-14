@@ -103,6 +103,9 @@ void SettingsManager::loadConfig() {
         if (configObj->hasProperty("showSomeSegmentsDebug"))
           showSomeSegmentsDebug =
               static_cast<bool>(configObj->getProperty("showSomeSegmentsDebug"));
+        if (configObj->hasProperty("showSomeValuesDebug"))
+          showSomeValuesDebug =
+              static_cast<bool>(configObj->getProperty("showSomeValuesDebug"));
         if (configObj->hasProperty("showUvInterpolationDebug"))
           showUvInterpolationDebug =
               static_cast<bool>(configObj->getProperty("showUvInterpolationDebug"));
@@ -134,6 +137,7 @@ void SettingsManager::saveConfig() {
   config->setProperty("showDeltaPitch", showDeltaPitch);
   config->setProperty("showBasePitch", showBasePitch);
   config->setProperty("showSomeSegmentsDebug", showSomeSegmentsDebug);
+  config->setProperty("showSomeValuesDebug", showSomeValuesDebug);
   config->setProperty("showUvInterpolationDebug", showUvInterpolationDebug);
   config->setProperty("showActualF0Debug", showActualF0Debug);
 

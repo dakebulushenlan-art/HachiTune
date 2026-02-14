@@ -26,6 +26,24 @@ public:
         float midiNote;
         bool isRest;
     };
+
+    struct DebugEvent {
+        int startFrame = 0;
+        int endFrame = 0;
+        int attachedStartFrame = 0; // For non-rest after consonant-attach logic
+        float midiNote = 0.0f;
+        bool isRest = false;
+        float durationSeconds = 0.0f;
+        int durationFrames = 0;
+    };
+
+    struct DebugChunk {
+        int chunkIndex = 0;
+        int startFrame = 0;
+        int endFrame = 0;
+        int shortRestThreshold = 0;
+        std::vector<DebugEvent> events;
+    };
     using ChunkRange = std::pair<int, int>; // [startFrame, endFrame)
 
     SOMEDetector();
@@ -45,7 +63,8 @@ public:
     void detectNotesStreaming(const float* audio, int numSamples, int sampleRate,
                               std::function<void(const std::vector<NoteEvent>&)> noteCallback,
                               std::function<void(double)> progressCallback,
-                              std::function<void(const std::vector<ChunkRange>&)> chunkCallback = nullptr);
+                              std::function<void(const std::vector<ChunkRange>&)> chunkCallback = nullptr,
+                              std::function<void(const DebugChunk&)> debugChunkCallback = nullptr);
 
     int getFrameForSample(int sampleIndex) const { return sampleIndex / HOP_SIZE; }
     int getSampleForFrame(int frameIndex) const { return frameIndex * HOP_SIZE; }

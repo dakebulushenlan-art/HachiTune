@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 PianoRollComponent::PianoRollComponent() {
   // Initialize modular components
@@ -148,6 +149,7 @@ void PianoRollComponent::paint(juce::Graphics &g) {
     drawNotes(g);
     drawStretchGuides(g);
     drawPitchCurves(g);
+    drawSomeValuesDebugOverlay(g);
     drawSelectionRect(g);
   }
 
@@ -407,6 +409,199 @@ void PianoRollComponent::drawSomeSegmentDebugOverlay(juce::Graphics &g) {
   }
 }
 
+void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
+  if (!showSomeValuesDebug || !project)
+    return;
+
+  const auto &audioData = project->getAudioData();
+  if (audioData.someDebugChunks.empty())
+    return;
+
+  const int totalFrames = static_cast<int>(audioData.f0.size());
+  if (totalFrames <= 0)
+    return;
+
+  const int visibleStartFrame = std::max(
+      0, static_cast<int>(scrollX / pixelsPerSecond * audioData.sampleRate /
+                          HOP_SIZE));
+  const int visibleEndFrame = std::min(
+      totalFrames, static_cast<int>((scrollX + getVisibleContentWidth()) /
+                                        pixelsPerSecond * audioData.sampleRate /
+                                        HOP_SIZE) +
+                       1);
+  if (visibleEndFrame <= visibleStartFrame)
+    return;
+
+  const float contentHeight =
+      (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+  g.setFont(juce::FontOptions(10.5f));
+  const int maxChunks = 60;
+  int chunksDrawn = 0;
+
+  for (const auto &chunk : audioData.someDebugChunks) {
+    const int startFrame = std::max(0, chunk.startFrame);
+    const int endFrame = std::max(startFrame, chunk.endFrame);
+    if (endFrame <= startFrame)
+      continue;
+    if (endFrame <= visibleStartFrame || startFrame >= visibleEndFrame)
+      continue;
+
+    int noteCount = 0;
+    int restCount = 0;
+    int eventLabelsInChunk = 0;
+
+    const float x1 = framesToSeconds(startFrame) * pixelsPerSecond;
+    const float x2 = framesToSeconds(endFrame) * pixelsPerSecond;
+    const float width = x2 - x1;
+    if (width < 8.0f)
+      continue;
+
+    const float chunkSeconds =
+        static_cast<float>(endFrame - startFrame) * HOP_SIZE /
+        static_cast<float>(audioData.sampleRate);
+
+    // Chunk boundary and chunk-level debug label.
+    g.setColour(juce::Colours::orange.withAlpha(0.78f));
+    g.drawVerticalLine(static_cast<int>(x1), 0.0f, contentHeight);
+
+    // Raw SOME event markers/labels inside this chunk.
+    for (size_t i = 0; i < chunk.events.size(); ++i) {
+      const auto &ev = chunk.events[i];
+      if (ev.endFrame <= startFrame || ev.startFrame >= endFrame)
+        continue;
+
+      const int overlapStart = std::max(startFrame, ev.startFrame);
+      const int overlapEnd = std::min(endFrame, ev.endFrame);
+      if (overlapEnd <= overlapStart)
+        continue;
+
+      const float ex1 = framesToSeconds(overlapStart) * pixelsPerSecond;
+      const float ex2 = framesToSeconds(overlapEnd) * pixelsPerSecond;
+      const float ew = std::max(1.0f, ex2 - ex1);
+
+      if (ev.isRest) {
+        ++restCount;
+        // Red: rest segments placed on nearby note lane (not at top).
+        float anchorMidi = 60.0f;
+        bool foundAnchor = false;
+        for (int k = static_cast<int>(i) - 1; k >= 0; --k) {
+          if (!chunk.events[static_cast<size_t>(k)].isRest) {
+            anchorMidi = chunk.events[static_cast<size_t>(k)].midiNote;
+            foundAnchor = true;
+            break;
+          }
+        }
+        if (!foundAnchor) {
+          for (size_t k = i + 1; k < chunk.events.size(); ++k) {
+            if (!chunk.events[k].isRest) {
+              anchorMidi = chunk.events[k].midiNote;
+              foundAnchor = true;
+              break;
+            }
+          }
+        }
+        anchorMidi = juce::jlimit(static_cast<float>(MIN_MIDI_NOTE),
+                                  static_cast<float>(MAX_MIDI_NOTE),
+                                  anchorMidi);
+        const float yCenter =
+            midiToY(anchorMidi) + pixelsPerSemitone * 0.5f;
+        const float restBandHeight = std::max(6.0f, pixelsPerSemitone * 0.62f);
+        const float restBandTop = yCenter - restBandHeight * 0.5f;
+        g.setColour(juce::Colours::red.withAlpha(0.55f));
+        g.fillRect(ex1, restBandTop, ew, restBandHeight);
+        g.setColour(juce::Colours::red.withAlpha(0.95f));
+        g.drawVerticalLine(static_cast<int>(ex1), restBandTop,
+                           restBandTop + restBandHeight);
+
+        if (ew > 40.0f) {
+          juce::String restTag = "rest";
+          if (i == 0)
+            restTag = "pre-rest";
+          else if (i + 1 == chunk.events.size())
+            restTag = "post-rest";
+          g.setColour(juce::Colours::white.withAlpha(0.95f));
+          g.drawFittedText(restTag + " d:" + juce::String(overlapEnd - overlapStart),
+                           static_cast<int>(ex1) + 2,
+                           static_cast<int>(restBandTop),
+                           static_cast<int>(ew) - 3,
+                           static_cast<int>(restBandHeight),
+                           juce::Justification::centredLeft, 1, 0.85f);
+        } else if (ew > 12.0f) {
+          g.setColour(juce::Colours::white.withAlpha(0.95f));
+          g.drawFittedText("R", static_cast<int>(ex1) + 1,
+                           static_cast<int>(restBandTop),
+                           static_cast<int>(ew) - 1,
+                           static_cast<int>(restBandHeight),
+                           juce::Justification::centredLeft, 1, 1.0f);
+        }
+        continue;
+      }
+
+      ++noteCount;
+
+      // Black: midi segments (placed on their pitch row).
+      const float noteMidi = juce::jlimit(static_cast<float>(MIN_MIDI_NOTE),
+                                          static_cast<float>(MAX_MIDI_NOTE),
+                                          ev.midiNote);
+      const float yCenter = midiToY(noteMidi) + pixelsPerSemitone * 0.5f;
+      const float h = std::max(6.0f, pixelsPerSemitone * 0.72f);
+      const float ny = yCenter - h * 0.5f;
+      g.setColour(juce::Colours::black.withAlpha(0.84f));
+      g.fillRoundedRectangle(ex1, ny, ew, h, 2.0f);
+
+      if (ew > 60.0f && eventLabelsInChunk < 80) {
+        const juce::String noteLabel =
+            "ev#" + juce::String(static_cast<int>(i)) + " m:" +
+            juce::String(ev.midiNote, 2) + " f:" + juce::String(overlapStart) +
+            "-" + juce::String(overlapEnd) + " d:" +
+            juce::String(overlapEnd - overlapStart) + " att:" +
+            juce::String(ev.attachedStartFrame) + " durS:" +
+            juce::String(ev.durationSeconds, 3);
+        g.setColour(juce::Colours::white.withAlpha(0.95f));
+        g.drawFittedText(noteLabel, static_cast<int>(ex1) + 3,
+                         static_cast<int>(ny) - 15,
+                         static_cast<int>(std::min(320.0f, ew)), 13,
+                         juce::Justification::centredLeft, 1, 0.70f);
+        ++eventLabelsInChunk;
+      } else if (ew > 22.0f) {
+        g.setColour(juce::Colours::white.withAlpha(0.95f));
+        g.drawFittedText("m:" + juce::String(ev.midiNote, 1),
+                         static_cast<int>(ex1) + 2, static_cast<int>(ny),
+                         static_cast<int>(ew) - 3, static_cast<int>(h),
+                         juce::Justification::centredLeft, 1, 0.9f);
+      } else if (ew > 8.0f) {
+        g.setColour(juce::Colours::white.withAlpha(0.95f));
+        g.drawVerticalLine(static_cast<int>(ex1 + 0.5f), ny, ny + h);
+      }
+    }
+
+    const juce::String label =
+        "S" + juce::String(chunk.chunkIndex) + " f:" +
+        juce::String(startFrame) + "-" + juce::String(endFrame) + " len:" +
+        juce::String(endFrame - startFrame) + "f/" +
+        juce::String(chunkSeconds, 2) + "s n:" + juce::String(noteCount) +
+        " r:" + juce::String(restCount) + " ev:" +
+        juce::String(static_cast<int>(chunk.events.size())) + " rstTh:" +
+        juce::String(chunk.shortRestThreshold);
+
+    const int textX = static_cast<int>(x1 + 3.0f);
+    const int textY = 16;
+    const int textWidth = std::max(40, static_cast<int>(width - 6.0f));
+    const int textHeight = 14;
+
+    g.setColour(juce::Colours::black.withAlpha(0.55f));
+    g.fillRect(static_cast<float>(textX), static_cast<float>(textY),
+               static_cast<float>(textWidth), static_cast<float>(textHeight));
+    g.setColour(juce::Colours::white.withAlpha(0.96f));
+    g.drawFittedText(label, textX + 2, textY, textWidth - 4, textHeight,
+                     juce::Justification::centredLeft, 1, 0.8f);
+
+    ++chunksDrawn;
+    if (chunksDrawn >= maxChunks)
+      break;
+  }
+}
+
 void PianoRollComponent::drawTimeline(juce::Graphics &g) {
   constexpr int scrollBarSize = 8;
   auto timelineArea = juce::Rectangle<int>(
@@ -562,6 +757,51 @@ void PianoRollComponent::drawNotes(juce::Graphics &g) {
   if (!project)
     return;
 
+  const bool isMultiDragging = pitchEditor && pitchEditor->isDraggingMultiNotes();
+  const std::vector<Note *> *draggedNotes =
+      isMultiDragging ? &pitchEditor->getDraggedNotes() : nullptr;
+  constexpr float outlinePadding = 2.0f;
+
+  auto drawSelectedNoteOutline = [&g](float x, float y, float w, float h) {
+    constexpr float outlineThickness = 1.5f;
+    constexpr float outlineCornerRadius = 3.5f;
+
+    g.setColour(APP_COLOR_PRIMARY.withAlpha(0.95f));
+    g.drawRoundedRectangle(
+        x - outlinePadding, y - outlinePadding, w + outlinePadding * 2.0f,
+        h + outlinePadding * 2.0f, outlineCornerRadius, outlineThickness);
+  };
+  auto getDeltaScaleHandleBounds = [](float x, float y, float w,
+                                      float h) -> juce::Rectangle<float> {
+    constexpr float localOutlinePadding = 2.0f;
+    constexpr float localHandleWidth = 18.0f;
+    constexpr float localHandleHeight = 10.0f;
+    constexpr float localHandleGap = 4.0f;
+    constexpr float localHandleSpacing = 6.0f;
+    const float centerX = x + w * 0.5f;
+    const float groupWidth = localHandleWidth * 2.0f + localHandleSpacing;
+    const float groupLeft = centerX - groupWidth * 0.5f;
+    const float handleX = groupLeft;
+    const float handleY =
+        y + h + localOutlinePadding + localHandleGap;
+    return {handleX, handleY, localHandleWidth, localHandleHeight};
+  };
+  auto getDeltaOffsetHandleBounds = [](float x, float y, float w,
+                                       float h) -> juce::Rectangle<float> {
+    constexpr float localOutlinePadding = 2.0f;
+    constexpr float localHandleWidth = 18.0f;
+    constexpr float localHandleHeight = 10.0f;
+    constexpr float localHandleGap = 4.0f;
+    constexpr float localHandleSpacing = 6.0f;
+    const float centerX = x + w * 0.5f;
+    const float groupWidth = localHandleWidth * 2.0f + localHandleSpacing;
+    const float groupLeft = centerX - groupWidth * 0.5f;
+    const float handleX = groupLeft + localHandleWidth + localHandleSpacing;
+    const float handleY =
+        y + h + localOutlinePadding + localHandleGap;
+    return {handleX, handleY, localHandleWidth, localHandleHeight};
+  };
+
   const auto &audioData = project->getAudioData();
   const float *globalSamples = audioData.waveform.getNumSamples() > 0
                                    ? audioData.waveform.getReadPointer(0)
@@ -586,6 +826,7 @@ void PianoRollComponent::drawNotes(juce::Graphics &g) {
     float x = static_cast<float>(noteStartTime * pixelsPerSecond);
     float w = framesToSeconds(note.getDurationFrames()) * pixelsPerSecond;
     float h = pixelsPerSemitone;
+    const float renderedWidth = std::max(w, 4.0f);
 
     // Position at grid cell center for MIDI note, then offset by pitch
     // adjustment
@@ -662,7 +903,7 @@ void PianoRollComponent::drawNotes(juce::Graphics &g) {
       if (numPoints < 2) {
         // Fallback for very short notes
         g.setColour(noteColor.withAlpha(0.85f));
-        g.fillRoundedRectangle(x, y, std::max(w, 4.0f), h, 2.0f);
+        g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
       } else {
         // Helper function for Catmull-Rom spline interpolation
         auto catmullRom = [](float t, float p0, float p1, float p2,
@@ -819,7 +1060,119 @@ void PianoRollComponent::drawNotes(juce::Graphics &g) {
     } else {
       // Fallback: simple rectangle for very short notes
       g.setColour(noteColor.withAlpha(0.85f));
-      g.fillRoundedRectangle(x, y, std::max(w, 4.0f), h, 2.0f);
+      g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+    }
+
+    if (note.isSelected()) {
+      drawSelectedNoteOutline(x, y, renderedWidth, h);
+
+      const auto handleBounds =
+          getDeltaScaleHandleBounds(x, y, renderedWidth, h);
+      const bool handleActive =
+          isDeltaScaleDragging &&
+          std::find(deltaScaleTargetNotes.begin(), deltaScaleTargetNotes.end(),
+                    &note) != deltaScaleTargetNotes.end();
+      g.setColour(handleActive ? APP_COLOR_PRIMARY.brighter(0.1f)
+                               : APP_COLOR_PRIMARY.withAlpha(0.9f));
+      g.fillRoundedRectangle(handleBounds, 2.5f);
+      g.setColour(juce::Colours::white.withAlpha(0.95f));
+      g.drawRoundedRectangle(handleBounds, 2.5f, 1.0f);
+
+      const float cx = handleBounds.getCentreX();
+      const float top = handleBounds.getY() + 2.0f;
+      const float bottom = handleBounds.getBottom() - 2.0f;
+      g.drawLine(cx, top + 2.0f, cx, bottom - 2.0f, 1.0f);
+      juce::Path upArrow;
+      upArrow.addTriangle(cx, top, cx - 2.5f, top + 3.5f, cx + 2.5f, top + 3.5f);
+      g.fillPath(upArrow);
+      juce::Path downArrow;
+      downArrow.addTriangle(cx, bottom, cx - 2.5f, bottom - 3.5f,
+                            cx + 2.5f, bottom - 3.5f);
+      g.fillPath(downArrow);
+
+      if (isDeltaScaleDragging && deltaScaleFactor > 0.0f) {
+        const juce::String factorText = "x" + juce::String(deltaScaleFactor, 2);
+        const float infoW = 44.0f;
+        const float infoH = 14.0f;
+        const float infoX = handleBounds.getCentreX() - infoW * 0.5f;
+        const float infoY = handleBounds.getBottom() + 2.0f;
+        g.setColour(juce::Colours::black.withAlpha(0.72f));
+        g.fillRoundedRectangle(infoX, infoY, infoW, infoH, 3.0f);
+        g.setColour(juce::Colours::white.withAlpha(0.95f));
+        g.setFont(juce::FontOptions(10.0f));
+        g.drawFittedText(factorText, static_cast<int>(infoX),
+                         static_cast<int>(infoY), static_cast<int>(infoW),
+                         static_cast<int>(infoH), juce::Justification::centred,
+                         1);
+      }
+
+      const auto offsetHandleBounds =
+          getDeltaOffsetHandleBounds(x, y, renderedWidth, h);
+      const bool offsetHandleActive =
+          isDeltaOffsetDragging &&
+          std::find(deltaOffsetTargetNotes.begin(), deltaOffsetTargetNotes.end(),
+                    &note) != deltaOffsetTargetNotes.end();
+      g.setColour(offsetHandleActive ? APP_COLOR_PRIMARY.brighter(0.1f)
+                                     : APP_COLOR_PRIMARY.withAlpha(0.9f));
+      g.fillRoundedRectangle(offsetHandleBounds, 2.5f);
+      g.setColour(juce::Colours::white.withAlpha(0.95f));
+      g.drawRoundedRectangle(offsetHandleBounds, 2.5f, 1.0f);
+      g.setFont(juce::FontOptions(9.0f));
+      g.drawFittedText("+/-", static_cast<int>(offsetHandleBounds.getX()),
+                       static_cast<int>(offsetHandleBounds.getY()),
+                       static_cast<int>(offsetHandleBounds.getWidth()),
+                       static_cast<int>(offsetHandleBounds.getHeight()),
+                       juce::Justification::centred, 1);
+
+      if (isDeltaOffsetDragging) {
+        const juce::String prefix = deltaOffsetSemitones >= 0.0f ? "+" : "";
+        const juce::String offsetText =
+            prefix + juce::String(deltaOffsetSemitones, 2) + " st";
+        const float infoW = 56.0f;
+        const float infoH = 14.0f;
+        const float infoX = offsetHandleBounds.getCentreX() - infoW * 0.5f;
+        const float infoY = offsetHandleBounds.getBottom() + 2.0f;
+        g.setColour(juce::Colours::black.withAlpha(0.72f));
+        g.fillRoundedRectangle(infoX, infoY, infoW, infoH, 3.0f);
+        g.setColour(juce::Colours::white.withAlpha(0.95f));
+        g.setFont(juce::FontOptions(10.0f));
+        g.drawFittedText(offsetText, static_cast<int>(infoX),
+                         static_cast<int>(infoY), static_cast<int>(infoW),
+                         static_cast<int>(infoH), juce::Justification::centred,
+                         1);
+      }
+    }
+
+    const bool isSingleDragged = isDragging && draggedNote == &note;
+    const bool isMultiDragged =
+        isMultiDragging && draggedNotes &&
+        std::find(draggedNotes->begin(), draggedNotes->end(), &note) !=
+            draggedNotes->end();
+    if (isSingleDragged || isMultiDragged) {
+      const float deltaSemitones = note.getPitchOffset();
+      if (std::abs(deltaSemitones) >= 0.01f) {
+        const juce::String prefix = deltaSemitones >= 0.0f ? "+" : "";
+        const juce::String label =
+            prefix + juce::String(deltaSemitones, 1) + " st";
+
+        constexpr float labelHeight = 16.0f;
+        constexpr float margin = 4.0f;
+        const float labelWidth =
+            std::max(44.0f, static_cast<float>(label.length()) * 7.2f);
+        const float labelX = x + renderedWidth * 0.5f - labelWidth * 0.5f;
+        const bool moveUp = deltaSemitones > 0.0f;
+        const float labelY = moveUp ? (y - labelHeight - margin) : (y + h + margin);
+
+        g.setColour(juce::Colours::black.withAlpha(0.72f));
+        g.fillRoundedRectangle(labelX, labelY, labelWidth, labelHeight, 4.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::FontOptions(11.0f));
+        g.drawFittedText(label, static_cast<int>(labelX),
+                         static_cast<int>(labelY),
+                         static_cast<int>(labelWidth),
+                         static_cast<int>(labelHeight),
+                         juce::Justification::centred, 1);
+      }
     }
   }
 
@@ -1320,6 +1673,164 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
     return;
   }
 
+  // Delta pitch scale handle drag start (shown below selected note outline).
+  {
+    auto selectedNotes = project->getSelectedNotes();
+    if (!selectedNotes.empty()) {
+      auto getScaleHandleBounds = [](float x, float y, float w,
+                                     float h) -> juce::Rectangle<float> {
+        constexpr float localOutlinePadding = 2.0f;
+        constexpr float localHandleWidth = 18.0f;
+        constexpr float localHandleHeight = 10.0f;
+        constexpr float localHandleGap = 4.0f;
+        constexpr float localHandleSpacing = 6.0f;
+        const float centerX = x + w * 0.5f;
+        const float groupWidth = localHandleWidth * 2.0f + localHandleSpacing;
+        const float groupLeft = centerX - groupWidth * 0.5f;
+        const float handleX = groupLeft;
+        const float handleY = y + h + localOutlinePadding + localHandleGap;
+        return {handleX, handleY, localHandleWidth, localHandleHeight};
+      };
+      auto getOffsetHandleBounds = [&getScaleHandleBounds](float x, float y,
+                                                           float w, float h)
+          -> juce::Rectangle<float> {
+        constexpr float localHandleSpacing = 6.0f;
+        auto scaleBounds = getScaleHandleBounds(x, y, w, h);
+        return {scaleBounds.getRight() + localHandleSpacing, scaleBounds.getY(),
+                scaleBounds.getWidth(), scaleBounds.getHeight()};
+      };
+
+      enum class DeltaHandleHit { None, Scale, Offset };
+      DeltaHandleHit hitHandle = DeltaHandleHit::None;
+      for (auto *selected : selectedNotes) {
+        if (!selected || selected->isRest())
+          continue;
+        const float x = framesToSeconds(selected->getStartFrame()) * pixelsPerSecond;
+        const float w = std::max(
+            framesToSeconds(selected->getDurationFrames()) * pixelsPerSecond,
+            4.0f);
+        const float h = pixelsPerSemitone;
+        const float baseGridCenterY =
+            midiToY(selected->getMidiNote()) + pixelsPerSemitone * 0.5f;
+        const float pitchOffsetPixels =
+            -selected->getPitchOffset() * pixelsPerSemitone;
+        const float y = baseGridCenterY + pitchOffsetPixels - h * 0.5f;
+        const auto scaleBounds = getScaleHandleBounds(x, y, w, h);
+        const auto offsetBounds = getOffsetHandleBounds(x, y, w, h);
+        if (scaleBounds.expanded(2.0f, 2.0f).contains(adjustedX, adjustedY)) {
+          hitHandle = DeltaHandleHit::Scale;
+          break;
+        }
+        if (offsetBounds.expanded(2.0f, 2.0f).contains(adjustedX, adjustedY)) {
+          hitHandle = DeltaHandleHit::Offset;
+          break;
+        }
+      }
+
+      if (hitHandle == DeltaHandleHit::Scale) {
+        isDeltaScaleDragging = true;
+        deltaScaleDragStartY = adjustedY;
+        deltaScaleFactor = 1.0f;
+        deltaScaleTargetNotes.clear();
+        deltaScaleEdits.clear();
+        deltaScaleMinFrame = std::numeric_limits<int>::max();
+        deltaScaleMaxFrame = std::numeric_limits<int>::min();
+
+        auto &audioData = project->getAudioData();
+        if (audioData.deltaPitch.size() < audioData.f0.size())
+          audioData.deltaPitch.resize(audioData.f0.size(), 0.0f);
+
+        std::unordered_set<int> seenFrames;
+        for (auto *selected : selectedNotes) {
+          if (!selected || selected->isRest())
+            continue;
+          deltaScaleTargetNotes.push_back(selected);
+
+          const int startFrame = std::max(0, selected->getStartFrame());
+          const int endFrame = std::min(
+              selected->getEndFrame(),
+              static_cast<int>(audioData.deltaPitch.size()));
+          for (int frame = startFrame; frame < endFrame; ++frame) {
+            if (!seenFrames.insert(frame).second)
+              continue;
+            F0FrameEdit edit;
+            edit.idx = frame;
+            edit.oldDelta = audioData.deltaPitch[static_cast<size_t>(frame)];
+            if (frame < static_cast<int>(audioData.f0.size()))
+              edit.oldF0 = audioData.f0[static_cast<size_t>(frame)];
+            if (frame < static_cast<int>(audioData.voicedMask.size()))
+              edit.oldVoiced = audioData.voicedMask[static_cast<size_t>(frame)];
+            else
+              edit.oldVoiced = true;
+            edit.newVoiced = edit.oldVoiced;
+            deltaScaleEdits.push_back(edit);
+            deltaScaleMinFrame = std::min(deltaScaleMinFrame, frame);
+            deltaScaleMaxFrame = std::max(deltaScaleMaxFrame, frame);
+          }
+        }
+
+        if (deltaScaleEdits.empty()) {
+          isDeltaScaleDragging = false;
+          deltaScaleTargetNotes.clear();
+        }
+
+        repaint();
+        return;
+      }
+
+      if (hitHandle == DeltaHandleHit::Offset) {
+        isDeltaOffsetDragging = true;
+        deltaOffsetDragStartY = adjustedY;
+        deltaOffsetSemitones = 0.0f;
+        deltaOffsetTargetNotes.clear();
+        deltaOffsetEdits.clear();
+        deltaOffsetMinFrame = std::numeric_limits<int>::max();
+        deltaOffsetMaxFrame = std::numeric_limits<int>::min();
+
+        auto &audioData = project->getAudioData();
+        if (audioData.deltaPitch.size() < audioData.f0.size())
+          audioData.deltaPitch.resize(audioData.f0.size(), 0.0f);
+
+        std::unordered_set<int> seenFrames;
+        for (auto *selected : selectedNotes) {
+          if (!selected || selected->isRest())
+            continue;
+          deltaOffsetTargetNotes.push_back(selected);
+
+          const int startFrame = std::max(0, selected->getStartFrame());
+          const int endFrame = std::min(
+              selected->getEndFrame(),
+              static_cast<int>(audioData.deltaPitch.size()));
+          for (int frame = startFrame; frame < endFrame; ++frame) {
+            if (!seenFrames.insert(frame).second)
+              continue;
+            F0FrameEdit edit;
+            edit.idx = frame;
+            edit.oldDelta = audioData.deltaPitch[static_cast<size_t>(frame)];
+            if (frame < static_cast<int>(audioData.f0.size()))
+              edit.oldF0 = audioData.f0[static_cast<size_t>(frame)];
+            if (frame < static_cast<int>(audioData.voicedMask.size()))
+              edit.oldVoiced = audioData.voicedMask[static_cast<size_t>(frame)];
+            else
+              edit.oldVoiced = true;
+            edit.newVoiced = edit.oldVoiced;
+            deltaOffsetEdits.push_back(edit);
+            deltaOffsetMinFrame = std::min(deltaOffsetMinFrame, frame);
+            deltaOffsetMaxFrame = std::max(deltaOffsetMaxFrame, frame);
+          }
+        }
+
+        if (deltaOffsetEdits.empty()) {
+          isDeltaOffsetDragging = false;
+          deltaOffsetTargetNotes.clear();
+        }
+
+        repaint();
+        return;
+      }
+    }
+  }
+
   // Check if clicking on a note
   Note *note = findNoteAt(adjustedX, adjustedY);
 
@@ -1467,6 +1978,96 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e) {
     return;
   }
 
+  if (isDeltaScaleDragging && project) {
+    float deltaY = deltaScaleDragStartY - adjustedY;
+    float newFactor = juce::jlimit(0.0f, 4.0f, 1.0f + deltaY * 0.01f);
+
+    if (std::abs(newFactor - deltaScaleFactor) > 0.0001f) {
+      deltaScaleFactor = newFactor;
+      auto &audioData = project->getAudioData();
+
+      for (auto &edit : deltaScaleEdits) {
+        if (edit.idx < 0 ||
+            edit.idx >= static_cast<int>(audioData.deltaPitch.size()))
+          continue;
+
+        const float newDelta = edit.oldDelta * deltaScaleFactor;
+        edit.newDelta = newDelta;
+        audioData.deltaPitch[static_cast<size_t>(edit.idx)] = newDelta;
+
+        float newF0 = edit.oldF0;
+        if (!edit.oldVoiced) {
+          newF0 = 0.0f;
+        } else {
+          float baseMidi = 0.0f;
+          bool hasBase = false;
+          if (edit.idx >= 0 &&
+              edit.idx < static_cast<int>(audioData.basePitch.size())) {
+            baseMidi = audioData.basePitch[static_cast<size_t>(edit.idx)];
+            hasBase = true;
+          } else if (edit.oldF0 > 0.0f) {
+            baseMidi = freqToMidi(edit.oldF0) - edit.oldDelta;
+            hasBase = true;
+          }
+          if (hasBase)
+            newF0 = midiToFreq(baseMidi + newDelta);
+        }
+
+        if (edit.idx < static_cast<int>(audioData.f0.size()))
+          audioData.f0[static_cast<size_t>(edit.idx)] = newF0;
+        edit.newF0 = newF0;
+      }
+    }
+
+    if (shouldRepaint) {
+      repaint();
+      lastDragRepaintTime = now;
+    }
+    return;
+  }
+
+  if (isDeltaOffsetDragging && project) {
+    deltaOffsetSemitones = (deltaOffsetDragStartY - adjustedY) / pixelsPerSemitone;
+    auto &audioData = project->getAudioData();
+
+    for (auto &edit : deltaOffsetEdits) {
+      if (edit.idx < 0 ||
+          edit.idx >= static_cast<int>(audioData.deltaPitch.size()))
+        continue;
+
+      const float newDelta = edit.oldDelta + deltaOffsetSemitones;
+      edit.newDelta = newDelta;
+      audioData.deltaPitch[static_cast<size_t>(edit.idx)] = newDelta;
+
+      float newF0 = edit.oldF0;
+      if (!edit.oldVoiced) {
+        newF0 = 0.0f;
+      } else {
+        float baseMidi = 0.0f;
+        bool hasBase = false;
+        if (edit.idx >= 0 && edit.idx < static_cast<int>(audioData.basePitch.size())) {
+          baseMidi = audioData.basePitch[static_cast<size_t>(edit.idx)];
+          hasBase = true;
+        } else if (edit.oldF0 > 0.0f) {
+          baseMidi = freqToMidi(edit.oldF0) - edit.oldDelta;
+          hasBase = true;
+        }
+        if (hasBase)
+          newF0 = midiToFreq(baseMidi + newDelta);
+      }
+
+      if (edit.idx < static_cast<int>(audioData.f0.size()))
+        audioData.f0[static_cast<size_t>(edit.idx)] = newF0;
+      edit.newF0 = newF0;
+    }
+
+    if (shouldRepaint) {
+      repaint();
+      lastDragRepaintTime = now;
+    }
+    return;
+  }
+
   // Handle box selection
   if (boxSelector->isSelecting()) {
     boxSelector->updateSelection(adjustedX, adjustedY);
@@ -1538,6 +2139,114 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e) {
 
   if (editMode == EditMode::Stretch && stretchDrag.active) {
     finishStretchDrag();
+    repaint();
+    return;
+  }
+
+  if (isDeltaScaleDragging && project) {
+    const bool hasChange = std::abs(deltaScaleFactor - 1.0f) >= 0.001f;
+    auto &audioData = project->getAudioData();
+
+    if (!hasChange) {
+      for (const auto &edit : deltaScaleEdits) {
+        if (edit.idx >= 0 &&
+            edit.idx < static_cast<int>(audioData.deltaPitch.size()))
+          audioData.deltaPitch[static_cast<size_t>(edit.idx)] = edit.oldDelta;
+        if (edit.idx >= 0 && edit.idx < static_cast<int>(audioData.f0.size()))
+          audioData.f0[static_cast<size_t>(edit.idx)] = edit.oldF0;
+      }
+    } else if (!deltaScaleEdits.empty()) {
+      const int f0Size = static_cast<int>(audioData.f0.size());
+      const int smoothStart = std::max(0, deltaScaleMinFrame - 60);
+      const int smoothEnd = std::min(f0Size, deltaScaleMaxFrame + 60);
+      project->setF0DirtyRange(smoothStart, smoothEnd);
+
+      if (undoManager) {
+        auto editsForUndo = deltaScaleEdits;
+        auto action = std::make_unique<F0EditAction>(
+            &audioData.f0, &audioData.deltaPitch, &audioData.voicedMask,
+            std::move(editsForUndo),
+            [this](int minFrame, int maxFrame) {
+              if (!project)
+                return;
+              const int f0SizeNow =
+                  static_cast<int>(project->getAudioData().f0.size());
+              const int smoothStartNow = std::max(0, minFrame - 60);
+              const int smoothEndNow = std::min(f0SizeNow, maxFrame + 60);
+              project->setF0DirtyRange(smoothStartNow, smoothEndNow);
+              if (onPitchEditFinished)
+                onPitchEditFinished();
+            });
+        undoManager->addAction(std::move(action));
+      }
+
+      if (onPitchEdited)
+        onPitchEdited();
+      if (onPitchEditFinished)
+        onPitchEditFinished();
+    }
+
+    isDeltaScaleDragging = false;
+    deltaScaleDragStartY = 0.0f;
+    deltaScaleFactor = 1.0f;
+    deltaScaleMinFrame = std::numeric_limits<int>::max();
+    deltaScaleMaxFrame = std::numeric_limits<int>::min();
+    deltaScaleTargetNotes.clear();
+    deltaScaleEdits.clear();
+    repaint();
+    return;
+  }
+
+  if (isDeltaOffsetDragging && project) {
+    const bool hasChange = std::abs(deltaOffsetSemitones) >= 0.001f;
+    auto &audioData = project->getAudioData();
+
+    if (!hasChange) {
+      for (const auto &edit : deltaOffsetEdits) {
+        if (edit.idx >= 0 &&
+            edit.idx < static_cast<int>(audioData.deltaPitch.size()))
+          audioData.deltaPitch[static_cast<size_t>(edit.idx)] = edit.oldDelta;
+        if (edit.idx >= 0 && edit.idx < static_cast<int>(audioData.f0.size()))
+          audioData.f0[static_cast<size_t>(edit.idx)] = edit.oldF0;
+      }
+    } else if (!deltaOffsetEdits.empty()) {
+      const int f0Size = static_cast<int>(audioData.f0.size());
+      const int smoothStart = std::max(0, deltaOffsetMinFrame - 60);
+      const int smoothEnd = std::min(f0Size, deltaOffsetMaxFrame + 60);
+      project->setF0DirtyRange(smoothStart, smoothEnd);
+
+      if (undoManager) {
+        auto editsForUndo = deltaOffsetEdits;
+        auto action = std::make_unique<F0EditAction>(
+            &audioData.f0, &audioData.deltaPitch, &audioData.voicedMask,
+            std::move(editsForUndo),
+            [this](int minFrame, int maxFrame) {
+              if (!project)
+                return;
+              const int f0SizeNow =
+                  static_cast<int>(project->getAudioData().f0.size());
+              const int smoothStartNow = std::max(0, minFrame - 60);
+              const int smoothEndNow = std::min(f0SizeNow, maxFrame + 60);
+              project->setF0DirtyRange(smoothStartNow, smoothEndNow);
+              if (onPitchEditFinished)
+                onPitchEditFinished();
+            });
+        undoManager->addAction(std::move(action));
+      }
+
+      if (onPitchEdited)
+        onPitchEdited();
+      if (onPitchEditFinished)
+        onPitchEditFinished();
+    }
+
+    isDeltaOffsetDragging = false;
+    deltaOffsetDragStartY = 0.0f;
+    deltaOffsetSemitones = 0.0f;
+    deltaOffsetMinFrame = std::numeric_limits<int>::max();
+    deltaOffsetMaxFrame = std::numeric_limits<int>::min();
+    deltaOffsetTargetNotes.clear();
+    deltaOffsetEdits.clear();
     repaint();
     return;
   }

@@ -16,6 +16,7 @@
 #include "PianoRoll/ScrollZoomController.h"
 
 #include <deque>
+#include <limits>
 #include <memory>
 #include <unordered_map>
 
@@ -112,6 +113,10 @@ public:
     showSomeSegmentsDebug = show;
     repaint();
   }
+  void setShowSomeValuesDebug(bool show) {
+    showSomeValuesDebug = show;
+    repaint();
+  }
   void setShowUvInterpolationDebug(bool show) {
     showUvInterpolationDebug = show;
     repaint();
@@ -148,6 +153,7 @@ private:
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   void drawLoopOverlay(juce::Graphics &g);
   void drawSomeSegmentDebugOverlay(juce::Graphics &g);
+  void drawSomeValuesDebugOverlay(juce::Graphics &g);
   void drawStretchGuides(juce::Graphics &g);
 
   float midiToY(float midiNote) const;
@@ -240,6 +246,7 @@ private:
   bool showDeltaPitch = true;
   bool showBasePitch = false;
   bool showSomeSegmentsDebug = false;
+  bool showSomeValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
 
@@ -259,6 +266,24 @@ private:
   std::vector<float> dragPreviewWeights;
   std::vector<float> dragBasePitchSnapshot;
   std::vector<float> dragF0Snapshot;
+
+  // Delta pitch scale drag state (handle below selected note outline)
+  bool isDeltaScaleDragging = false;
+  float deltaScaleDragStartY = 0.0f;
+  float deltaScaleFactor = 1.0f;
+  int deltaScaleMinFrame = std::numeric_limits<int>::max();
+  int deltaScaleMaxFrame = std::numeric_limits<int>::min();
+  std::vector<Note *> deltaScaleTargetNotes;
+  std::vector<F0FrameEdit> deltaScaleEdits;
+
+  // Delta pitch offset drag state (vertical shift of delta curve)
+  bool isDeltaOffsetDragging = false;
+  float deltaOffsetDragStartY = 0.0f;
+  float deltaOffsetSemitones = 0.0f;
+  int deltaOffsetMinFrame = std::numeric_limits<int>::max();
+  int deltaOffsetMaxFrame = std::numeric_limits<int>::min();
+  std::vector<Note *> deltaOffsetTargetNotes;
+  std::vector<F0FrameEdit> deltaOffsetEdits;
 
   // Pitch drawing state
   bool isDrawing = false;

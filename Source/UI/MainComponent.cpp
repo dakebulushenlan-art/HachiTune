@@ -62,6 +62,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
   pianoRoll.setShowBasePitch(settingsManager->getShowBasePitch());
   pianoRoll.setShowSomeSegmentsDebug(
       settingsManager->getShowSomeSegmentsDebug());
+  pianoRoll.setShowSomeValuesDebug(
+      settingsManager->getShowSomeValuesDebug());
   pianoRoll.setShowUvInterpolationDebug(
       settingsManager->getShowUvInterpolationDebug());
   pianoRoll.setShowActualF0Debug(
@@ -1335,6 +1337,15 @@ void MainComponent::showSettings() {
           pianoRoll.setShowSomeSegmentsDebug(show);
           pianoRollView.setShowSomeSegmentsDebug(show);
           pianoRollView.refreshOverview();
+          pianoRoll.repaint();
+        };
+    settingsOverlay->getSettingsComponent()->onShowSomeValuesDebugChanged =
+        [this](bool show) {
+          if (settingsManager) {
+            settingsManager->setShowSomeValuesDebug(show);
+            settingsManager->saveConfig();
+          }
+          pianoRoll.setShowSomeValuesDebug(show);
           pianoRoll.repaint();
         };
     settingsOverlay->getSettingsComponent()->onShowUvInterpolationDebugChanged =

@@ -382,6 +382,8 @@ void AudioAnalyzer::segmentWithSOME(Project &project) {
           notes.push_back(note);
         }
       },
+      nullptr,
+      nullptr,
       nullptr);
 
   juce::Thread::sleep(100);

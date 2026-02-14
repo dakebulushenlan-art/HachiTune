@@ -11,6 +11,24 @@
  */
 struct AudioData
 {
+    struct SomeDebugEvent {
+        int startFrame = 0;
+        int endFrame = 0;
+        int attachedStartFrame = 0;
+        float midiNote = 0.0f;
+        bool isRest = false;
+        float durationSeconds = 0.0f;
+        int durationFrames = 0;
+    };
+
+    struct SomeDebugChunk {
+        int chunkIndex = 0;
+        int startFrame = 0;
+        int endFrame = 0;
+        int shortRestThreshold = 0;
+        std::vector<SomeDebugEvent> events;
+    };
+
     juce::AudioBuffer<float> waveform;
     juce::AudioBuffer<float> originalWaveform;  // pristine copy for blend (never modified after analysis)
     int sampleRate = 44100;
@@ -24,6 +42,7 @@ struct AudioData
     std::vector<bool> voicedMask;                     // [T] uv mask (true = voiced, F0-based)
     std::vector<bool> vadMask;                        // [T] energy-based VAD (true = has audio energy, captures consonants)
     std::vector<std::pair<int, int>> someChunkRanges; // [N] SOME slicer chunks in frame range [start, end)
+    std::vector<SomeDebugChunk> someDebugChunks;      // raw SOME outputs for debug visualization
     
     float getDuration() const
     {
