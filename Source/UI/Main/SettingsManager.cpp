@@ -124,6 +124,9 @@ void SettingsManager::loadConfig() {
         if (configObj->hasProperty("showActualF0Debug"))
           showActualF0Debug =
               static_cast<bool>(configObj->getProperty("showActualF0Debug"));
+        if (configObj->hasProperty("followSystemAudioOutput"))
+          followSystemAudioOutput =
+              static_cast<bool>(configObj->getProperty("followSystemAudioOutput"));
       }
     }
   }
@@ -159,6 +162,7 @@ void SettingsManager::saveConfig() {
   config->setProperty("showSomeValuesDebug", showSomeValuesDebug);
   config->setProperty("showUvInterpolationDebug", showUvInterpolationDebug);
   config->setProperty("showActualF0Debug", showActualF0Debug);
+  config->setProperty("followSystemAudioOutput", followSystemAudioOutput);
 
   juce::String jsonText = juce::JSON::toString(juce::var(config.get()));
   configFile.replaceWithText(jsonText);

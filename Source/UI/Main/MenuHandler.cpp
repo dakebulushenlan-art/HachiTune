@@ -45,7 +45,7 @@ juce::PopupMenu MenuHandler::getMenuForIndex(int menuIndex, const juce::String& 
                     for (int i = 0; i < count; ++i) {
                         juce::File file(recentFiles[i]);
                         const juce::String label =
-                            juce::String::formatted("%d  %s", i + 1, file.getFullPathName().toRawUTF8());
+                            juce::String(i + 1) + "  " + file.getFullPathName();
                         recentMenu.addItem(kRecentFileMenuBaseId + i, label);
                     }
                 }

@@ -42,6 +42,10 @@ public:
   }
   int getWindowWidth() const { return windowWidth; }
   int getWindowHeight() const { return windowHeight; }
+  bool getFollowSystemAudioOutput() const { return followSystemAudioOutput; }
+  void setFollowSystemAudioOutput(bool follow) {
+    followSystemAudioOutput = follow;
+  }
 
   // View settings
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
@@ -84,6 +88,7 @@ private:
   bool showSomeValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
+  bool followSystemAudioOutput = true;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsManager)
 };

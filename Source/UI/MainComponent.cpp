@@ -526,6 +526,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   // Register commands with the command manager
   commandManager->registerAllCommandsForTarget(this);
+  commandManager->setFirstCommandTarget(this);
 
   // Connect MenuHandler to ApplicationCommandManager for automatic menu updates
   // This is required for macOS native menu bar to reflect command states
@@ -2258,7 +2259,7 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
         case CommandIDs::undo:
             result.setInfo(TR("command.undo"), TR("command.undo.desp"), "Edit", 0);
             result.addDefaultKeypress('z', primaryModifier);
-            result.setActive(undoManager != nullptr && undoManager->canUndo());
+            result.setActive(isPluginMode() || (undoManager != nullptr && undoManager->canUndo()));
             break;
             
         case CommandIDs::redo:
@@ -2268,7 +2269,7 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
 #else
             result.addDefaultKeypress('y', primaryModifier);
 #endif
-            result.setActive(undoManager != nullptr && undoManager->canRedo());
+            result.setActive(isPluginMode() || (undoManager != nullptr && undoManager->canRedo()));
             break;
             
         case CommandIDs::selectAll:
@@ -2298,7 +2299,8 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
         // Transport commands
         case CommandIDs::playPause:
             result.setInfo(TR("command.play_pause"), TR("command.play_pause.desp"), "Transport", 0);
-            result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
+            if (!isPluginMode())
+                result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
             result.setActive(project != nullptr);
             break;
             
@@ -2364,10 +2366,20 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo& info
             
         // Edit commands
         case CommandIDs::undo:
+            if (isPluginMode()) {
+                if (undoManager != nullptr && undoManager->canUndo())
+                    this->undo();
+                return true; // Consume in plugin mode to avoid host-level undo conflicts
+            }
             this->undo();
             return true;
             
         case CommandIDs::redo:
+            if (isPluginMode()) {
+                if (undoManager != nullptr && undoManager->canRedo())
+                    this->redo();
+                return true; // Consume in plugin mode to avoid host-level redo conflicts
+            }
             this->redo();
             return true;
             

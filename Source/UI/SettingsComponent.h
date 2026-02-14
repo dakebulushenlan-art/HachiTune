@@ -139,6 +139,7 @@ private:
   juce::String cachedDeviceTypeName;
 
   juce::String currentDevice = "CPU";
+  bool followSystemAudioOutput = true;
   bool hasLoadedSettings = false;
   int gpuDeviceId = 0;
   juce::String lastConfirmedDevice = "CPU";

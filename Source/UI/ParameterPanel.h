@@ -31,7 +31,7 @@ public:
     void updateFromNote();
     void updateGlobalSliders();
 
-    int getPreferredHeight() const { return 500; }
+    int getPreferredHeight() const { return 560; }
 
     std::function<void()> onParameterChanged;
     std::function<void()> onParameterEditFinished;  // Called when slider drag ends

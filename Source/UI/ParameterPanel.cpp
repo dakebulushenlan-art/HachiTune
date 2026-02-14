@@ -125,7 +125,7 @@ void ParameterPanel::resized()
     bounds.removeFromTop(cardGap);
 
     // Pitch card
-    pitchCardBounds = bounds.removeFromTop(122);
+    pitchCardBounds = bounds.removeFromTop(136);
     auto pitchArea = pitchCardBounds.reduced(10);
     pitchSectionLabel.setBounds(pitchArea.removeFromTop(18));
     pitchArea.removeFromTop(6);
@@ -137,7 +137,7 @@ void ParameterPanel::resized()
     bounds.removeFromTop(cardGap);
 
     // Volume card
-    volumeCardBounds = bounds.removeFromTop(112);
+    volumeCardBounds = bounds.removeFromTop(124);
     auto volumeArea = volumeCardBounds.reduced(10);
     volumeSectionLabel.setBounds(volumeArea.removeFromTop(18));
     volumeArea.removeFromTop(6);
