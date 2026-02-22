@@ -69,6 +69,45 @@ ScaleToneState getScaleToneState(ScaleMode mode, int noteInOctave, int rootNote)
     return ScaleToneState::InScale;
   return ScaleToneState::OutOfScale;
 }
+
+int normalizeTimelineBeatDenominator(int denominator)
+{
+  denominator = juce::jlimit(1, 32, denominator);
+  int normalized = 1;
+  while (normalized < denominator)
+    normalized <<= 1;
+  const int lower = normalized >> 1;
+  if (lower >= 1 && (denominator - lower) < (normalized - denominator))
+    normalized = lower;
+  return juce::jlimit(1, 32, normalized);
+}
+
+double gridDivisionToQuarterNotes(TimelineGridDivision division)
+{
+  switch (division) {
+  case TimelineGridDivision::Whole:
+    return 4.0;
+  case TimelineGridDivision::Half:
+    return 2.0;
+  case TimelineGridDivision::Quarter:
+    return 1.0;
+  case TimelineGridDivision::Eighth:
+    return 0.5;
+  case TimelineGridDivision::Sixteenth:
+    return 0.25;
+  case TimelineGridDivision::ThirtySecond:
+    return 0.125;
+  }
+  return 1.0;
+}
+
+bool isMultipleOf(double value, double step)
+{
+  if (step <= 0.0)
+    return false;
+  const double ratio = value / step;
+  return std::abs(ratio - std::round(ratio)) < 1.0e-4;
+}
 }
 
 PianoRollComponent::PianoRollComponent() {
@@ -439,17 +478,54 @@ void PianoRollComponent::drawGrid(juce::Graphics &g) {
     g.drawHorizontalLine(static_cast<int>(y), visibleStartX, visibleEndX);
   }
 
-  // Vertical beat lines (120 BPM for now).
-  const float secondsPerBeat = 60.0f / 120.0f;
-  const float pixelsPerBeat = secondsPerBeat * pixelsPerSecond;
-  if (pixelsPerBeat > 1.0e-4f) {
-    g.setColour(showScaleOverlay
-                    ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
-                    : APP_COLOR_GRID);
+  if (timelineDisplayMode == TimelineDisplayMode::Beats) {
+    const double gridSeconds = getTimelineGridSeconds();
+    const double beatSeconds = getTimelineBeatSeconds();
+    const double barSeconds = getTimelineBarSeconds();
+    if (gridSeconds > 1.0e-6 && beatSeconds > 1.0e-6 && barSeconds > 1.0e-6) {
+      const double visibleStartTime = visibleStartX / pixelsPerSecond;
+      const double visibleEndTime = visibleEndX / pixelsPerSecond;
+      const int firstGrid = std::max(
+          0, static_cast<int>(std::floor(visibleStartTime / gridSeconds)) - 1);
 
-    const int firstBeat = std::max(0, static_cast<int>(std::floor(visibleStartX / pixelsPerBeat)));
-    for (float x = firstBeat * pixelsPerBeat; x <= visibleEndX; x += pixelsPerBeat)
-      g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
+      for (int i = firstGrid;; ++i) {
+        const double time = static_cast<double>(i) * gridSeconds;
+        if (time > visibleEndTime + gridSeconds)
+          break;
+
+        const float x = static_cast<float>(time * pixelsPerSecond);
+        if (x < visibleStartX - 1.0f || x > visibleEndX + 1.0f)
+          continue;
+
+        if (isMultipleOf(time, barSeconds)) {
+          g.setColour(APP_COLOR_GRID_BAR);
+        } else if (isMultipleOf(time, beatSeconds)) {
+          g.setColour(showScaleOverlay
+                          ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
+                          : APP_COLOR_GRID);
+        } else {
+          g.setColour(APP_COLOR_GRID.darker(0.2f));
+        }
+        g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
+      }
+    }
+  } else {
+    // Time mode keeps simple second-based spacing.
+    const float secondsPerLine = pixelsPerSecond >= 180.0f ? 0.25f
+                               : pixelsPerSecond >= 90.0f  ? 0.5f
+                               : pixelsPerSecond >= 45.0f  ? 1.0f
+                               : pixelsPerSecond >= 22.0f  ? 2.0f
+                                                            : 5.0f;
+    const float pixelsPerLine = secondsPerLine * pixelsPerSecond;
+    if (pixelsPerLine > 1.0e-4f) {
+      g.setColour(showScaleOverlay
+                      ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
+                      : APP_COLOR_GRID);
+      const int firstLine =
+          std::max(0, static_cast<int>(std::floor(visibleStartX / pixelsPerLine)));
+      for (float x = firstLine * pixelsPerLine; x <= visibleEndX; x += pixelsPerLine)
+        g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
+    }
   }
 }
 
@@ -733,7 +809,60 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
   g.drawHorizontalLine(timelineHeight - 1, static_cast<float>(pianoKeysWidth),
                        static_cast<float>(getWidth() - scrollBarSize));
 
-  // Determine tick interval based on zoom level
+  const float duration = project ? project->getAudioData().getDuration() : 60.0f;
+  g.setFont(TimecodeFont::getBoldFont(12.0f));
+
+  if (timelineDisplayMode == TimelineDisplayMode::Beats) {
+    const double beatSeconds = getTimelineBeatSeconds();
+    const double barSeconds = getTimelineBarSeconds();
+    if (beatSeconds > 1.0e-6 && barSeconds > 1.0e-6) {
+      const int beatsPerBar = juce::jmax(1, timelineBeatNumerator);
+      const float pixelsPerBeat = static_cast<float>(beatSeconds * pixelsPerSecond);
+      int beatStep = 1;
+      while (pixelsPerBeat * static_cast<float>(beatStep) < 20.0f && beatStep < 64)
+        beatStep *= 2;
+
+      const int firstBeat = std::max(
+          0, static_cast<int>(std::floor((scrollX / pixelsPerSecond) / beatSeconds)));
+      const int lastBeat = static_cast<int>(
+          std::ceil((scrollX + timelineArea.getWidth()) / pixelsPerSecond / beatSeconds)) + beatStep;
+
+      for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep) {
+        const double time = static_cast<double>(beatIndex) * beatSeconds;
+        if (time > duration + beatSeconds)
+          break;
+
+        const float x =
+            pianoKeysWidth + static_cast<float>(time * pixelsPerSecond) - static_cast<float>(scrollX);
+        if (x < pianoKeysWidth - 50 || x > getWidth())
+          continue;
+
+        const bool isBarLine = (beatIndex % beatsPerBar) == 0;
+        const int tickHeight = isBarLine ? 9 : 4;
+        g.setColour(isBarLine ? APP_COLOR_GRID_BAR : APP_COLOR_GRID);
+        g.drawVerticalLine(static_cast<int>(x),
+                           static_cast<float>(timelineHeight - tickHeight),
+                           static_cast<float>(timelineHeight - 1));
+
+        if (isBarLine) {
+          const int bar = beatIndex / beatsPerBar + 1;
+          g.setColour(APP_COLOR_TEXT_MUTED);
+          g.drawText("Bar " + juce::String(bar), static_cast<int>(x) + 3, 2, 64,
+                     timelineHeight - 4, juce::Justification::centredLeft, false);
+        } else if (beatStep == 1 && pixelsPerBeat >= 58.0f) {
+          const int beatInBar = (beatIndex % beatsPerBar) + 1;
+          const int bar = beatIndex / beatsPerBar + 1;
+          g.setColour(APP_COLOR_TEXT_MUTED.withAlpha(0.8f));
+          g.drawText(juce::String::formatted("%d.%d", bar, beatInBar),
+                     static_cast<int>(x) + 3, 2, 48, timelineHeight - 4,
+                     juce::Justification::centredLeft, false);
+        }
+      }
+      return;
+    }
+  }
+
+  // Time mode labels/ticks.
   float secondsPerTick;
   if (pixelsPerSecond >= 200.0f)
     secondsPerTick = 0.5f;
@@ -746,20 +875,13 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
   else
     secondsPerTick = 10.0f;
 
-  float duration = project ? project->getAudioData().getDuration() : 60.0f;
-
-  // Draw ticks and labels
-  g.setFont(TimecodeFont::getBoldFont(12.0f));
-
-  for (float time = 0.0f; time <= duration + secondsPerTick;
-       time += secondsPerTick) {
+  for (float time = 0.0f; time <= duration + secondsPerTick; time += secondsPerTick) {
     float x =
         pianoKeysWidth + time * pixelsPerSecond - static_cast<float>(scrollX);
 
     if (x < pianoKeysWidth - 50 || x > getWidth())
       continue;
 
-    // Tick mark
     bool isMajor = std::fmod(time, secondsPerTick * 2.0f) < 0.001f;
     int tickHeight = isMajor ? 8 : 4;
 
@@ -768,7 +890,6 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
                        static_cast<float>(timelineHeight - tickHeight),
                        static_cast<float>(timelineHeight - 1));
 
-    // Time label (only on major ticks)
     if (isMajor) {
       int minutes = static_cast<int>(time) / 60;
       int seconds = static_cast<int>(time) % 60;
@@ -1702,6 +1823,41 @@ double PianoRollComponent::xToTime(float x) const {
   return x / pixelsPerSecond;
 }
 
+double PianoRollComponent::getTimelineQuarterNoteSeconds() const {
+  const double bpm = juce::jlimit(20.0, 300.0, timelineTempoBpm);
+  return bpm > 0.0 ? 60.0 / bpm : (60.0 / 120.0);
+}
+
+double PianoRollComponent::getTimelineBeatSeconds() const {
+  const int denominator = normalizeTimelineBeatDenominator(timelineBeatDenominator);
+  return getTimelineQuarterNoteSeconds() * (4.0 / static_cast<double>(denominator));
+}
+
+double PianoRollComponent::getTimelineBarSeconds() const {
+  const int numerator = juce::jmax(1, timelineBeatNumerator);
+  return getTimelineBeatSeconds() * static_cast<double>(numerator);
+}
+
+double PianoRollComponent::getTimelineGridSeconds() const {
+  const double quarterNotes = gridDivisionToQuarterNotes(timelineGridDivision);
+  return getTimelineQuarterNoteSeconds() * quarterNotes;
+}
+
+bool PianoRollComponent::shouldSnapCycleToGrid() const {
+  return timelineDisplayMode == TimelineDisplayMode::Beats &&
+         timelineSnapCycle &&
+         getTimelineGridSeconds() > 1.0e-6;
+}
+
+double PianoRollComponent::snapTimeToTimelineGrid(double timeSeconds) const {
+  if (!shouldSnapCycleToGrid())
+    return std::max(0.0, timeSeconds);
+
+  const double interval = getTimelineGridSeconds();
+  const double snapped = std::round(timeSeconds / interval) * interval;
+  return std::max(0.0, snapped);
+}
+
 void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
   if (!project)
     return;
@@ -1753,7 +1909,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
       if (static_cast<float>(e.x) >= startX &&
           static_cast<float>(e.x) <= endX) {
         loopDragMode = LoopDragMode::Move;
-        loopDragAnchorSeconds = xToTime(adjustedX);
+        loopDragAnchorSeconds = snapTimeToTimelineGrid(xToTime(adjustedX));
         loopDragOriginalStart = loopRange.startSeconds;
         loopDragOriginalEnd = loopRange.endSeconds;
         loopDragStartSeconds = loopRange.startSeconds;
@@ -1765,7 +1921,7 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
 
     loopDragMode = LoopDragMode::Create;
     loopDragStartX = static_cast<float>(e.x);
-    loopDragStartSeconds = std::max(0.0, xToTime(adjustedX));
+    loopDragStartSeconds = snapTimeToTimelineGrid(xToTime(adjustedX));
     loopDragEndSeconds = loopDragStartSeconds;
     repaint();
     return;
@@ -2066,18 +2222,19 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e) {
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
   if (loopDragMode != LoopDragMode::None) {
+    const double dragTime = snapTimeToTimelineGrid(xToTime(adjustedX));
     switch (loopDragMode) {
     case LoopDragMode::ResizeStart:
-      loopDragStartSeconds = std::max(0.0, xToTime(adjustedX));
+      loopDragStartSeconds = dragTime;
       break;
     case LoopDragMode::ResizeEnd:
-      loopDragEndSeconds = std::max(0.0, xToTime(adjustedX));
+      loopDragEndSeconds = dragTime;
       break;
     case LoopDragMode::Create:
-      loopDragEndSeconds = std::max(0.0, xToTime(adjustedX));
+      loopDragEndSeconds = dragTime;
       break;
     case LoopDragMode::Move: {
-      double delta = xToTime(adjustedX) - loopDragAnchorSeconds;
+      double delta = dragTime - loopDragAnchorSeconds;
       double newStart = loopDragOriginalStart + delta;
       double newEnd = loopDragOriginalEnd + delta;
 
@@ -2956,6 +3113,17 @@ void PianoRollComponent::setProject(Project *proj) {
   doubleClickSnapMode = project != nullptr
                             ? project->getDoubleClickSnapMode()
                             : DoubleClickSnapMode::PitchCenter;
+  timelineDisplayMode = project != nullptr
+                            ? project->getTimelineDisplayMode()
+                            : TimelineDisplayMode::Beats;
+  timelineBeatNumerator = project != nullptr ? project->getTimelineBeatNumerator() : 4;
+  timelineBeatDenominator =
+      project != nullptr ? project->getTimelineBeatDenominator() : 4;
+  timelineTempoBpm = project != nullptr ? project->getTimelineTempoBpm() : 120.0;
+  timelineGridDivision = project != nullptr
+                             ? project->getTimelineGridDivision()
+                             : TimelineGridDivision::Quarter;
+  timelineSnapCycle = project != nullptr ? project->getTimelineSnapCycle() : false;
   previewScaleRootNote.reset();
   previewScaleMode.reset();
 
@@ -3061,6 +3229,60 @@ void PianoRollComponent::setDoubleClickSnapMode(DoubleClickSnapMode mode) {
   doubleClickSnapMode = mode;
   if (project != nullptr)
     project->setDoubleClickSnapMode(mode);
+}
+
+void PianoRollComponent::setTimelineDisplayMode(TimelineDisplayMode mode) {
+  if (timelineDisplayMode == mode)
+    return;
+
+  timelineDisplayMode = mode;
+  if (project != nullptr)
+    project->setTimelineDisplayMode(mode);
+  repaint();
+}
+
+void PianoRollComponent::setTimelineBeatSignature(int numerator, int denominator) {
+  const int normalizedNumerator = juce::jlimit(1, 32, numerator);
+  const int normalizedDenominator = normalizeTimelineBeatDenominator(denominator);
+  if (timelineBeatNumerator == normalizedNumerator &&
+      timelineBeatDenominator == normalizedDenominator)
+    return;
+
+  timelineBeatNumerator = normalizedNumerator;
+  timelineBeatDenominator = normalizedDenominator;
+  if (project != nullptr)
+    project->setTimelineBeatSignature(normalizedNumerator, normalizedDenominator);
+  repaint();
+}
+
+void PianoRollComponent::setTimelineTempoBpm(double bpm) {
+  const double normalized = juce::jlimit(20.0, 300.0, bpm);
+  if (std::abs(timelineTempoBpm - normalized) < 1.0e-6)
+    return;
+
+  timelineTempoBpm = normalized;
+  if (project != nullptr)
+    project->setTimelineTempoBpm(normalized);
+  repaint();
+}
+
+void PianoRollComponent::setTimelineGridDivision(TimelineGridDivision division) {
+  if (timelineGridDivision == division)
+    return;
+
+  timelineGridDivision = division;
+  if (project != nullptr)
+    project->setTimelineGridDivision(division);
+  repaint();
+}
+
+void PianoRollComponent::setTimelineSnapCycle(bool enabled) {
+  if (timelineSnapCycle == enabled)
+    return;
+
+  timelineSnapCycle = enabled;
+  if (project != nullptr)
+    project->setTimelineSnapCycle(enabled);
 }
 
 void PianoRollComponent::setUndoManager(PitchUndoManager *manager) {

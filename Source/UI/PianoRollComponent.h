@@ -96,6 +96,11 @@ public:
   void setSnapToSemitoneDrag(bool enabled);
   void setPitchReferenceHz(int hz);
   void setDoubleClickSnapMode(DoubleClickSnapMode mode);
+  void setTimelineDisplayMode(TimelineDisplayMode mode);
+  void setTimelineBeatSignature(int numerator, int denominator);
+  void setTimelineTempoBpm(double bpm);
+  void setTimelineGridDivision(TimelineGridDivision division);
+  void setTimelineSnapCycle(bool enabled);
 
   // Scroll
   void setScrollX(double x);
@@ -174,6 +179,12 @@ private:
   float yToMidi(float y) const;
   float timeToX(double time) const;
   double xToTime(float x) const;
+  double getTimelineQuarterNoteSeconds() const;
+  double getTimelineBeatSeconds() const;
+  double getTimelineBarSeconds() const;
+  double getTimelineGridSeconds() const;
+  bool shouldSnapCycleToGrid() const;
+  double snapTimeToTimelineGrid(double timeSeconds) const;
 
   Note *findNoteAt(float x, float y);
   void updateScrollBars();
@@ -268,6 +279,12 @@ private:
   bool snapToSemitoneDrag = false;
   int pitchReferenceHz = 440;
   DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
+  TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
+  int timelineBeatNumerator = 4;
+  int timelineBeatDenominator = 4;
+  double timelineTempoBpm = 120.0;
+  TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
+  bool timelineSnapCycle = false;
   ScaleMode selectedScaleMode = ScaleMode::None;
   int selectedScaleRootNote = -1;
   std::optional<int> previewScaleRootNote;

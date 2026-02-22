@@ -29,7 +29,7 @@ public:
     void updateFromNote();
     void updateGlobalSliders();
 
-    int getPreferredHeight() const { return 350; }
+    int getPreferredHeight() const { return 520; }
 
     std::function<void()> onParameterChanged;
     std::function<void()> onParameterEditFinished;
@@ -41,6 +41,11 @@ public:
     std::function<void(bool)> onSnapToSemitonesChanged;
     std::function<void(int)> onPitchReferenceChanged;
     std::function<void(DoubleClickSnapMode)> onDoubleClickSnapModeChanged;
+    std::function<void(TimelineDisplayMode)> onTimelineDisplayModeChanged;
+    std::function<void(int, int)> onTimelineBeatSignatureChanged;
+    std::function<void(double)> onTimelineTempoChanged;
+    std::function<void(TimelineGridDivision)> onTimelineGridDivisionChanged;
+    std::function<void(bool)> onTimelineSnapCycleChanged;
 
 private:
     void setupTextButton(juce::TextButton& button);
@@ -49,6 +54,8 @@ private:
     void showDoubleClickSnapMenu();
     void showReferenceMenu();
     void showDetectedScaleMenu();
+    void showTimelineBeatMenu();
+    void showTimelineGridMenu();
 
     void setScaleRootInternal(int rootNote, bool notify);
     void setScaleModeInternal(ScaleMode mode, bool notify);
@@ -61,6 +68,13 @@ private:
     void refreshModeToggles();
     void refreshScaleControlEnabling();
     void applyReferenceEditorValue(bool notify);
+    void refreshTimelineModeToggles();
+    void applyTimelineTempoEditorValue(bool notify);
+    void setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify);
+    void setTimelineBeatSignatureInternal(int numerator, int denominator, bool notify);
+    void setTimelineTempoBpmInternal(double bpm, bool notify);
+    void setTimelineGridDivisionInternal(TimelineGridDivision division, bool notify);
+    void setTimelineSnapCycleInternal(bool enabled, bool notify);
 
     Project* project = nullptr;
     Note* selectedNote = nullptr;
@@ -68,6 +82,8 @@ private:
 
     juce::Label pitchSectionLabel { {}, "Pitch" };
     juce::Rectangle<int> pitchCardBounds;
+    juce::Label timeSectionLabel { {}, "Time" };
+    juce::Rectangle<int> timeCardBounds;
 
     StyledToggleButton chromaticToggle { "Chromatic" };
     StyledToggleButton scaleToggle { "Scale" };
@@ -88,6 +104,16 @@ private:
     juce::Label doubleClickSnapLabel { {}, "Double Click Snap" };
     juce::TextButton doubleClickSnapButton { "Pitch Center" };
 
+    StyledToggleButton beatsTimelineToggle { "Beats" };
+    StyledToggleButton timeTimelineToggle { "Time" };
+    juce::Label timelineBeatLabel { {}, "Beat" };
+    juce::TextButton timelineBeatButton { "4/4" };
+    juce::Label timelineTempoLabel { {}, "Tempo" };
+    juce::TextEditor timelineTempoEditor;
+    juce::Label timelineGridLabel { {}, "Grid" };
+    juce::TextButton timelineGridButton { "1/4" };
+    StyledToggleButton timelineSnapCycleToggle { "Snap Cycle" };
+
     int selectedScaleRootNote = -1;
     ScaleMode selectedScaleMode = ScaleMode::None;
     ScaleMode lastNonChromaticMode = ScaleMode::Major;
@@ -95,6 +121,12 @@ private:
     bool snapToSemitones = false;
     int pitchReferenceHz = 440;
     DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
+    TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
+    int timelineBeatNumerator = 4;
+    int timelineBeatDenominator = 4;
+    double timelineTempoBpm = 120.0;
+    TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
+    bool timelineSnapCycle = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterPanel)
 };

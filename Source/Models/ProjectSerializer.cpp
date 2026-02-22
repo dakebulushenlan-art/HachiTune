@@ -43,6 +43,14 @@ juce::var ProjectSerializer::toJson(const Project& project) {
     obj->setProperty("snapToSemitones", project.getSnapToSemitones());
     obj->setProperty("doubleClickSnapMode",
                      static_cast<int>(project.getDoubleClickSnapMode()));
+    obj->setProperty("timelineDisplayMode",
+                     static_cast<int>(project.getTimelineDisplayMode()));
+    obj->setProperty("timelineBeatNumerator", project.getTimelineBeatNumerator());
+    obj->setProperty("timelineBeatDenominator", project.getTimelineBeatDenominator());
+    obj->setProperty("timelineTempoBpm", project.getTimelineTempoBpm());
+    obj->setProperty("timelineGridDivision",
+                     static_cast<int>(project.getTimelineGridDivision()));
+    obj->setProperty("timelineSnapCycle", project.getTimelineSnapCycle());
 
     // Loop range
     const auto& loopRange = project.getLoopRange();
@@ -106,6 +114,40 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         else
             project.setDoubleClickSnapMode(DoubleClickSnapMode::PitchCenter);
     }
+    {
+        const int modeValue = static_cast<int>(json.getProperty(
+            "timelineDisplayMode", static_cast<int>(TimelineDisplayMode::Beats)));
+        if (modeValue >= static_cast<int>(TimelineDisplayMode::Beats) &&
+            modeValue <= static_cast<int>(TimelineDisplayMode::Time))
+            project.setTimelineDisplayMode(static_cast<TimelineDisplayMode>(modeValue));
+        else
+            project.setTimelineDisplayMode(TimelineDisplayMode::Beats);
+    }
+    project.setTimelineBeatSignature(
+        static_cast<int>(json.getProperty("timelineBeatNumerator", 4)),
+        static_cast<int>(json.getProperty("timelineBeatDenominator", 4)));
+    project.setTimelineTempoBpm(
+        static_cast<double>(json.getProperty("timelineTempoBpm", 120.0)));
+    {
+        const int gridValue = static_cast<int>(json.getProperty(
+            "timelineGridDivision", static_cast<int>(TimelineGridDivision::Quarter)));
+        switch (gridValue)
+        {
+            case static_cast<int>(TimelineGridDivision::Whole):
+            case static_cast<int>(TimelineGridDivision::Half):
+            case static_cast<int>(TimelineGridDivision::Quarter):
+            case static_cast<int>(TimelineGridDivision::Eighth):
+            case static_cast<int>(TimelineGridDivision::Sixteenth):
+            case static_cast<int>(TimelineGridDivision::ThirtySecond):
+                project.setTimelineGridDivision(static_cast<TimelineGridDivision>(gridValue));
+                break;
+            default:
+                project.setTimelineGridDivision(TimelineGridDivision::Quarter);
+                break;
+        }
+    }
+    project.setTimelineSnapCycle(static_cast<bool>(
+        json.getProperty("timelineSnapCycle", false)));
 
     // Loop range
     auto loopVar = json.getProperty("loop", juce::var());

@@ -508,6 +508,24 @@ MainComponent::MainComponent(bool enableAudioDevice)
       [this](DoubleClickSnapMode mode) {
         pianoRoll.setDoubleClickSnapMode(mode);
       };
+  parameterPanel.onTimelineDisplayModeChanged =
+      [this](TimelineDisplayMode mode) {
+        pianoRoll.setTimelineDisplayMode(mode);
+      };
+  parameterPanel.onTimelineBeatSignatureChanged =
+      [this](int numerator, int denominator) {
+        pianoRoll.setTimelineBeatSignature(numerator, denominator);
+      };
+  parameterPanel.onTimelineTempoChanged = [this](double bpm) {
+    pianoRoll.setTimelineTempoBpm(bpm);
+  };
+  parameterPanel.onTimelineGridDivisionChanged =
+      [this](TimelineGridDivision division) {
+        pianoRoll.setTimelineGridDivision(division);
+      };
+  parameterPanel.onTimelineSnapCycleChanged = [this](bool enabled) {
+    pianoRoll.setTimelineSnapCycle(enabled);
+  };
   parameterPanel.setProject(getProject());
 
   // Sync toolbar toggle with panel visibility
@@ -1531,7 +1549,7 @@ void MainComponent::exportMidiFile() {
 
   // Configure export options
   MidiExporter::ExportOptions options;
-  options.tempo = 120.0f; // Default BPM
+  options.tempo = static_cast<float>(project->getTimelineTempoBpm());
   options.ticksPerQuarterNote = 480;
   options.velocity = 100;
   options.quantizePitch = true; // Round to nearest semitone
@@ -1584,9 +1602,13 @@ void MainComponent::exportMidiFile() {
         safeThis->toolbar.showProgress(TR("progress.exporting_midi"));
         safeThis->toolbar.setProgress(0.3f);
 
+        auto *project = safeThis ? safeThis->getProject() : nullptr;
+        if (!project)
+          return;
+
         // Configure export options
         MidiExporter::ExportOptions options;
-        options.tempo = 120.0f; // Default BPM
+        options.tempo = static_cast<float>(project->getTimelineTempoBpm());
         options.ticksPerQuarterNote = 480;
         options.velocity = 100;
         options.quantizePitch = true; // Round to nearest semitone
@@ -1594,9 +1616,6 @@ void MainComponent::exportMidiFile() {
         safeThis->toolbar.setProgress(0.6f);
 
         // Export using adjusted pitch data (includes user edits)
-        auto *project = safeThis ? safeThis->getProject() : nullptr;
-        if (!project)
-          return;
         bool success =
             MidiExporter::exportToFile(project->getNotes(), file, options);
 

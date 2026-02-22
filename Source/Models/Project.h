@@ -95,6 +95,28 @@ enum class DoubleClickSnapMode : int
 };
 
 /**
+ * Timeline ruler mode.
+ */
+enum class TimelineDisplayMode : int
+{
+    Beats = 0,
+    Time
+};
+
+/**
+ * Beat-grid subdivision expressed as note denominator (1/x).
+ */
+enum class TimelineGridDivision : int
+{
+    Whole = 1,
+    Half = 2,
+    Quarter = 4,
+    Eighth = 8,
+    Sixteenth = 16,
+    ThirtySecond = 32
+};
+
+/**
  * Project data container.
  */
 class Project
@@ -185,6 +207,19 @@ public:
     DoubleClickSnapMode getDoubleClickSnapMode() const { return doubleClickSnapMode; }
     void setDoubleClickSnapMode(DoubleClickSnapMode mode);
 
+    // Timeline/grid settings
+    TimelineDisplayMode getTimelineDisplayMode() const { return timelineDisplayMode; }
+    void setTimelineDisplayMode(TimelineDisplayMode mode);
+    int getTimelineBeatNumerator() const { return timelineBeatNumerator; }
+    int getTimelineBeatDenominator() const { return timelineBeatDenominator; }
+    void setTimelineBeatSignature(int numerator, int denominator);
+    double getTimelineTempoBpm() const { return timelineTempoBpm; }
+    void setTimelineTempoBpm(double bpm);
+    TimelineGridDivision getTimelineGridDivision() const { return timelineGridDivision; }
+    void setTimelineGridDivision(TimelineGridDivision division);
+    bool getTimelineSnapCycle() const { return timelineSnapCycle; }
+    void setTimelineSnapCycle(bool enabled);
+
 private:
     juce::String name = "Untitled";
     juce::File filePath;
@@ -211,4 +246,11 @@ private:
     bool showScaleColors = true;
     bool snapToSemitones = false;
     DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
+
+    TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
+    int timelineBeatNumerator = 4;
+    int timelineBeatDenominator = 4;
+    double timelineTempoBpm = 120.0;
+    TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
+    bool timelineSnapCycle = false;
 };

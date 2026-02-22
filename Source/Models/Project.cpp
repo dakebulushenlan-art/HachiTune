@@ -7,6 +7,39 @@
 namespace
 {
     constexpr float twoPi = 6.2831853071795864769f;
+
+    int normalizeBeatNumerator(int numerator)
+    {
+        return juce::jlimit(1, 32, numerator);
+    }
+
+    int normalizeBeatDenominator(int denominator)
+    {
+        denominator = juce::jlimit(1, 32, denominator);
+        int normalized = 1;
+        while (normalized < denominator)
+            normalized <<= 1;
+        const int lower = normalized >> 1;
+        if (lower >= 1 && (denominator - lower) < (normalized - denominator))
+            normalized = lower;
+        return juce::jlimit(1, 32, normalized);
+    }
+
+    TimelineGridDivision normalizeGridDivision(TimelineGridDivision division)
+    {
+        switch (division)
+        {
+            case TimelineGridDivision::Whole:
+            case TimelineGridDivision::Half:
+            case TimelineGridDivision::Quarter:
+            case TimelineGridDivision::Eighth:
+            case TimelineGridDivision::Sixteenth:
+            case TimelineGridDivision::ThirtySecond:
+                return division;
+            default:
+                return TimelineGridDivision::Quarter;
+        }
+    }
 }
 
 Project::Project()
@@ -334,5 +367,57 @@ void Project::setDoubleClickSnapMode(DoubleClickSnapMode mode)
         return;
 
     doubleClickSnapMode = mode;
+    modified = true;
+}
+
+void Project::setTimelineDisplayMode(TimelineDisplayMode mode)
+{
+    if (timelineDisplayMode == mode)
+        return;
+
+    timelineDisplayMode = mode;
+    modified = true;
+}
+
+void Project::setTimelineBeatSignature(int numerator, int denominator)
+{
+    const int normalizedNumerator = normalizeBeatNumerator(numerator);
+    const int normalizedDenominator = normalizeBeatDenominator(denominator);
+
+    if (timelineBeatNumerator == normalizedNumerator &&
+        timelineBeatDenominator == normalizedDenominator)
+        return;
+
+    timelineBeatNumerator = normalizedNumerator;
+    timelineBeatDenominator = normalizedDenominator;
+    modified = true;
+}
+
+void Project::setTimelineTempoBpm(double bpm)
+{
+    const double normalized = juce::jlimit(20.0, 300.0, bpm);
+    if (std::abs(timelineTempoBpm - normalized) < 1.0e-6)
+        return;
+
+    timelineTempoBpm = normalized;
+    modified = true;
+}
+
+void Project::setTimelineGridDivision(TimelineGridDivision division)
+{
+    const auto normalized = normalizeGridDivision(division);
+    if (timelineGridDivision == normalized)
+        return;
+
+    timelineGridDivision = normalized;
+    modified = true;
+}
+
+void Project::setTimelineSnapCycle(bool enabled)
+{
+    if (timelineSnapCycle == enabled)
+        return;
+
+    timelineSnapCycle = enabled;
     modified = true;
 }
