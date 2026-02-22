@@ -36,6 +36,13 @@ juce::var ProjectSerializer::toJson(const Project& project) {
     obj->setProperty("globalPitchOffset", project.getGlobalPitchOffset());
     obj->setProperty("formantShift", project.getFormantShift());
     obj->setProperty("volume", project.getVolume());
+    obj->setProperty("scaleMode", static_cast<int>(project.getScaleMode()));
+    obj->setProperty("scaleRootNote", project.getScaleRootNote());
+    obj->setProperty("pitchReferenceHz", project.getPitchReferenceHz());
+    obj->setProperty("showScaleColors", project.getShowScaleColors());
+    obj->setProperty("snapToSemitones", project.getSnapToSemitones());
+    obj->setProperty("doubleClickSnapMode",
+                     static_cast<int>(project.getDoubleClickSnapMode()));
 
     // Loop range
     const auto& loopRange = project.getLoopRange();
@@ -75,6 +82,30 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     project.setGlobalPitchOffset(static_cast<float>(json.getProperty("globalPitchOffset", 0.0)));
     project.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     project.setVolume(static_cast<float>(json.getProperty("volume", 0.0)));
+    {
+        const int scaleModeValue = static_cast<int>(json.getProperty(
+            "scaleMode", static_cast<int>(ScaleMode::None)));
+        if (scaleModeValue >= static_cast<int>(ScaleMode::None) &&
+            scaleModeValue <= static_cast<int>(ScaleMode::Locrian))
+            project.setScaleMode(static_cast<ScaleMode>(scaleModeValue));
+        else
+            project.setScaleMode(ScaleMode::None);
+    }
+    project.setScaleRootNote(static_cast<int>(json.getProperty("scaleRootNote", -1)));
+    project.setPitchReferenceHz(static_cast<int>(json.getProperty("pitchReferenceHz", 440)));
+    project.setShowScaleColors(static_cast<bool>(
+        json.getProperty("showScaleColors", true)));
+    project.setSnapToSemitones(static_cast<bool>(
+        json.getProperty("snapToSemitones", false)));
+    {
+        const int snapModeValue = static_cast<int>(json.getProperty(
+            "doubleClickSnapMode", static_cast<int>(DoubleClickSnapMode::PitchCenter)));
+        if (snapModeValue >= static_cast<int>(DoubleClickSnapMode::PitchCenter) &&
+            snapModeValue <= static_cast<int>(DoubleClickSnapMode::NearestScale))
+            project.setDoubleClickSnapMode(static_cast<DoubleClickSnapMode>(snapModeValue));
+        else
+            project.setDoubleClickSnapMode(DoubleClickSnapMode::PitchCenter);
+    }
 
     // Loop range
     auto loopVar = json.getProperty("loop", juce::var());

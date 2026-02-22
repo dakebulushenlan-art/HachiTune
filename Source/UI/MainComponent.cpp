@@ -482,15 +482,32 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (isPluginMode() && onPitchEditFinished)
       onPitchEditFinished();
   };
-  parameterPanel.onGlobalPitchChanged = [this]() {
-    pianoRoll.repaint(); // Update display
+  parameterPanel.onScaleRootChanged = [this](int rootNote) {
+    pianoRoll.setScaleRootNote(rootNote);
   };
-  parameterPanel.onVolumeChanged = [this](float dB) {
-    if (auto *audioEngine = editorController
-                                ? editorController->getAudioEngine()
-                                : nullptr)
-      audioEngine->setVolumeDb(dB);
+  parameterPanel.onScaleRootPreviewChanged = [this](std::optional<int> rootNote) {
+    pianoRoll.setScaleRootPreview(rootNote);
   };
+  parameterPanel.onScaleModeChanged = [this](ScaleMode mode) {
+    pianoRoll.setScaleMode(mode);
+  };
+  parameterPanel.onScaleModePreviewChanged =
+      [this](std::optional<ScaleMode> mode) {
+        pianoRoll.setScaleModePreview(mode);
+      };
+  parameterPanel.onShowScaleColorsChanged = [this](bool enabled) {
+    pianoRoll.setShowScaleColors(enabled);
+  };
+  parameterPanel.onSnapToSemitonesChanged = [this](bool enabled) {
+    pianoRoll.setSnapToSemitoneDrag(enabled);
+  };
+  parameterPanel.onPitchReferenceChanged = [this](int hz) {
+    pianoRoll.setPitchReferenceHz(hz);
+  };
+  parameterPanel.onDoubleClickSnapModeChanged =
+      [this](DoubleClickSnapMode mode) {
+        pianoRoll.setDoubleClickSnapMode(mode);
+      };
   parameterPanel.setProject(getProject());
 
   // Sync toolbar toggle with panel visibility

@@ -98,33 +98,44 @@ void DarkLookAndFeel::drawTickBox(juce::Graphics& g, juce::Component& component,
                                    bool ticked, bool isEnabled, bool shouldDrawButtonAsHighlighted,
                                    bool shouldDrawButtonAsDown)
 {
-    juce::ignoreUnused(component, shouldDrawButtonAsDown);
+    juce::ignoreUnused(component);
 
-    auto boxSize = std::min(w, h) * 0.9f;
+    auto boxSize = std::floor(std::min(w, h) * 0.84f);
     auto boxX = x + (w - boxSize) * 0.5f;
     auto boxY = y + (h - boxSize) * 0.5f;
-    auto cornerSize = boxSize * 0.2f;
+    auto cornerSize = boxSize * 0.22f;
 
     juce::Rectangle<float> boxBounds(boxX, boxY, boxSize, boxSize);
+    const bool isHovered = shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown;
+    const float enabledAlpha = isEnabled ? 1.0f : 0.45f;
+    const float borderAlpha = isHovered ? 1.0f : 0.78f;
+
+    auto background =
+        APP_COLOR_SURFACE_ALT.withMultipliedBrightness(isHovered ? 1.08f : 1.0f)
+                             .withAlpha(isEnabled ? 0.98f : 0.5f);
+    g.setColour(background);
+    g.fillRoundedRectangle(boxBounds, cornerSize);
+
+    g.setColour(APP_COLOR_BORDER.withAlpha(borderAlpha * enabledAlpha));
+    g.drawRoundedRectangle(boxBounds, cornerSize, 1.25f);
 
     if (ticked)
     {
-        g.setColour(APP_COLOR_PRIMARY);
-        g.fillRoundedRectangle(boxBounds, cornerSize);
+        auto activeBounds = boxBounds.reduced(0.8f);
+        const float activeCorner = juce::jmax(1.0f, cornerSize - 0.6f);
+        g.setColour(APP_COLOR_PRIMARY.withAlpha(enabledAlpha));
+        g.fillRoundedRectangle(activeBounds, activeCorner);
+
+        g.setColour(APP_COLOR_PRIMARY.brighter(0.2f).withAlpha(enabledAlpha));
+        g.drawRoundedRectangle(activeBounds, activeCorner, 1.0f);
 
         g.setColour(juce::Colours::white);
-        auto tick = boxBounds.reduced(boxSize * 0.25f);
+        auto tick = activeBounds.reduced(boxSize * 0.24f);
         juce::Path path;
         path.startNewSubPath(tick.getX(), tick.getCentreY());
         path.lineTo(tick.getX() + tick.getWidth() * 0.35f, tick.getBottom());
         path.lineTo(tick.getRight(), tick.getY());
-        g.strokePath(path, juce::PathStrokeType(2.0f));
-    }
-    else
-    {
-        auto alpha = isEnabled ? (shouldDrawButtonAsHighlighted ? 1.0f : 0.7f) : 0.4f;
-        g.setColour(APP_COLOR_BORDER.withAlpha(alpha));
-        g.drawRoundedRectangle(boxBounds, cornerSize, 1.5f);
+        g.strokePath(path, juce::PathStrokeType(1.9f));
     }
 }
 

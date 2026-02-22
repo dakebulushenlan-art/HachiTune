@@ -3,15 +3,14 @@
 #include "../JuceHeader.h"
 #include "../Models/Note.h"
 #include "../Models/Project.h"
-#include "../Utils/Constants.h"
 #include "../Utils/UndoManager.h"
 #include "../Utils/UI/Theme.h"
-
-class DarkLookAndFeel;  // Forward declaration
+#include "StyledComponents.h"
+#include <optional>
 
 class ParameterPanel : public juce::Component,
-                       public juce::Slider::Listener,
-                       public juce::Button::Listener
+                       public juce::Button::Listener,
+                       public juce::TextEditor::Listener
 {
 public:
     ParameterPanel();
@@ -20,65 +19,82 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
 
-    void sliderValueChanged(juce::Slider* slider) override;
-    void sliderDragStarted(juce::Slider* slider) override;
-    void sliderDragEnded(juce::Slider* slider) override;
     void buttonClicked(juce::Button* button) override;
+    void textEditorReturnKeyPressed(juce::TextEditor& editor) override;
+    void textEditorFocusLost(juce::TextEditor& editor) override;
 
     void setProject(Project* proj);
-    void setUndoManager(PitchUndoManager* mgr) { undoManager = mgr; }
+    void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
     void setSelectedNote(Note* note);
     void updateFromNote();
     void updateGlobalSliders();
 
-    int getPreferredHeight() const { return 560; }
+    int getPreferredHeight() const { return 350; }
 
     std::function<void()> onParameterChanged;
-    std::function<void()> onParameterEditFinished;  // Called when slider drag ends
-    std::function<void()> onGlobalPitchChanged;
-    std::function<void(float)> onVolumeChanged;  // Called with volume in dB
-    
+    std::function<void()> onParameterEditFinished;
+    std::function<void(int)> onScaleRootChanged;
+    std::function<void(std::optional<int>)> onScaleRootPreviewChanged;
+    std::function<void(ScaleMode)> onScaleModeChanged;
+    std::function<void(std::optional<ScaleMode>)> onScaleModePreviewChanged;
+    std::function<void(bool)> onShowScaleColorsChanged;
+    std::function<void(bool)> onSnapToSemitonesChanged;
+    std::function<void(int)> onPitchReferenceChanged;
+    std::function<void(DoubleClickSnapMode)> onDoubleClickSnapModeChanged;
+
 private:
-    void setupSlider(juce::Slider& slider, juce::Label& label,
-                    const juce::String& name, double min, double max, double def);
+    void setupTextButton(juce::TextButton& button);
+    void showScaleModeMenu();
+    void showScaleRootMenu();
+    void showDoubleClickSnapMenu();
+    void showReferenceMenu();
+    void showDetectedScaleMenu();
+
+    void setScaleRootInternal(int rootNote, bool notify);
+    void setScaleModeInternal(ScaleMode mode, bool notify);
+    void setShowScaleColorsInternal(bool enabled, bool notify);
+    void setSnapToSemitonesInternal(bool enabled, bool notify);
+    void setPitchReferenceInternal(int hz, bool notify);
+    void setDoubleClickSnapModeInternal(DoubleClickSnapMode mode, bool notify);
+    void previewScaleRoot(std::optional<int> rootNote);
+    void previewScaleMode(std::optional<ScaleMode> mode);
+    void refreshModeToggles();
+    void refreshScaleControlEnabling();
+    void applyReferenceEditorValue(bool notify);
 
     Project* project = nullptr;
     Note* selectedNote = nullptr;
-    PitchUndoManager* undoManager = nullptr;
-    bool isUpdating = false;  // Prevent feedback loops
-    bool pitchOffsetDragging = false;
-    bool noteVolumeDragging = false;
-    float dragStartPitchOffset = 0.0f;
-    float dragStartNoteVolumeDb = 0.0f;
+    bool isUpdating = false;
 
-    // Note info
-    juce::Label noteInfoLabel;
-    juce::Rectangle<int> noteCardBounds;
-    
-    // Pitch controls
     juce::Label pitchSectionLabel { {}, "Pitch" };
-    juce::Slider pitchOffsetSlider;
-    juce::Label pitchOffsetLabel { {}, "Offset (semitones):" };
-    juce::Slider noteVolumeSlider;
-    juce::Label noteVolumeLabel { {}, "Note Volume (dB):" };
     juce::Rectangle<int> pitchCardBounds;
 
-    // Volume control (using rotary knob style)
-    juce::Label volumeSectionLabel { {}, "Volume" };
-    juce::Slider volumeKnob;
-    juce::Label volumeValueLabel;  // Shows current dB value
-    juce::Rectangle<int> volumeCardBounds;
+    StyledToggleButton chromaticToggle { "Chromatic" };
+    StyledToggleButton scaleToggle { "Scale" };
 
-    juce::Label formantSectionLabel { {}, "Formant" };
-    juce::Slider formantShiftSlider;
-    juce::Label formantShiftLabel { {}, "Shift (semitones):" };
-    juce::Rectangle<int> formantCardBounds;
-    
-    // Global settings
-    juce::Label globalSectionLabel { {}, "Global Settings" };
-    juce::Slider globalPitchSlider;
-    juce::Label globalPitchLabel { {}, "Global Pitch:" };
-    juce::Rectangle<int> globalCardBounds;
-    
+    juce::Label referenceLabel { {}, "Reference (A4)" };
+    juce::TextEditor referenceEditor;
+    juce::TextButton referenceMenuButton { "<" };
+
+    juce::Label scaleRootLabel { {}, "Root" };
+    juce::TextButton scaleRootButton { "-" };
+    juce::Label scaleModeLabel { {}, "Mode" };
+    juce::TextButton scaleModeButton { "-" };
+    juce::TextButton showDetectedScalesButton { "Show Detected Scales" };
+
+    StyledToggleButton showScaleColorsToggle { "Show Scale Colors" };
+    StyledToggleButton snapToSemitonesToggle { "Snap To Semitones" };
+
+    juce::Label doubleClickSnapLabel { {}, "Double Click Snap" };
+    juce::TextButton doubleClickSnapButton { "Pitch Center" };
+
+    int selectedScaleRootNote = -1;
+    ScaleMode selectedScaleMode = ScaleMode::None;
+    ScaleMode lastNonChromaticMode = ScaleMode::Major;
+    bool showScaleColors = true;
+    bool snapToSemitones = false;
+    int pitchReferenceHz = 440;
+    DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParameterPanel)
 };

@@ -6,10 +6,70 @@
 #include "../Utils/UI/TimecodeFont.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/PitchCurveProcessor.h"
+#include "../Utils/ScaleUtils.h"
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <unordered_set>
+
+namespace
+{
+juce::Colour getScaleAccentColour(ScaleMode mode)
+{
+  switch (mode) {
+  case ScaleMode::None:
+    return APP_COLOR_PRIMARY;
+  case ScaleMode::Major:
+    return juce::Colour(0xFF74A9FFu);
+  case ScaleMode::Minor:
+    return juce::Colour(0xFFB689FFu);
+  case ScaleMode::Dorian:
+    return juce::Colour(0xFF5BD0C0u);
+  case ScaleMode::Phrygian:
+    return juce::Colour(0xFFFF8C77u);
+  case ScaleMode::Lydian:
+    return juce::Colour(0xFFFFD166u);
+  case ScaleMode::Mixolydian:
+    return juce::Colour(0xFF75D0FFu);
+  case ScaleMode::Locrian:
+    return juce::Colour(0xFF9FA9BFu);
+  case ScaleMode::Chromatic:
+    return APP_COLOR_PRIMARY;
+  }
+  return APP_COLOR_PRIMARY;
+}
+
+bool isBlackKey(int noteInOctave)
+{
+  return noteInOctave == 1 || noteInOctave == 3 || noteInOctave == 6 ||
+         noteInOctave == 8 || noteInOctave == 10;
+}
+
+enum class ScaleToneState
+{
+  Root,
+  InScale,
+  OutOfScale
+};
+
+ScaleToneState getScaleToneState(ScaleMode mode, int noteInOctave, int rootNote)
+{
+  if (mode == ScaleMode::None || rootNote < 0)
+    return ScaleToneState::InScale;
+
+  const int normalizedNote = (noteInOctave % 12 + 12) % 12;
+  const int normalizedRoot = (rootNote % 12 + 12) % 12;
+
+  if (mode == ScaleMode::Chromatic)
+    return ScaleToneState::InScale;
+  if (normalizedNote == normalizedRoot)
+    return ScaleToneState::Root;
+  if (ScaleUtils::isPitchClassInScale(mode, normalizedNote, normalizedRoot))
+    return ScaleToneState::InScale;
+  return ScaleToneState::OutOfScale;
+}
+}
 
 PianoRollComponent::PianoRollComponent() {
   // Initialize modular components
@@ -146,9 +206,10 @@ void PianoRollComponent::paint(juce::Graphics &g) {
     drawGrid(g);
     drawSomeSegmentDebugOverlay(g);
     drawLoopOverlay(g);
-    drawNotes(g);
-    drawStretchGuides(g);
+    drawNotes(g, NoteRenderPass::Body);
     drawPitchCurves(g);
+    drawNotes(g, NoteRenderPass::Overlay);
+    drawStretchGuides(g);
     drawSomeValuesDebugOverlay(g);
     drawSelectionRect(g);
   }
@@ -292,48 +353,103 @@ void PianoRollComponent::drawBackgroundWaveform(
 }
 
 void PianoRollComponent::drawGrid(juce::Graphics &g) {
-  float duration = project ? project->getAudioData().getDuration() : 60.0f;
-  float width =
+  const float duration = project ? project->getAudioData().getDuration() : 60.0f;
+  const float width =
       std::max(duration * pixelsPerSecond, static_cast<float>(getWidth()));
-  float height = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+  const float height = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
-  // Fill black key rows with semi-transparent darker background
-  g.setColour(APP_COLOR_SELECTION_OVERLAY);
-  for (int midi = MIN_MIDI_NOTE; midi <= MAX_MIDI_NOTE; ++midi) {
-    int noteInOctave = midi % 12;
-    bool isBlack =
-        (noteInOctave == 1 || noteInOctave == 3 || noteInOctave == 6 ||
-         noteInOctave == 8 || noteInOctave == 10);
-    if (isBlack) {
-      float y = midiToY(static_cast<float>(midi));
-      g.fillRect(0.0f, y, width, pixelsPerSemitone);
+  // Only draw the visible area to avoid spending time on off-screen rows/columns.
+  const float visibleStartX = juce::jlimit(0.0f, width, static_cast<float>(scrollX));
+  const float visibleEndX = juce::jlimit(
+      0.0f, width, visibleStartX + static_cast<float>(getVisibleContentWidth()) + 2.0f);
+  const float visibleTopY = juce::jlimit(0.0f, height, static_cast<float>(scrollY));
+  const float visibleBottomY = juce::jlimit(
+      0.0f, height,
+      visibleTopY + static_cast<float>(getVisibleContentHeight()) + pixelsPerSemitone);
+
+  if (visibleEndX <= visibleStartX || visibleBottomY <= visibleTopY)
+    return;
+
+  const int visibleTopMidi = juce::jlimit(
+      MIN_MIDI_NOTE, MAX_MIDI_NOTE,
+      static_cast<int>(std::ceil(yToMidi(visibleTopY))));
+  const int visibleBottomMidi = juce::jlimit(
+      MIN_MIDI_NOTE, MAX_MIDI_NOTE,
+      static_cast<int>(std::floor(yToMidi(visibleBottomY))));
+  const int startMidi = juce::jlimit(MIN_MIDI_NOTE, MAX_MIDI_NOTE,
+                                     visibleBottomMidi - 1);
+  const int endMidi = juce::jlimit(MIN_MIDI_NOTE, MAX_MIDI_NOTE,
+                                   visibleTopMidi + 1);
+
+  const ScaleMode activeScaleMode = previewScaleMode.value_or(selectedScaleMode);
+  const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
+  const bool showScaleOverlay =
+      showScaleColors && activeScaleMode != ScaleMode::None &&
+      activeScaleMode != ScaleMode::Chromatic &&
+      activeScaleRootNote >= 0;
+  const juce::Colour scaleAccent = getScaleAccentColour(activeScaleMode);
+
+  if (showScaleOverlay) {
+    const auto rootRowColour = scaleAccent.withAlpha(0.24f);
+    const auto inScaleRowColour = scaleAccent.withAlpha(0.08f);
+    const auto outOfScaleRowColour = juce::Colours::black.withAlpha(0.20f);
+
+    for (int midi = startMidi; midi <= endMidi; ++midi) {
+      const int noteInOctave = (midi % 12 + 12) % 12;
+      const auto toneState =
+          getScaleToneState(activeScaleMode, noteInOctave, activeScaleRootNote);
+      g.setColour(toneState == ScaleToneState::Root
+                      ? rootRowColour
+                      : (toneState == ScaleToneState::InScale ? inScaleRowColour
+                                                              : outOfScaleRowColour));
+      const float y = midiToY(static_cast<float>(midi));
+      g.fillRect(visibleStartX, y, visibleEndX - visibleStartX, pixelsPerSemitone);
     }
   }
 
-  // Horizontal lines (pitch)
-  g.setColour(APP_COLOR_GRID);
+  if (!showScaleOverlay) {
+    // Chromatic mode keeps the traditional piano black-key shading.
+    g.setColour(APP_COLOR_SELECTION_OVERLAY);
+    for (int midi = startMidi; midi <= endMidi; ++midi) {
+      const int noteInOctave = (midi % 12 + 12) % 12;
+      if (isBlackKey(noteInOctave)) {
+        const float y = midiToY(static_cast<float>(midi));
+        g.fillRect(visibleStartX, y, visibleEndX - visibleStartX, pixelsPerSemitone);
+      }
+    }
+  }
 
-  for (int midi = MIN_MIDI_NOTE; midi <= MAX_MIDI_NOTE; ++midi) {
-    float y = midiToY(static_cast<float>(midi));
-    int noteInOctave = midi % 12;
+  // Horizontal pitch lines.
+  for (int midi = startMidi; midi <= endMidi; ++midi) {
+    const float y = midiToY(static_cast<float>(midi));
+    const int noteInOctave = (midi % 12 + 12) % 12;
 
-    if (noteInOctave == 0) // C
-    {
-      g.setColour(APP_COLOR_GRID_BAR);
-      g.drawHorizontalLine(static_cast<int>(y), 0, width);
-      g.setColour(APP_COLOR_GRID);
+    if (!showScaleOverlay) {
+      g.setColour(noteInOctave == 0 ? APP_COLOR_GRID_BAR : APP_COLOR_GRID);
+    } else if (getScaleToneState(activeScaleMode, noteInOctave,
+                                 activeScaleRootNote) == ScaleToneState::Root) {
+      g.setColour(scaleAccent.withAlpha(0.70f));
+    } else if (getScaleToneState(activeScaleMode, noteInOctave,
+                                 activeScaleRootNote) == ScaleToneState::InScale) {
+      g.setColour(APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.40f));
     } else {
-      g.drawHorizontalLine(static_cast<int>(y), 0, width);
+      g.setColour(APP_COLOR_GRID.darker(0.25f));
     }
+
+    g.drawHorizontalLine(static_cast<int>(y), visibleStartX, visibleEndX);
   }
 
-  // Vertical lines (time)
-  float secondsPerBeat = 60.0f / 120.0f; // Assuming 120 BPM
-  float pixelsPerBeat = secondsPerBeat * pixelsPerSecond;
+  // Vertical beat lines (120 BPM for now).
+  const float secondsPerBeat = 60.0f / 120.0f;
+  const float pixelsPerBeat = secondsPerBeat * pixelsPerSecond;
+  if (pixelsPerBeat > 1.0e-4f) {
+    g.setColour(showScaleOverlay
+                    ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
+                    : APP_COLOR_GRID);
 
-  for (float x = 0; x < width; x += pixelsPerBeat) {
-    g.setColour(APP_COLOR_GRID);
-    g.drawVerticalLine(static_cast<int>(x), 0, height);
+    const int firstBeat = std::max(0, static_cast<int>(std::floor(visibleStartX / pixelsPerBeat)));
+    for (float x = firstBeat * pixelsPerBeat; x <= visibleEndX; x += pixelsPerBeat)
+      g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
   }
 }
 
@@ -753,9 +869,12 @@ void PianoRollComponent::drawLoopTimeline(juce::Graphics &g) {
   g.fillPath(endFlag);
 }
 
-void PianoRollComponent::drawNotes(juce::Graphics &g) {
+void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
   if (!project)
     return;
+
+  const bool drawBodies = pass == NoteRenderPass::Body;
+  const bool drawOverlays = pass == NoteRenderPass::Overlay;
 
   const bool isMultiDragging = pitchEditor && pitchEditor->isDraggingMultiNotes();
   const std::vector<Note *> *draggedNotes =
@@ -804,10 +923,11 @@ void PianoRollComponent::drawNotes(juce::Graphics &g) {
   };
 
   const auto &audioData = project->getAudioData();
-  const float *globalSamples = audioData.waveform.getNumSamples() > 0
-                                   ? audioData.waveform.getReadPointer(0)
-                                   : nullptr;
-  int globalTotalSamples = audioData.waveform.getNumSamples();
+  const float *globalSamples =
+      drawBodies && audioData.waveform.getNumSamples() > 0
+          ? audioData.waveform.getReadPointer(0)
+          : nullptr;
+  int globalTotalSamples = drawBodies ? audioData.waveform.getNumSamples() : 0;
 
   // Calculate visible time range for culling
   double visibleStartTime = scrollX / pixelsPerSecond;
@@ -836,235 +956,242 @@ void PianoRollComponent::drawNotes(juce::Graphics &g) {
     float pitchOffsetPixels = -note.getPitchOffset() * pixelsPerSemitone;
     float y = baseGridCenterY + pitchOffsetPixels - h * 0.5f;
 
-    // Note color based on pitch
-    juce::Colour noteColor = note.isSelected()
-                                 ? APP_COLOR_NOTE_SELECTED
-                                 : APP_COLOR_NOTE_NORMAL;
+    if (drawBodies) {
+      // Note color based on pitch
+      juce::Colour noteColor = note.isSelected()
+                                   ? APP_COLOR_NOTE_SELECTED
+                                   : APP_COLOR_NOTE_NORMAL;
 
-    const float *samples = globalSamples;
-    int totalSamples = globalTotalSamples;
-    int startSample = 0;
-    int endSample = 0;
-    const auto &clipWaveform = note.getClipWaveform();
-    if (!clipWaveform.empty()) {
-      samples = clipWaveform.data();
-      totalSamples = static_cast<int>(clipWaveform.size());
-      startSample = 0;
-      endSample = totalSamples;
-    } else if (samples && totalSamples > 0) {
-      startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
+      const float *samples = globalSamples;
+      int totalSamples = globalTotalSamples;
+      int startSample = 0;
+      int endSample = 0;
+      const auto &clipWaveform = note.getClipWaveform();
+      if (!clipWaveform.empty()) {
+        samples = clipWaveform.data();
+        totalSamples = static_cast<int>(clipWaveform.size());
+        startSample = 0;
+        endSample = totalSamples;
+      } else if (samples && totalSamples > 0) {
+        startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
+                                       audioData.sampleRate);
+        endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
                                      audioData.sampleRate);
-      endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
-                                   audioData.sampleRate);
-      startSample = std::max(0, std::min(startSample, totalSamples - 1));
-      endSample = std::max(startSample + 1,
-                           std::min(endSample, totalSamples));
-    }
-
-    if (samples && totalSamples > 0 && w > 2.0f &&
-        endSample > startSample) {
-      // Draw waveform slice inside note
-      int numNoteSamples = endSample - startSample;
-      int samplesPerPixel = std::max(1, static_cast<int>(numNoteSamples / w));
-
-      float centerY = y + h * 0.5f;
-      float waveHeight = h * 3.0f;
-
-      // Build waveform data with increased resolution for smoother curves
-      std::vector<float> waveValues;
-      // Increase point density for smoother curves (up to 800 points)
-      float step = std::max(0.5f, w / 1024.0f);
-
-      for (float px = 0; px <= w; px += step) {
-        int sampleIdx =
-            startSample + static_cast<int>((px / w) * numNoteSamples);
-        int sampleEnd = std::min(sampleIdx + samplesPerPixel, endSample);
-
-        float maxVal = 0.0f;
-        for (int i = sampleIdx; i < sampleEnd; ++i)
-          maxVal = std::max(maxVal, std::abs(samples[i]));
-
-        waveValues.push_back(maxVal);
+        startSample = std::max(0, std::min(startSample, totalSamples - 1));
+        endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
       }
 
-      // Apply smoothing filter to reduce aliasing artifacts
-      if (waveValues.size() > 2) {
-        std::vector<float> smoothed(waveValues.size());
-        smoothed[0] = waveValues[0];
-        for (size_t i = 1; i + 1 < waveValues.size(); ++i) {
-          // Simple 3-point moving average for gentle smoothing
-          smoothed[i] = (waveValues[i - 1] * 0.25f + waveValues[i] * 0.5f +
-                         waveValues[i + 1] * 0.25f);
+      if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample) {
+        // Draw waveform slice inside note
+        int numNoteSamples = endSample - startSample;
+        int samplesPerPixel = std::max(1, static_cast<int>(numNoteSamples / w));
+
+        float centerY = y + h * 0.5f;
+        float waveHeight = h * 3.0f;
+
+        // Build waveform data with increased resolution for smoother curves
+        std::vector<float> waveValues;
+        // Increase point density for smoother curves (up to 800 points)
+        float step = std::max(0.5f, w / 1024.0f);
+
+        for (float px = 0; px <= w; px += step) {
+          int sampleIdx =
+              startSample + static_cast<int>((px / w) * numNoteSamples);
+          int sampleEnd = std::min(sampleIdx + samplesPerPixel, endSample);
+
+          float maxVal = 0.0f;
+          for (int i = sampleIdx; i < sampleEnd; ++i)
+            maxVal = std::max(maxVal, std::abs(samples[i]));
+
+          waveValues.push_back(maxVal);
         }
-        smoothed[waveValues.size() - 1] = waveValues[waveValues.size() - 1];
-        waveValues = std::move(smoothed);
-      }
 
-      size_t numPoints = waveValues.size();
-      if (numPoints < 2) {
-        // Fallback for very short notes
+        // Apply smoothing filter to reduce aliasing artifacts
+        if (waveValues.size() > 2) {
+          std::vector<float> smoothed(waveValues.size());
+          smoothed[0] = waveValues[0];
+          for (size_t i = 1; i + 1 < waveValues.size(); ++i) {
+            // Simple 3-point moving average for gentle smoothing
+            smoothed[i] = (waveValues[i - 1] * 0.25f + waveValues[i] * 0.5f +
+                           waveValues[i + 1] * 0.25f);
+          }
+          smoothed[waveValues.size() - 1] = waveValues[waveValues.size() - 1];
+          waveValues = std::move(smoothed);
+        }
+
+        size_t numPoints = waveValues.size();
+        if (numPoints < 2) {
+          // Fallback for very short notes
+          g.setColour(noteColor.withAlpha(0.85f));
+          g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
+        } else {
+          // Helper function for Catmull-Rom spline interpolation
+          auto catmullRom = [](float t, float p0, float p1, float p2,
+                               float p3) -> float {
+            // Catmull-Rom spline: smooth interpolation between p1 and p2
+            float t2 = t * t;
+            float t3 = t2 * t;
+            return 0.5f * ((2.0f * p1) + (-p0 + p2) * t +
+                           (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+                           (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+          };
+
+          // Draw filled waveform using smooth curves
+          g.setColour(noteColor.withAlpha(0.85f));
+          juce::Path waveformPath;
+
+          // Build top curve with Catmull-Rom spline
+          waveformPath.startNewSubPath(
+              x, centerY - waveValues[0] * waveHeight * 0.5f);
+
+          // Use cubic curves for smooth interpolation
+          const int curveSegments =
+              4; // Interpolate 4 points between each pair
+          for (size_t i = 0; i + 1 < numPoints; ++i) {
+            float px1 = (static_cast<float>(i) /
+                         static_cast<float>(numPoints - 1)) *
+                        w;
+            float px2 = (static_cast<float>(i + 1) /
+                         static_cast<float>(numPoints - 1)) *
+                        w;
+
+            // Get control points for spline
+            size_t idx0 = (i > 0) ? i - 1 : i;
+            size_t idx1 = i;
+            size_t idx2 = i + 1;
+            size_t idx3 = (i + 2 < numPoints) ? i + 2 : i + 1;
+
+            float val0 = waveValues[idx0];
+            float val1 = waveValues[idx1];
+            float val2 = waveValues[idx2];
+            float val3 = waveValues[idx3];
+
+            // Draw smooth curve segment
+            for (int seg = 1; seg <= curveSegments; ++seg) {
+              float t =
+                  static_cast<float>(seg) / static_cast<float>(curveSegments);
+              float px = px1 + (px2 - px1) * t;
+              float val = catmullRom(t, val0, val1, val2, val3);
+              float yPos = centerY - val * waveHeight * 0.5f;
+              waveformPath.lineTo(x + px, yPos);
+            }
+          }
+
+          // Build bottom curve (mirror of top)
+          waveformPath.lineTo(x + w, centerY + waveValues[numPoints - 1] *
+                                                   waveHeight * 0.5f);
+
+          for (int i = static_cast<int>(numPoints) - 2; i >= 0; --i) {
+            float px1 = (static_cast<float>(i + 1) /
+                         static_cast<float>(numPoints - 1)) *
+                        w;
+            float px2 =
+                (static_cast<float>(i) / static_cast<float>(numPoints - 1)) *
+                w;
+
+            size_t idx0 = (i + 2 < numPoints) ? i + 2 : i + 1;
+            size_t idx1 = i + 1;
+            size_t idx2 = i;
+            size_t idx3 = (i > 0) ? i - 1 : i;
+
+            float val0 = waveValues[idx0];
+            float val1 = waveValues[idx1];
+            float val2 = waveValues[idx2];
+            float val3 = waveValues[idx3];
+
+            for (int seg = 1; seg <= curveSegments; ++seg) {
+              float t =
+                  static_cast<float>(seg) / static_cast<float>(curveSegments);
+              float px = px1 + (px2 - px1) * t;
+              float val = catmullRom(t, val0, val1, val2, val3);
+              float yPos = centerY + val * waveHeight * 0.5f;
+              waveformPath.lineTo(x + px, yPos);
+            }
+          }
+
+          waveformPath.closeSubPath();
+          g.fillPath(waveformPath);
+
+          // Draw smooth outline with anti-aliasing
+          juce::Path outline;
+          outline.startNewSubPath(
+              x, centerY - waveValues[0] * waveHeight * 0.5f);
+
+          // Top curve
+          for (size_t i = 0; i + 1 < numPoints; ++i) {
+            float px1 = (static_cast<float>(i) /
+                         static_cast<float>(numPoints - 1)) *
+                        w;
+            float px2 = (static_cast<float>(i + 1) /
+                         static_cast<float>(numPoints - 1)) *
+                        w;
+
+            size_t idx0 = (i > 0) ? i - 1 : i;
+            size_t idx1 = i;
+            size_t idx2 = i + 1;
+            size_t idx3 = (i + 2 < numPoints) ? i + 2 : i + 1;
+
+            float val0 = waveValues[idx0];
+            float val1 = waveValues[idx1];
+            float val2 = waveValues[idx2];
+            float val3 = waveValues[idx3];
+
+            for (int seg = 1; seg <= curveSegments; ++seg) {
+              float t =
+                  static_cast<float>(seg) / static_cast<float>(curveSegments);
+              float px = px1 + (px2 - px1) * t;
+              float val = catmullRom(t, val0, val1, val2, val3);
+              float yPos = centerY - val * waveHeight * 0.5f;
+              outline.lineTo(x + px, yPos);
+            }
+          }
+
+          // Bottom curve
+          for (int i = static_cast<int>(numPoints) - 2; i >= 0; --i) {
+            float px1 = (static_cast<float>(i + 1) /
+                         static_cast<float>(numPoints - 1)) *
+                        w;
+            float px2 =
+                (static_cast<float>(i) / static_cast<float>(numPoints - 1)) *
+                w;
+
+            size_t idx0 = (i + 2 < numPoints) ? i + 2 : i + 1;
+            size_t idx1 = i + 1;
+            size_t idx2 = i;
+            size_t idx3 = (i > 0) ? i - 1 : i;
+
+            float val0 = waveValues[idx0];
+            float val1 = waveValues[idx1];
+            float val2 = waveValues[idx2];
+            float val3 = waveValues[idx3];
+
+            for (int seg = 1; seg <= curveSegments; ++seg) {
+              float t =
+                  static_cast<float>(seg) / static_cast<float>(curveSegments);
+              float px = px1 + (px2 - px1) * t;
+              float val = catmullRom(t, val0, val1, val2, val3);
+              float yPos = centerY + val * waveHeight * 0.5f;
+              outline.lineTo(x + px, yPos);
+            }
+          }
+
+          outline.closeSubPath();
+          g.setColour(noteColor.brighter(0.2f));
+          // Use slightly thicker stroke with anti-aliasing for smoother
+          // appearance
+          g.strokePath(outline,
+                       juce::PathStrokeType(1.2f,
+                                            juce::PathStrokeType::curved,
+                                            juce::PathStrokeType::rounded));
+        }
+      } else {
+        // Fallback: simple rectangle for very short notes
         g.setColour(noteColor.withAlpha(0.85f));
         g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
-      } else {
-        // Helper function for Catmull-Rom spline interpolation
-        auto catmullRom = [](float t, float p0, float p1, float p2,
-                             float p3) -> float {
-          // Catmull-Rom spline: smooth interpolation between p1 and p2
-          float t2 = t * t;
-          float t3 = t2 * t;
-          return 0.5f * ((2.0f * p1) + (-p0 + p2) * t +
-                         (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
-                         (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
-        };
-
-        // Draw filled waveform using smooth curves
-        g.setColour(noteColor.withAlpha(0.85f));
-        juce::Path waveformPath;
-
-        // Build top curve with Catmull-Rom spline
-        waveformPath.startNewSubPath(x, centerY -
-                                            waveValues[0] * waveHeight * 0.5f);
-
-        // Use cubic curves for smooth interpolation
-        const int curveSegments = 4; // Interpolate 4 points between each pair
-        for (size_t i = 0; i + 1 < numPoints; ++i) {
-          float px1 =
-              (static_cast<float>(i) / static_cast<float>(numPoints - 1)) * w;
-          float px2 =
-              (static_cast<float>(i + 1) / static_cast<float>(numPoints - 1)) *
-              w;
-
-          // Get control points for spline
-          size_t idx0 = (i > 0) ? i - 1 : i;
-          size_t idx1 = i;
-          size_t idx2 = i + 1;
-          size_t idx3 = (i + 2 < numPoints) ? i + 2 : i + 1;
-
-          float val0 = waveValues[idx0];
-          float val1 = waveValues[idx1];
-          float val2 = waveValues[idx2];
-          float val3 = waveValues[idx3];
-
-          // Draw smooth curve segment
-          for (int seg = 1; seg <= curveSegments; ++seg) {
-            float t =
-                static_cast<float>(seg) / static_cast<float>(curveSegments);
-            float px = px1 + (px2 - px1) * t;
-            float val = catmullRom(t, val0, val1, val2, val3);
-            float yPos = centerY - val * waveHeight * 0.5f;
-            waveformPath.lineTo(x + px, yPos);
-          }
-        }
-
-        // Build bottom curve (mirror of top)
-        waveformPath.lineTo(x + w, centerY + waveValues[numPoints - 1] *
-                                                 waveHeight * 0.5f);
-
-        for (int i = static_cast<int>(numPoints) - 2; i >= 0; --i) {
-          float px1 =
-              (static_cast<float>(i + 1) / static_cast<float>(numPoints - 1)) *
-              w;
-          float px2 =
-              (static_cast<float>(i) / static_cast<float>(numPoints - 1)) * w;
-
-          size_t idx0 = (i + 2 < numPoints) ? i + 2 : i + 1;
-          size_t idx1 = i + 1;
-          size_t idx2 = i;
-          size_t idx3 = (i > 0) ? i - 1 : i;
-
-          float val0 = waveValues[idx0];
-          float val1 = waveValues[idx1];
-          float val2 = waveValues[idx2];
-          float val3 = waveValues[idx3];
-
-          for (int seg = 1; seg <= curveSegments; ++seg) {
-            float t =
-                static_cast<float>(seg) / static_cast<float>(curveSegments);
-            float px = px1 + (px2 - px1) * t;
-            float val = catmullRom(t, val0, val1, val2, val3);
-            float yPos = centerY + val * waveHeight * 0.5f;
-            waveformPath.lineTo(x + px, yPos);
-          }
-        }
-
-        waveformPath.closeSubPath();
-        g.fillPath(waveformPath);
-
-        // Draw smooth outline with anti-aliasing
-        juce::Path outline;
-        outline.startNewSubPath(x, centerY - waveValues[0] * waveHeight * 0.5f);
-
-        // Top curve
-        for (size_t i = 0; i + 1 < numPoints; ++i) {
-          float px1 =
-              (static_cast<float>(i) / static_cast<float>(numPoints - 1)) * w;
-          float px2 =
-              (static_cast<float>(i + 1) / static_cast<float>(numPoints - 1)) *
-              w;
-
-          size_t idx0 = (i > 0) ? i - 1 : i;
-          size_t idx1 = i;
-          size_t idx2 = i + 1;
-          size_t idx3 = (i + 2 < numPoints) ? i + 2 : i + 1;
-
-          float val0 = waveValues[idx0];
-          float val1 = waveValues[idx1];
-          float val2 = waveValues[idx2];
-          float val3 = waveValues[idx3];
-
-          for (int seg = 1; seg <= curveSegments; ++seg) {
-            float t =
-                static_cast<float>(seg) / static_cast<float>(curveSegments);
-            float px = px1 + (px2 - px1) * t;
-            float val = catmullRom(t, val0, val1, val2, val3);
-            float yPos = centerY - val * waveHeight * 0.5f;
-            outline.lineTo(x + px, yPos);
-          }
-        }
-
-        // Bottom curve
-        for (int i = static_cast<int>(numPoints) - 2; i >= 0; --i) {
-          float px1 =
-              (static_cast<float>(i + 1) / static_cast<float>(numPoints - 1)) *
-              w;
-          float px2 =
-              (static_cast<float>(i) / static_cast<float>(numPoints - 1)) * w;
-
-          size_t idx0 = (i + 2 < numPoints) ? i + 2 : i + 1;
-          size_t idx1 = i + 1;
-          size_t idx2 = i;
-          size_t idx3 = (i > 0) ? i - 1 : i;
-
-          float val0 = waveValues[idx0];
-          float val1 = waveValues[idx1];
-          float val2 = waveValues[idx2];
-          float val3 = waveValues[idx3];
-
-          for (int seg = 1; seg <= curveSegments; ++seg) {
-            float t =
-                static_cast<float>(seg) / static_cast<float>(curveSegments);
-            float px = px1 + (px2 - px1) * t;
-            float val = catmullRom(t, val0, val1, val2, val3);
-            float yPos = centerY + val * waveHeight * 0.5f;
-            outline.lineTo(x + px, yPos);
-          }
-        }
-
-        outline.closeSubPath();
-        g.setColour(noteColor.brighter(0.2f));
-        // Use slightly thicker stroke with anti-aliasing for smoother
-        // appearance
-        g.strokePath(outline,
-                     juce::PathStrokeType(1.2f, juce::PathStrokeType::curved,
-                                          juce::PathStrokeType::rounded));
       }
-    } else {
-      // Fallback: simple rectangle for very short notes
-      g.setColour(noteColor.withAlpha(0.85f));
-      g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
     }
 
-    if (note.isSelected()) {
+    if (drawOverlays && note.isSelected()) {
       drawSelectedNoteOutline(x, y, renderedWidth, h);
 
       const auto handleBounds =
@@ -1149,7 +1276,7 @@ void PianoRollComponent::drawNotes(juce::Graphics &g) {
         isMultiDragging && draggedNotes &&
         std::find(draggedNotes->begin(), draggedNotes->end(), &note) !=
             draggedNotes->end();
-    if (isSingleDragged || isMultiDragged) {
+    if (drawOverlays && (isSingleDragged || isMultiDragged)) {
       const float deltaSemitones = note.getPitchOffset();
       if (std::abs(deltaSemitones) >= 0.01f) {
         const juce::String prefix = deltaSemitones >= 0.0f ? "+" : "";
@@ -1178,7 +1305,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g) {
   }
 
   // Draw split guide line when in split mode and hovering over a note
-  if (editMode == EditMode::Split && splitGuideNote && splitGuideX >= 0) {
+  if (drawOverlays && editMode == EditMode::Split && splitGuideNote &&
+      splitGuideX >= 0) {
     float noteStartTime = framesToSeconds(splitGuideNote->getStartFrame());
     float noteEndTime = framesToSeconds(splitGuideNote->getEndFrame());
     float noteStartX = static_cast<float>(noteStartTime * pixelsPerSecond);
@@ -1489,6 +1617,13 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
 
   static const char *noteNames[] = {"C",  "C#", "D",  "D#", "E",  "F",
                                     "F#", "G",  "G#", "A",  "A#", "B"};
+  const ScaleMode activeScaleMode = previewScaleMode.value_or(selectedScaleMode);
+  const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
+  const bool showScaleOverlay =
+      showScaleColors && activeScaleMode != ScaleMode::None &&
+      activeScaleMode != ScaleMode::Chromatic &&
+      activeScaleRootNote >= 0;
+  const juce::Colour scaleAccent = getScaleAccentColour(activeScaleMode);
 
   // Draw each key
   // Use truncated scrollY to match grid origin (which uses
@@ -1497,29 +1632,53 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
   for (int midi = MIN_MIDI_NOTE; midi <= MAX_MIDI_NOTE; ++midi) {
     float y = midiToY(static_cast<float>(midi)) -
               static_cast<float>(scrollYInt) + headerHeight;
-    int noteInOctave = midi % 12;
+    int noteInOctave = (midi % 12 + 12) % 12;
 
     // Check if it's a black key
-    bool isBlack =
-        (noteInOctave == 1 || noteInOctave == 3 || noteInOctave == 6 ||
-         noteInOctave == 8 || noteInOctave == 10);
+    bool isBlack = isBlackKey(noteInOctave);
+    const auto toneState =
+        getScaleToneState(activeScaleMode, noteInOctave, activeScaleRootNote);
 
-    if (isBlack)
-      g.setColour(APP_COLOR_PIANO_BLACK);
-    else
-      g.setColour(APP_COLOR_PIANO_WHITE);
+    juce::Colour keyFill = isBlack ? APP_COLOR_PIANO_BLACK : APP_COLOR_PIANO_WHITE;
+    if (showScaleOverlay) {
+      if (toneState == ScaleToneState::OutOfScale) {
+        keyFill = APP_COLOR_PIANO_BLACK;
+      } else {
+        keyFill = APP_COLOR_PIANO_WHITE;
+        keyFill = keyFill.interpolatedWith(scaleAccent,
+                                           toneState == ScaleToneState::Root ? 0.32f : 0.16f);
+      }
+    }
+
+    g.setColour(keyFill);
 
     g.fillRect(0.0f, y, static_cast<float>(pianoKeysWidth - 2),
                pixelsPerSemitone - 1);
+
+    if (showScaleOverlay) {
+      if (toneState == ScaleToneState::Root) {
+        g.setColour(scaleAccent.withAlpha(0.95f));
+        g.fillRect(0.0f, y, 3.0f, pixelsPerSemitone - 1);
+      } else if (toneState == ScaleToneState::InScale) {
+        g.setColour(scaleAccent.withAlpha(0.55f));
+        g.fillRect(0.0f, y, 2.0f, pixelsPerSemitone - 1);
+      }
+    }
 
     // Draw note name for all notes
     int octave = midi / 12 - 1;
     juce::String noteName =
         juce::String(noteNames[noteInOctave]) + juce::String(octave);
 
-    // Use dimmer color for black keys
-    g.setColour(isBlack ? APP_COLOR_PIANO_TEXT_DIM
-                        : APP_COLOR_PIANO_TEXT);
+    juce::Colour textColour = isBlack ? APP_COLOR_PIANO_TEXT_DIM
+                                      : APP_COLOR_PIANO_TEXT;
+    if (showScaleOverlay) {
+      if (toneState == ScaleToneState::Root)
+        textColour = APP_COLOR_TEXT_PRIMARY;
+      else if (toneState == ScaleToneState::OutOfScale)
+        textColour = textColour.withMultipliedAlpha(0.72f);
+    }
+    g.setColour(textColour);
     g.setFont(13.0f);
     g.drawText(noteName, pianoKeysWidth - 36, static_cast<int>(y), 32,
                static_cast<int>(pixelsPerSemitone),
@@ -2093,6 +2252,12 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e) {
   if (isDragging && draggedNote) {
     float deltaY = dragStartY - adjustedY;
     float deltaSemitones = deltaY / pixelsPerSemitone;
+    if (snapToSemitoneDrag) {
+      const float targetMidi = originalMidiNote + deltaSemitones;
+      const float snappedMidi =
+          ScaleUtils::snapMidiToSemitone(targetMidi, pitchReferenceHz);
+      deltaSemitones = snappedMidi - originalMidiNote;
+    }
 
     draggedNote->setPitchOffset(deltaSemitones);
     draggedNote->markDirty();
@@ -2273,6 +2438,12 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e) {
   // Handle single note drag end
   if (isDragging && draggedNote) {
     float newOffset = draggedNote->getPitchOffset();
+    if (snapToSemitoneDrag) {
+      const float snappedMidi = ScaleUtils::snapMidiToSemitone(
+          originalMidiNote + newOffset, pitchReferenceHz);
+      newOffset = snappedMidi - originalMidiNote;
+      draggedNote->setPitchOffset(newOffset);
+    }
 
     // Check if there was any meaningful change (threshold: 0.001 semitones)
     constexpr float CHANGE_THRESHOLD = 0.001f;
@@ -2286,7 +2457,8 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e) {
 
       // Update note's midiNote with final offset (bake pitchOffset into
       // midiNote)
-      draggedNote->setMidiNote(originalMidiNote + newOffset);
+      const float finalMidiNote = originalMidiNote + newOffset;
+      draggedNote->setMidiNote(finalMidiNote);
       draggedNote->setPitchOffset(
           0.0f); // Reset offset since it's baked into midiNote
 
@@ -2339,8 +2511,8 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e) {
         int capturedExpandedEnd = expandedEnd;
         int capturedF0Size = f0Size;
         auto action = std::make_unique<NotePitchDragAction>(
-            draggedNote, &audioData.f0, originalMidiNote,
-            originalMidiNote + newOffset, std::move(f0Edits),
+            draggedNote, &audioData.f0, originalMidiNote, finalMidiNote,
+            std::move(f0Edits),
             [this, capturedExpandedStart, capturedExpandedEnd,
              capturedF0Size](Note *n) {
               if (project) {
@@ -2479,6 +2651,28 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e) {
       repaint();
     };
 
+    auto snapForDoubleClick = [this](float midi) {
+      const bool hasActiveScale = selectedScaleMode != ScaleMode::None &&
+                                  selectedScaleMode != ScaleMode::Chromatic &&
+                                  selectedScaleRootNote >= 0;
+
+      switch (doubleClickSnapMode) {
+      case DoubleClickSnapMode::NearestSemitone:
+        return ScaleUtils::snapMidiToSemitone(midi, pitchReferenceHz);
+      case DoubleClickSnapMode::NearestScale:
+        if (hasActiveScale)
+          return ScaleUtils::snapMidiToScale(
+              midi, selectedScaleMode, selectedScaleRootNote, pitchReferenceHz);
+        return midi;
+      case DoubleClickSnapMode::PitchCenter:
+      default:
+        if (hasActiveScale)
+          return ScaleUtils::snapMidiToScale(
+              midi, selectedScaleMode, selectedScaleRootNote, pitchReferenceHz);
+        return ScaleUtils::snapMidiToSemitone(midi, pitchReferenceHz);
+      }
+    };
+
     if (note->isSelected()) {
       auto selectedNotes = project->getSelectedNotes();
       if (selectedNotes.size() > 1) {
@@ -2499,7 +2693,7 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e) {
           float oldMidi = selected->getMidiNote();
           float oldOffset = selected->getPitchOffset();
           float adjustedMidi = oldMidi + oldOffset;
-          float snappedMidi = std::round(adjustedMidi);
+          float snappedMidi = snapForDoubleClick(adjustedMidi);
 
           if (std::abs(snappedMidi - adjustedMidi) <= 0.001f)
             continue;
@@ -2532,11 +2726,11 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e) {
       }
     }
 
-    // Snap single note pitch to nearest standard semitone
+    // Snap single note pitch according to the configured double-click mode.
     float oldMidi = note->getMidiNote();
     float oldOffset = note->getPitchOffset();
     float adjustedMidi = oldMidi + oldOffset;
-    float snappedMidi = std::round(adjustedMidi);
+    float snappedMidi = snapForDoubleClick(adjustedMidi);
 
     if (std::abs(snappedMidi - adjustedMidi) > 0.001f) {
       if (undoManager) {
@@ -2753,11 +2947,24 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
 
 void PianoRollComponent::setProject(Project *proj) {
   project = proj;
+  selectedScaleMode =
+      project != nullptr ? project->getScaleMode() : ScaleMode::None;
+  selectedScaleRootNote = project != nullptr ? project->getScaleRootNote() : -1;
+  pitchReferenceHz = project != nullptr ? project->getPitchReferenceHz() : 440;
+  showScaleColors = project != nullptr ? project->getShowScaleColors() : true;
+  snapToSemitoneDrag = project != nullptr ? project->getSnapToSemitones() : false;
+  doubleClickSnapMode = project != nullptr
+                            ? project->getDoubleClickSnapMode()
+                            : DoubleClickSnapMode::PitchCenter;
+  previewScaleRootNote.reset();
+  previewScaleMode.reset();
 
   // Update modular components
   renderer->setProject(proj);
   scrollZoomController->setProject(proj);
   pitchEditor->setProject(proj);
+  pitchEditor->setSnapToSemitoneDragEnabled(snapToSemitoneDrag);
+  pitchEditor->setPitchReferenceHz(pitchReferenceHz);
   noteSplitter->setProject(proj);
 
   // Clear all caches when project changes to free memory
@@ -2772,18 +2979,203 @@ void PianoRollComponent::setProject(Project *proj) {
   repaint();
 }
 
+void PianoRollComponent::setScaleMode(ScaleMode mode) {
+  if (selectedScaleMode == mode && !previewScaleMode.has_value())
+    return;
+
+  selectedScaleMode = mode;
+  if (project != nullptr)
+    project->setScaleMode(mode);
+  previewScaleMode.reset();
+  repaint();
+}
+
+void PianoRollComponent::setScaleRootNote(int noteInOctave) {
+  const int normalized = juce::jlimit(-1, 11, noteInOctave);
+  const bool changed = selectedScaleRootNote != normalized;
+  if (!changed && !previewScaleRootNote.has_value())
+    return;
+
+  selectedScaleRootNote = normalized;
+  if (project != nullptr && changed)
+    project->setScaleRootNote(normalized);
+  previewScaleRootNote.reset();
+  repaint();
+}
+
+void PianoRollComponent::setScaleRootPreview(std::optional<int> noteInOctave) {
+  std::optional<int> normalizedPreview;
+  if (noteInOctave.has_value())
+    normalizedPreview = juce::jlimit(-1, 11, *noteInOctave);
+
+  if (previewScaleRootNote == normalizedPreview)
+    return;
+
+  previewScaleRootNote = normalizedPreview;
+  repaint();
+}
+
+void PianoRollComponent::setScaleModePreview(std::optional<ScaleMode> mode) {
+  if (previewScaleMode == mode)
+    return;
+
+  previewScaleMode = mode;
+  repaint();
+}
+
+void PianoRollComponent::setShowScaleColors(bool enabled) {
+  if (showScaleColors == enabled)
+    return;
+
+  showScaleColors = enabled;
+  if (project != nullptr)
+    project->setShowScaleColors(enabled);
+  repaint();
+}
+
+void PianoRollComponent::setSnapToSemitoneDrag(bool enabled) {
+  if (snapToSemitoneDrag == enabled)
+    return;
+
+  snapToSemitoneDrag = enabled;
+  if (project != nullptr)
+    project->setSnapToSemitones(enabled);
+  pitchEditor->setSnapToSemitoneDragEnabled(enabled);
+}
+
+void PianoRollComponent::setPitchReferenceHz(int hz) {
+  const int normalized = juce::jlimit(380, 480, hz);
+  if (pitchReferenceHz == normalized)
+    return;
+
+  pitchReferenceHz = normalized;
+  if (project != nullptr)
+    project->setPitchReferenceHz(normalized);
+  pitchEditor->setPitchReferenceHz(normalized);
+}
+
+void PianoRollComponent::setDoubleClickSnapMode(DoubleClickSnapMode mode) {
+  if (doubleClickSnapMode == mode)
+    return;
+
+  doubleClickSnapMode = mode;
+  if (project != nullptr)
+    project->setDoubleClickSnapMode(mode);
+}
+
 void PianoRollComponent::setUndoManager(PitchUndoManager *manager) {
   undoManager = manager;
   pitchEditor->setUndoManager(manager);
   noteSplitter->setUndoManager(manager);
 }
 
+bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta) {
+  if (project == nullptr || semitoneDelta == 0)
+    return false;
+
+  auto selectedNotes = project->getSelectedNotes();
+  if (selectedNotes.empty())
+    return false;
+
+  constexpr float minMidi = static_cast<float>(MIN_MIDI_NOTE);
+  constexpr float maxMidi = static_cast<float>(MAX_MIDI_NOTE);
+
+  std::vector<Note *> notesToMove;
+  std::vector<float> oldMidis;
+  std::vector<float> newMidis;
+  notesToMove.reserve(selectedNotes.size());
+  oldMidis.reserve(selectedNotes.size());
+  newMidis.reserve(selectedNotes.size());
+
+  int dirtyStartFrame = std::numeric_limits<int>::max();
+  int dirtyEndFrame = std::numeric_limits<int>::min();
+
+  for (auto *note : selectedNotes) {
+    if (!note || note->isRest())
+      continue;
+
+    const float oldMidi = note->getMidiNote();
+    const float offset = note->getPitchOffset();
+    const float oldAdjustedMidi = oldMidi + offset;
+    const float movedAdjustedMidi =
+        juce::jlimit(minMidi, maxMidi,
+                     oldAdjustedMidi + static_cast<float>(semitoneDelta));
+    const float movedMidi = movedAdjustedMidi - offset;
+
+    if (std::abs(movedMidi - oldMidi) <= 1.0e-6f)
+      continue;
+
+    notesToMove.push_back(note);
+    oldMidis.push_back(oldMidi);
+    newMidis.push_back(movedMidi);
+    dirtyStartFrame = std::min(dirtyStartFrame, note->getStartFrame());
+    dirtyEndFrame = std::max(dirtyEndFrame, note->getEndFrame());
+  }
+
+  if (notesToMove.empty())
+    return false;
+
+  auto rebuildAndNotify =
+      [this, dirtyStartFrame, dirtyEndFrame](const std::vector<Note *> &) {
+        if (project == nullptr)
+          return;
+
+        PitchCurveProcessor::rebuildBaseFromNotes(*project);
+        PitchCurveProcessor::composeF0InPlace(*project,
+                                              /*applyUvMask=*/false);
+        invalidateBasePitchCache();
+
+        const int f0Size = static_cast<int>(project->getAudioData().f0.size());
+        if (f0Size > 0 && dirtyStartFrame <= dirtyEndFrame) {
+          const int smoothStart = std::max(0, dirtyStartFrame - 60);
+          const int smoothEnd = std::min(f0Size, dirtyEndFrame + 60);
+          project->setF0DirtyRange(smoothStart, smoothEnd);
+        }
+
+        if (onPitchEdited)
+          onPitchEdited();
+        if (onPitchEditFinished)
+          onPitchEditFinished();
+
+        repaint();
+      };
+
+  if (undoManager) {
+    auto action = std::make_unique<MultiNoteMidiNudgeAction>(
+        notesToMove, oldMidis, newMidis,
+        [rebuildAndNotify](const std::vector<Note *> &notes) {
+          rebuildAndNotify(notes);
+        });
+    undoManager->addAction(std::move(action));
+  }
+
+  for (size_t i = 0; i < notesToMove.size(); ++i) {
+    notesToMove[i]->setMidiNote(newMidis[i]);
+    notesToMove[i]->markDirty();
+  }
+
+  rebuildAndNotify(notesToMove);
+  return true;
+}
+
+bool PianoRollComponent::keyPressed(const juce::KeyPress &key) {
+  const auto mods = key.getModifiers();
+  if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
+    return false;
+
+  const int keyCode = key.getKeyCode();
+  if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey) {
+    const int direction = keyCode == juce::KeyPress::upKey ? 1 : -1;
+    const int step = mods.isShiftDown() ? 12 : 1;
+    return nudgeSelectedNotesBySemitones(direction * step);
+  }
+
+  return false;
+}
+
 bool PianoRollComponent::keyPressed(const juce::KeyPress &key,
                                     juce::Component *) {
-  // All keyboard shortcuts are now handled by ApplicationCommandManager
-  // This method is kept for potential future non-command keyboard handling
-  juce::ignoreUnused(key);
-  return false;
+  return keyPressed(key);
 }
 
 void PianoRollComponent::focusLost(FocusChangeType cause) {

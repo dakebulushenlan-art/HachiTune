@@ -69,6 +69,32 @@ struct LoopRange
 };
 
 /**
+ * Scale mode used for piano-roll grid coloring.
+ */
+enum class ScaleMode : int
+{
+    None = -1,
+    Chromatic = 0,
+    Major,
+    Minor,
+    Dorian,
+    Phrygian,
+    Lydian,
+    Mixolydian,
+    Locrian
+};
+
+/**
+ * How double-click snap resolves target pitch.
+ */
+enum class DoubleClickSnapMode : int
+{
+    PitchCenter = 0,   // Active scale when available, otherwise semitone
+    NearestSemitone,   // Always nearest semitone
+    NearestScale       // Only nearest note in active scale
+};
+
+/**
  * Project data container.
  */
 class Project
@@ -145,6 +171,20 @@ public:
     void setLoopEnabled(bool enabled);
     void clearLoopRange();
 
+    // Piano-roll scale visualization
+    ScaleMode getScaleMode() const { return scaleMode; }
+    void setScaleMode(ScaleMode mode);
+    int getScaleRootNote() const { return scaleRootNote; }
+    void setScaleRootNote(int noteInOctave);
+    int getPitchReferenceHz() const { return pitchReferenceHz; }
+    void setPitchReferenceHz(int hz);
+    bool getShowScaleColors() const { return showScaleColors; }
+    void setShowScaleColors(bool enabled);
+    bool getSnapToSemitones() const { return snapToSemitones; }
+    void setSnapToSemitones(bool enabled);
+    DoubleClickSnapMode getDoubleClickSnapMode() const { return doubleClickSnapMode; }
+    void setDoubleClickSnapMode(DoubleClickSnapMode mode);
+
 private:
     juce::String name = "Untitled";
     juce::File filePath;
@@ -165,4 +205,10 @@ private:
     bool modified = false;
 
     LoopRange loopRange;
+    ScaleMode scaleMode = ScaleMode::None;
+    int scaleRootNote = -1; // -1 = none, 0 = C, 1 = C#, ..., 11 = B
+    int pitchReferenceHz = 440;
+    bool showScaleColors = true;
+    bool snapToSemitones = false;
+    DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
 };

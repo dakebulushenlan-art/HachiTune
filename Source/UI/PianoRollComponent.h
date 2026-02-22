@@ -18,6 +18,7 @@
 #include <deque>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 class PitchUndoManager;
@@ -60,6 +61,7 @@ public:
   void focusGained(FocusChangeType cause) override;
 
   // KeyListener
+  bool keyPressed(const juce::KeyPress &key) override;
   bool keyPressed(const juce::KeyPress &key,
                   juce::Component *originatingComponent) override;
 
@@ -84,6 +86,16 @@ public:
   void setPixelsPerSemitone(float pps);
   float getPixelsPerSecond() const { return pixelsPerSecond; }
   float getPixelsPerSemitone() const { return pixelsPerSemitone; }
+
+  // Scale-grid visualization
+  void setScaleMode(ScaleMode mode);
+  void setScaleRootNote(int noteInOctave);
+  void setScaleRootPreview(std::optional<int> noteInOctave);
+  void setScaleModePreview(std::optional<ScaleMode> mode);
+  void setShowScaleColors(bool enabled);
+  void setSnapToSemitoneDrag(bool enabled);
+  void setPitchReferenceHz(int hz);
+  void setDoubleClickSnapMode(DoubleClickSnapMode mode);
 
   // Scroll
   void setScrollX(double x);
@@ -140,12 +152,14 @@ public:
       onReinterpolateUV; // Called to re-infer UV regions (startFrame, endFrame)
 
 private:
+  enum class NoteRenderPass { Body, Overlay };
+
   void drawBackgroundWaveform(juce::Graphics &g,
                               const juce::Rectangle<int> &visibleArea);
   void drawGrid(juce::Graphics &g);
   void drawTimeline(juce::Graphics &g);
   void drawLoopTimeline(juce::Graphics &g);
-  void drawNotes(juce::Graphics &g);
+  void drawNotes(juce::Graphics &g, NoteRenderPass pass);
   void drawPitchCurves(juce::Graphics &g);
   void drawCursor(juce::Graphics &g);
   void drawPianoKeys(juce::Graphics &g);
@@ -164,6 +178,7 @@ private:
   Note *findNoteAt(float x, float y);
   void updateScrollBars();
   void updateBasePitchCacheIfNeeded();
+  bool nudgeSelectedNotesBySemitones(int semitoneDelta);
   void reapplyBasePitchForNote(
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
   void prepareDragBasePreview();
@@ -249,6 +264,14 @@ private:
   bool showSomeValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
+  bool showScaleColors = true;
+  bool snapToSemitoneDrag = false;
+  int pitchReferenceHz = 440;
+  DoubleClickSnapMode doubleClickSnapMode = DoubleClickSnapMode::PitchCenter;
+  ScaleMode selectedScaleMode = ScaleMode::None;
+  int selectedScaleRootNote = -1;
+  std::optional<int> previewScaleRootNote;
+  std::optional<ScaleMode> previewScaleMode;
 
   // Dragging state
   bool isDragging = false;

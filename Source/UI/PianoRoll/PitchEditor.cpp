@@ -1,4 +1,5 @@
 #include "PitchEditor.h"
+#include "../../Utils/ScaleUtils.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -77,6 +78,8 @@ void PitchEditor::updateNoteDrag(float y) {
 
   float deltaY = dragStartY - y;
   float deltaSemitones = deltaY / coordMapper->getPixelsPerSemitone();
+  if (snapToSemitoneDragEnabled)
+    deltaSemitones = std::round(deltaSemitones);
 
   draggedNote->setPitchOffset(deltaSemitones);
   draggedNote->markDirty();
@@ -423,8 +426,12 @@ void PitchEditor::snapNoteToSemitone(Note *note) {
   if (!note || !project)
     return;
 
-  float currentOffset = note->getPitchOffset();
-  float snappedOffset = std::round(currentOffset);
+  const float currentOffset = note->getPitchOffset();
+  const float adjustedMidi = note->getMidiNote() + currentOffset;
+  const float snappedMidi = static_cast<float>(ScaleUtils::snapMidiToScale(
+      adjustedMidi, project->getScaleMode(), project->getScaleRootNote(),
+      project->getPitchReferenceHz()));
+  const float snappedOffset = snappedMidi - note->getMidiNote();
 
   if (std::abs(snappedOffset - currentOffset) > 0.001f) {
     if (undoManager) {
@@ -491,6 +498,8 @@ void PitchEditor::updateMultiNoteDrag(float y) {
 
   float deltaY = dragStartY - y;
   float deltaSemitones = deltaY / coordMapper->getPixelsPerSemitone();
+  if (snapToSemitoneDragEnabled)
+    deltaSemitones = std::round(deltaSemitones);
 
   for (auto *note : draggedNotes) {
     note->setPitchOffset(deltaSemitones);

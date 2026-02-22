@@ -23,6 +23,8 @@ public:
     void setProject(Project* proj) { project = proj; }
     void setUndoManager(PitchUndoManager* manager) { undoManager = manager; }
     void setCoordinateMapper(CoordinateMapper* mapper) { coordMapper = mapper; }
+    void setSnapToSemitoneDragEnabled(bool enabled) { snapToSemitoneDragEnabled = enabled; }
+    void setPitchReferenceHz(int hz) { pitchReferenceHz = juce::jlimit(380, 480, hz); }
 
     // Note selection and dragging
     Note* findNoteAt(float x, float y);
@@ -86,6 +88,8 @@ private:
     std::vector<Note*> draggedNotes;
     std::vector<float> originalMidiNotes;
     std::vector<std::vector<float>> originalF0ValuesMulti;
+    bool snapToSemitoneDragEnabled = false;
+    int pitchReferenceHz = 440;
 
     // Draw state
     bool isDrawing = false;

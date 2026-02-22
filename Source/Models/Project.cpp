@@ -280,3 +280,59 @@ void Project::clearLoopRange()
 {
     loopRange = {};
 }
+
+void Project::setScaleMode(ScaleMode mode)
+{
+    if (scaleMode == mode)
+        return;
+
+    scaleMode = mode;
+    modified = true;
+}
+
+void Project::setScaleRootNote(int noteInOctave)
+{
+    const int normalized = juce::jlimit(-1, 11, noteInOctave);
+    if (scaleRootNote == normalized)
+        return;
+
+    scaleRootNote = normalized;
+    modified = true;
+}
+
+void Project::setPitchReferenceHz(int hz)
+{
+    const int normalized = juce::jlimit(380, 480, hz);
+    if (pitchReferenceHz == normalized)
+        return;
+
+    pitchReferenceHz = normalized;
+    modified = true;
+}
+
+void Project::setShowScaleColors(bool enabled)
+{
+    if (showScaleColors == enabled)
+        return;
+
+    showScaleColors = enabled;
+    modified = true;
+}
+
+void Project::setSnapToSemitones(bool enabled)
+{
+    if (snapToSemitones == enabled)
+        return;
+
+    snapToSemitones = enabled;
+    modified = true;
+}
+
+void Project::setDoubleClickSnapMode(DoubleClickSnapMode mode)
+{
+    if (doubleClickSnapMode == mode)
+        return;
+
+    doubleClickSnapMode = mode;
+    modified = true;
+}

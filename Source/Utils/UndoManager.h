@@ -291,6 +291,54 @@ private:
 };
 
 /**
+ * Action for nudging selected notes by keyboard (up/down, octave).
+ */
+class MultiNoteMidiNudgeAction : public UndoableAction
+{
+public:
+    MultiNoteMidiNudgeAction(std::vector<Note*> notes,
+                             std::vector<float> oldMidis,
+                             std::vector<float> newMidis,
+                             std::function<void(const std::vector<Note*>&)> onNotesChanged = nullptr)
+        : notes(std::move(notes)),
+          oldMidis(std::move(oldMidis)),
+          newMidis(std::move(newMidis)),
+          onNotesChanged(std::move(onNotesChanged)) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldMidis.size(); ++i) {
+            if (!notes[i])
+                continue;
+            notes[i]->setMidiNote(oldMidis[i]);
+            notes[i]->markDirty();
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < newMidis.size(); ++i) {
+            if (!notes[i])
+                continue;
+            notes[i]->setMidiNote(newMidis[i]);
+            notes[i]->markDirty();
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    juce::String getName() const override { return "Nudge Note Pitch"; }
+
+private:
+    std::vector<Note*> notes;
+    std::vector<float> oldMidis;
+    std::vector<float> newMidis;
+    std::function<void(const std::vector<Note*>&)> onNotesChanged;
+};
+
+/**
  * Action for snapping a note to the nearest semitone (double-click).
  * Combines midiNote and pitchOffset into a rounded integer MIDI value.
  */
