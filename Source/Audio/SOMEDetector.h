@@ -91,5 +91,9 @@ private:
     std::vector<const char*> outputNames;
     std::vector<std::string> inputNameStrings;
     std::vector<std::string> outputNameStrings;
+
+    // Reused per-inference buffers to reduce hot-path allocations.
+    std::vector<int64_t> inputShapeScratch;
+    std::vector<Ort::Value> inputTensorScratch;
 #endif
 };

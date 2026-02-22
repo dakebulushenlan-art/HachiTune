@@ -132,9 +132,8 @@ private:
     // Extract mel spectrogram
     std::vector<std::vector<float>> extractMel(const std::vector<float>& audio);
     
-    // Decode latent to F0 (local argmax decoder)
-    std::vector<float> decodeF0(const std::vector<std::vector<float>>& latent, 
-                                 float threshold);
+    // Decode latent [T, OUT_DIMS] to F0 (local argmax decoder)
+    std::vector<float> decodeF0(const float* latent, int numFrames, float threshold);
     
     // Convert cent to F0
     static float centToF0(float cent) {
@@ -155,5 +154,10 @@ private:
     std::vector<const char*> outputNames;
     std::vector<std::string> inputNameStrings;
     std::vector<std::string> outputNameStrings;
+
+    // Reused per-inference buffers to reduce hot-path allocations.
+    std::vector<float> melInputScratch;
+    std::array<int64_t, 3> inputShapeScratch{1, 0, N_MELS};
+    std::vector<Ort::Value> inputTensorScratch;
 #endif
 };

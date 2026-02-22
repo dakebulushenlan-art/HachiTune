@@ -71,8 +71,8 @@ public:
    * @param f0 F0 values
    * @param callback Called with result on completion
    */
-  void inferAsync(const std::vector<std::vector<float>> &mel,
-                  const std::vector<float> &f0,
+  void inferAsync(std::vector<std::vector<float>> mel,
+                  std::vector<float> f0,
                   std::function<void(std::vector<float>)> callback,
                   std::shared_ptr<std::atomic<bool>> cancelFlag = nullptr);
 
@@ -133,6 +133,7 @@ private:
 #ifdef HAVE_ONNXRUNTIME
   std::unique_ptr<Ort::Env> onnxEnv;
   std::unique_ptr<Ort::Session> onnxSession;
+  std::unique_ptr<Ort::IoBinding> ioBinding;
   std::unique_ptr<Ort::AllocatorWithDefaultOptions> allocator;
 
   // Input/output names (cached)
@@ -140,6 +141,14 @@ private:
   std::vector<const char *> outputNames;
   std::vector<std::string> inputNameStrings;
   std::vector<std::string> outputNameStrings;
+
+  // Reused per-inference buffers to avoid frequent heap allocations.
+  std::vector<float> melScratch;
+  std::vector<float> f0Scratch;
+  std::vector<int64_t> melShapeScratch;
+  std::vector<int64_t> f0ShapeScratch;
+  std::vector<Ort::Value> inputTensorScratch;
+  std::vector<Ort::Value> outputTensorScratch;
 
   // Create session options based on current settings
   Ort::SessionOptions createSessionOptions();

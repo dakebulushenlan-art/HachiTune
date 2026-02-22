@@ -9,6 +9,25 @@
 #include <sstream>
 #include <thread>
 
+namespace {
+constexpr float kMelMinClamp = -15.0f;
+constexpr float kMelMaxClamp = 5.0f;
+constexpr float kF0MinValid = 20.0f;
+constexpr float kF0MaxValid = 2000.0f;
+
+bool isVerboseInferLogEnabled() {
+  static const bool enabled = []() {
+    const auto value =
+        juce::SystemStats::getEnvironmentVariable("HACHITUNE_VOCODER_TRACE",
+                                                  {})
+            .trim()
+            .toLowerCase();
+    return value == "1" || value == "true" || value == "yes";
+  }();
+  return enabled;
+}
+} // namespace
+
 Vocoder::Vocoder() {
   // Open log file in platform-appropriate logs directory
   auto logPath = PlatformPaths::getLogFile("vocoder_" +
@@ -93,9 +112,10 @@ Vocoder::Vocoder() {
 
       // Call callback on message thread
       auto cb = std::move(task.callback);
-      juce::MessageManager::callAsync([cb, result]() mutable {
+      juce::MessageManager::callAsync(
+          [cb = std::move(cb), result = std::move(result)]() mutable {
         if (cb)
-          cb(result);
+          cb(std::move(result));
       });
     }
   });
@@ -218,6 +238,16 @@ bool Vocoder::loadModel(const juce::File &modelPath) {
                                                  sessionOptions);
 #endif
 
+    ioBinding.reset();
+    if (executionDevice != "CPU") {
+      try {
+        ioBinding = std::make_unique<Ort::IoBinding>(*onnxSession);
+      } catch (const Ort::Exception &e) {
+        log("Failed to create IO binding (falling back to standard Run API): " +
+            std::string(e.what()));
+      }
+    }
+
     // Get input names
     size_t numInputs = onnxSession->GetInputCount();
     inputNameStrings.clear();
@@ -242,6 +272,16 @@ bool Vocoder::loadModel(const juce::File &modelPath) {
     }
     for (auto &name : outputNameStrings) {
       outputNames.push_back(name.c_str());
+    }
+
+    // Pre-size scratch containers used by infer() hot path.
+    melShapeScratch.resize(3);
+    f0ShapeScratch.resize(2);
+    inputTensorScratch.reserve(2);
+    outputTensorScratch.clear();
+    outputTensorScratch.reserve(outputNames.size());
+    for (size_t i = 0; i < outputNames.size(); ++i) {
+      outputTensorScratch.emplace_back(nullptr);
     }
 
     log("Vocoder: ONNX model loaded successfully");
@@ -291,156 +331,137 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
   // Lock to ensure thread-safe access to ONNX session
   std::lock_guard<std::mutex> lock(inferenceMutex);
 
-  size_t numFrames = std::min(mel.size(), f0.size());
-
-  log("Starting inference with " + std::to_string(numFrames) + " frames");
-
-  auto startTotal = std::chrono::high_resolution_clock::now();
+  const size_t numFrames = std::min(mel.size(), f0.size());
+  if (numFrames == 0)
+    return {};
+  const bool verboseInferLog = isVerboseInferLogEnabled();
+  const auto startTotal = std::chrono::high_resolution_clock::now();
 
 #ifdef HAVE_ONNXRUNTIME
-  if (!onnxSession) {
+  if (!onnxSession || inputNames.empty() || outputNames.empty()) {
     log("ONNX session not available, using fallback");
     return generateSineFallback(f0);
   }
 
   try {
-    auto startPrep = std::chrono::high_resolution_clock::now();
+    const auto startPrep = std::chrono::high_resolution_clock::now();
 
     // Prepare mel input: [batch=1, num_mels, frames]
-    std::vector<int64_t> melShape = {1, static_cast<int64_t>(numMels),
-                                     static_cast<int64_t>(numFrames)};
-    std::vector<float> melData(numMels * numFrames);
+    if (melShapeScratch.size() != 3)
+      melShapeScratch.resize(3);
+    melShapeScratch[0] = 1;
+    melShapeScratch[1] = static_cast<int64_t>(numMels);
+    melShapeScratch[2] = static_cast<int64_t>(numFrames);
 
-    // Transpose mel from [T, num_mels] to [num_mels, T]
+    const size_t melElementCount =
+        static_cast<size_t>(numMels) * static_cast<size_t>(numFrames);
+    melScratch.resize(melElementCount);
+
     for (size_t frame = 0; frame < numFrames; ++frame) {
-      for (int m = 0; m < numMels && m < static_cast<int>(mel[frame].size());
-           ++m) {
-        melData[m * numFrames + frame] = mel[frame][m];
+      const auto &sourceFrame = mel[frame];
+      const int melCount = juce::jmin(numMels, static_cast<int>(sourceFrame.size()));
+      size_t dstIndex = frame;
+      int m = 0;
+      for (; m < melCount; ++m, dstIndex += numFrames) {
+        melScratch[dstIndex] =
+            std::clamp(sourceFrame[static_cast<size_t>(m)], kMelMinClamp,
+                       kMelMaxClamp);
       }
-    }
-
-    // Validate and normalize mel spectrogram values
-    // PC-NSF-HiFiGAN typically expects mel values in log domain, already done
-    // But ensure values are in reasonable range (typically -10 to 5 for log
-    // mel)
-    float melMin = 99999.0f, melMax = -99999.0f;
-    for (float v : melData) {
-      melMin = std::min(melMin, v);
-      melMax = std::max(melMax, v);
-    }
-    log("Mel stats: min=" + std::to_string(melMin) +
-        " max=" + std::to_string(melMax));
-
-    // Clamp mel values to reasonable range to avoid extreme values
-    // This prevents potential numerical issues in the model
-    const float melMinClamp = -15.0f; // Typical minimum for log mel
-    const float melMaxClamp = 5.0f;   // Typical maximum for log mel
-    for (float &v : melData) {
-      v = std::clamp(v, melMinClamp, melMaxClamp);
+      for (; m < numMels; ++m, dstIndex += numFrames) {
+        melScratch[dstIndex] = 0.0f;
+      }
     }
 
     // Prepare f0 input: [batch=1, frames]
-    std::vector<int64_t> f0Shape = {1, static_cast<int64_t>(numFrames)};
-    std::vector<float> f0Data(f0.begin(), f0.begin() + numFrames);
+    if (f0ShapeScratch.size() != 2)
+      f0ShapeScratch.resize(2);
+    f0ShapeScratch[0] = 1;
+    f0ShapeScratch[1] = static_cast<int64_t>(numFrames);
 
-    // Validate and clamp F0 values to reasonable range
-    // Typical human voice range: 50 Hz to 1000 Hz
-    const float f0MinValid = 20.0f;   // Minimum valid F0
-    const float f0MaxValid = 2000.0f; // Maximum valid F0
-
-    float f0Min = 99999.0f, f0Max = 0.0f, f0Sum = 0.0f;
-    int voicedCount = 0;
-    for (float &freq : f0Data) {
-      if (freq > 0.0f) {
-        // Clamp to valid range
-        freq = std::clamp(freq, f0MinValid, f0MaxValid);
-
-        f0Min = std::min(f0Min, freq);
-        f0Max = std::max(f0Max, freq);
-        f0Sum += freq;
-        voicedCount++;
-      }
+    f0Scratch.resize(numFrames);
+    for (size_t i = 0; i < numFrames; ++i) {
+      const float freq = f0[i];
+      f0Scratch[i] = (freq > 0.0f)
+                         ? std::clamp(freq, kF0MinValid, kF0MaxValid)
+                         : 0.0f;
     }
-    log("F0 stats: min=" + std::to_string(f0Min) +
-        " max=" + std::to_string(f0Max) + " mean=" +
-        std::to_string(voicedCount > 0 ? f0Sum / voicedCount : 0.0f) +
-        " voiced=" + std::to_string(voicedCount) + "/" +
-        std::to_string(numFrames));
 
-    auto endPrep = std::chrono::high_resolution_clock::now();
-    auto prepMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      endPrep - startPrep)
-                      .count();
-    log("Data preparation took " + std::to_string(prepMs) + " ms");
-
-    // Create memory info
-    auto memoryInfo =
+    static const auto cpuMemoryInfo =
         Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
-    // Create input tensors
-    std::vector<Ort::Value> inputTensors;
-    inputTensors.push_back(Ort::Value::CreateTensor<float>(
-        memoryInfo, melData.data(), melData.size(), melShape.data(),
-        melShape.size()));
-    inputTensors.push_back(Ort::Value::CreateTensor<float>(
-        memoryInfo, f0Data.data(), f0Data.size(), f0Shape.data(),
-        f0Shape.size()));
+    inputTensorScratch.clear();
+    inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+        cpuMemoryInfo, melScratch.data(), melScratch.size(),
+        melShapeScratch.data(), melShapeScratch.size()));
+    inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+        cpuMemoryInfo, f0Scratch.data(), f0Scratch.size(), f0ShapeScratch.data(),
+        f0ShapeScratch.size()));
 
-    // Run inference
-    auto startInfer = std::chrono::high_resolution_clock::now();
+    const auto startInfer = std::chrono::high_resolution_clock::now();
 
-    // Validate session and names before inference
-    if (!onnxSession || inputNames.empty() || outputNames.empty()) {
-      log("ONNX session or input/output names invalid before inference");
-      return generateSineFallback(f0);
-    }
+    Ort::Value *outputTensor = nullptr;
+    std::vector<Ort::Value> ioBoundOutputs;
+    static const Ort::RunOptions runOptions{nullptr};
 
-    // Validate all name pointers are non-null
-    for (const auto *name : inputNames) {
-      if (name == nullptr) {
-        log("Null pointer found in inputNames");
-        return generateSineFallback(f0);
+    bool ranWithIoBinding = false;
+    const bool canUseIoBinding =
+        ioBinding && executionDevice != "CPU" &&
+        inputTensorScratch.size() == inputNames.size() && outputNames.size() == 1;
+
+    if (canUseIoBinding) {
+      try {
+        ioBinding->ClearBoundInputs();
+        ioBinding->ClearBoundOutputs();
+        for (size_t i = 0; i < inputNames.size(); ++i) {
+          ioBinding->BindInput(inputNames[i], inputTensorScratch[i]);
+        }
+        ioBinding->BindOutput(outputNames.front(), cpuMemoryInfo);
+        onnxSession->Run(runOptions, *ioBinding);
+        ioBoundOutputs = ioBinding->GetOutputValues();
+        if (!ioBoundOutputs.empty()) {
+          outputTensor = &ioBoundOutputs.front();
+          ranWithIoBinding = true;
+        }
+      } catch (const Ort::Exception &e) {
+        if (verboseInferLog) {
+          log("IO binding run failed; fallback to standard run path: " +
+              std::string(e.what()));
+        }
       }
     }
-    for (const auto *name : outputNames) {
-      if (name == nullptr) {
-        log("Null pointer found in outputNames");
-        return generateSineFallback(f0);
+
+    if (!ranWithIoBinding) {
+      if (outputTensorScratch.size() != outputNames.size()) {
+        outputTensorScratch.clear();
+        outputTensorScratch.reserve(outputNames.size());
+        for (size_t i = 0; i < outputNames.size(); ++i) {
+          outputTensorScratch.emplace_back(nullptr);
+        }
+      }
+      for (auto &outputValue : outputTensorScratch) {
+        outputValue = Ort::Value{nullptr};
+      }
+
+      onnxSession->Run(runOptions, inputNames.data(), inputTensorScratch.data(),
+                       inputTensorScratch.size(), outputNames.data(),
+                       outputTensorScratch.data(), outputTensorScratch.size());
+
+      if (!outputTensorScratch.empty()) {
+        outputTensor = &outputTensorScratch.front();
       }
     }
 
-    auto outputTensors = onnxSession->Run(
-        Ort::RunOptions{nullptr}, inputNames.data(), inputTensors.data(),
-        inputTensors.size(), outputNames.data(), outputNames.size());
+    const auto endInfer = std::chrono::high_resolution_clock::now();
 
-    auto endInfer = std::chrono::high_resolution_clock::now();
-    auto inferMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       endInfer - startInfer)
-                       .count();
-    log("ONNX inference took " + std::to_string(inferMs) + " ms for " +
-        std::to_string(numFrames) + " frames");
-
-    // Get output
-    if (outputTensors.empty()) {
+    if (outputTensor == nullptr || !outputTensor->HasValue()) {
       log("ONNX inference returned no output");
       return generateSineFallback(f0);
     }
 
-    // Get output tensor info
-    auto &outputTensor = outputTensors[0];
-    auto typeInfo = outputTensor.GetTensorTypeAndShapeInfo();
-    auto outputShape = typeInfo.GetShape();
-    size_t outputSize = typeInfo.GetElementCount();
-
-    log("ONNX output shape: [" +
-        std::to_string(outputShape.size() > 0 ? outputShape[0] : 0) + ", " +
-        std::to_string(outputShape.size() > 1 ? outputShape[1] : 0) + ", " +
-        std::to_string(outputShape.size() > 2 ? outputShape[2] : 0) + "]");
-    log("Output samples: " + std::to_string(outputSize));
-
-    // DIAGNOSTIC: Check if output length matches expected length
-    size_t expectedSamples = numFrames * hopSize;
-    if (outputSize != expectedSamples) {
+    auto typeInfo = outputTensor->GetTensorTypeAndShapeInfo();
+    const size_t outputSize = typeInfo.GetElementCount();
+    const size_t expectedSamples = numFrames * static_cast<size_t>(hopSize);
+    if (verboseInferLog && outputSize != expectedSamples) {
       log("WARNING: Output length mismatch! Expected " +
           std::to_string(expectedSamples) + " samples (" +
           std::to_string(numFrames) + " frames * " + std::to_string(hopSize) +
@@ -451,35 +472,29 @@ std::vector<float> Vocoder::infer(const std::vector<std::vector<float>> &mel,
           " samples");
     }
 
-    // Copy output to vector
-    float *outputData = outputTensor.GetTensorMutableData<float>();
-    std::vector<float> waveform(outputData, outputData + outputSize);
-
-    // Analyze output statistics before normalization
-    float minVal = 0.0f, maxVal = 0.0f, sumAbs = 0.0f;
-    for (float sample : waveform) {
-      minVal = std::min(minVal, sample);
-      maxVal = std::max(maxVal, sample);
-      sumAbs += std::abs(sample);
-    }
-    float maxAbs = std::max(std::abs(minVal), std::abs(maxVal));
-    float avgAbs = sumAbs / waveform.size();
-
-    log("Pre-normalization stats: min=" + std::to_string(minVal) +
-        " max=" + std::to_string(maxVal) + " maxAbs=" + std::to_string(maxAbs) +
-        " avgAbs=" + std::to_string(avgAbs));
-
-    // No normalization - output vocoder result as-is
-    // Only apply safety clamp to prevent clipping
-    for (float &sample : waveform) {
-      sample = std::clamp(sample, -1.0f, 1.0f);
+    // Copy and clamp output in one pass.
+    float *outputData = outputTensor->GetTensorMutableData<float>();
+    std::vector<float> waveform(outputSize);
+    for (size_t i = 0; i < outputSize; ++i) {
+      waveform[i] = std::clamp(outputData[i], -1.0f, 1.0f);
     }
 
-    auto endTotal = std::chrono::high_resolution_clock::now();
-    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       endTotal - startTotal)
-                       .count();
-    log("Total vocoder inference took " + std::to_string(totalMs) + " ms");
+    if (verboseInferLog) {
+      const auto endTotal = std::chrono::high_resolution_clock::now();
+      const auto prepMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              startInfer - startPrep)
+                              .count();
+      const auto inferMs =
+          std::chrono::duration_cast<std::chrono::milliseconds>(endInfer -
+                                                                startInfer)
+              .count();
+      const auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               endTotal - startTotal)
+                               .count();
+      log("Vocoder infer [" + std::to_string(numFrames) + " frames] prep=" +
+          std::to_string(prepMs) + "ms infer=" + std::to_string(inferMs) +
+          "ms total=" + std::to_string(totalMs) + "ms");
+    }
 
     return waveform;
 
@@ -511,8 +526,8 @@ Vocoder::inferWithPitchShift(const std::vector<std::vector<float>> &mel,
   return infer(mel, shiftedF0);
 }
 
-void Vocoder::inferAsync(const std::vector<std::vector<float>> &mel,
-                         const std::vector<float> &f0,
+void Vocoder::inferAsync(std::vector<std::vector<float>> mel,
+                         std::vector<float> f0,
                          std::function<void(std::vector<float>)> callback,
                          std::shared_ptr<std::atomic<bool>> cancelFlag) {
   // Check if shutting down
@@ -526,8 +541,9 @@ void Vocoder::inferAsync(const std::vector<std::vector<float>> &mel,
 
   {
     std::lock_guard<std::mutex> lock(asyncMutex);
-    asyncQueue.push_back(
-        AsyncTask{mel, f0, std::move(callback), std::move(cancelFlag)});
+    asyncQueue.emplace_back(
+        AsyncTask{std::move(mel), std::move(f0), std::move(callback),
+                  std::move(cancelFlag)});
     asyncCondition.notify_one();
   }
 }
@@ -592,10 +608,13 @@ bool Vocoder::reloadModel() {
 #ifdef HAVE_ONNXRUNTIME
   // Release existing session
   onnxSession.reset();
+  ioBinding.reset();
   inputNames.clear();
   outputNames.clear();
   inputNameStrings.clear();
   outputNameStrings.clear();
+  inputTensorScratch.clear();
+  outputTensorScratch.clear();
   loaded = false;
 #endif
 
@@ -606,8 +625,6 @@ bool Vocoder::reloadModel() {
 Ort::SessionOptions Vocoder::createSessionOptions() {
   Ort::SessionOptions sessionOptions;
 
-  // Let ONNX Runtime handle threading automatically
-
   // Enable all optimizations
   sessionOptions.SetGraphOptimizationLevel(
       GraphOptimizationLevel::ORT_ENABLE_ALL);
@@ -617,6 +634,12 @@ Ort::SessionOptions Vocoder::createSessionOptions() {
 
   // Enable CPU memory arena
   sessionOptions.EnableCpuMemArena();
+
+  // GPU-backed providers generally run best with minimal ORT CPU thread pools.
+  if (executionDevice != "CPU") {
+    sessionOptions.SetIntraOpNumThreads(1);
+    sessionOptions.SetInterOpNumThreads(1);
+  }
 
   log("Creating session with device: " + executionDevice.toStdString());
 

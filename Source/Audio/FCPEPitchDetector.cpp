@@ -214,6 +214,8 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
     for (const auto &name : outputNameStrings)
       outputNames.push_back(name.c_str());
 
+    inputTensorScratch.reserve(1);
+
     loaded = true;
     DBG("FCPE model loaded successfully");
     return true;
@@ -307,10 +309,12 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
   if (numFrames < 1)
     numFrames = 1;
 
-  std::vector<std::vector<float>> mel(numFrames);
+  std::vector<std::vector<float>> mel(numFrames,
+                                      std::vector<float>(N_MELS, 0.0f));
 
   // FFT buffer (real + imaginary interleaved for JUCE FFT)
   std::vector<float> fftBuffer(N_FFT * 2, 0.0f);
+  std::vector<float> mag(numBins, 0.0f);
   juce::dsp::FFT fft(static_cast<int>(std::log2(N_FFT)));
 
   for (int frame = 0; frame < numFrames; ++frame) {
@@ -328,7 +332,6 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
     fft.performRealOnlyForwardTransform(fftBuffer.data());
 
     // Compute magnitude spectrum
-    std::vector<float> mag(numBins);
     for (int k = 0; k < numBins; ++k) {
       float real = fftBuffer[k * 2];
       float imag = fftBuffer[k * 2 + 1];
@@ -336,7 +339,6 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
     }
 
     // Apply mel filterbank
-    mel[frame].resize(N_MELS);
     for (int m = 0; m < N_MELS; ++m) {
       float sum = 0.0f;
       for (int k = 0; k < numBins; ++k) {
@@ -351,14 +353,13 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
   return mel;
 }
 
-std::vector<float>
-FCPEPitchDetector::decodeF0(const std::vector<std::vector<float>> &latent,
-                            float threshold) {
-  int numFrames = static_cast<int>(latent.size());
+std::vector<float> FCPEPitchDetector::decodeF0(const float *latent,
+                                               int numFrames,
+                                               float threshold) {
   std::vector<float> f0(numFrames, 0.0f);
 
   for (int t = 0; t < numFrames; ++t) {
-    const auto &frame = latent[t];
+    const float *frame = latent + static_cast<size_t>(t) * OUT_DIMS;
 
     // Find max index and confidence
     int maxIdx = 0;
@@ -422,45 +423,42 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
 
     // Step 3: Prepare input tensor [1, T, N_MELS]
     int numFrames = static_cast<int>(mel.size());
-    std::vector<float> inputData(numFrames * N_MELS);
+    melInputScratch.resize(static_cast<size_t>(numFrames) * N_MELS);
 
     for (int t = 0; t < numFrames; ++t) {
       for (int m = 0; m < N_MELS; ++m) {
-        inputData[t * N_MELS + m] = mel[t][m];
+        melInputScratch[static_cast<size_t>(t) * N_MELS + m] = mel[t][m];
       }
     }
 
-    std::array<int64_t, 3> inputShape = {1, numFrames, N_MELS};
+    inputShapeScratch[1] = numFrames;
 
-    Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
+    static const auto memoryInfo = Ort::MemoryInfo::CreateCpu(
         OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+    static const Ort::RunOptions runOptions{nullptr};
 
-    Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-        memoryInfo, inputData.data(), inputData.size(), inputShape.data(),
-        inputShape.size());
+    inputTensorScratch.clear();
+    inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+        memoryInfo, melInputScratch.data(), melInputScratch.size(),
+        inputShapeScratch.data(), inputShapeScratch.size()));
 
     // Step 4: Run inference
-    auto outputTensors =
-        onnxSession->Run(Ort::RunOptions{nullptr}, inputNames.data(),
-                         &inputTensor, 1, outputNames.data(), 1);
+    auto outputTensors = onnxSession->Run(runOptions, inputNames.data(),
+                                          inputTensorScratch.data(),
+                                          inputTensorScratch.size(),
+                                          outputNames.data(), 1);
 
     // Step 5: Get output [1, T, OUT_DIMS]
     float *outputData = outputTensors[0].GetTensorMutableData<float>();
-    auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-
-    int outFrames = static_cast<int>(outputShape[1]);
-
-    // Convert to 2D vector
-    std::vector<std::vector<float>> latent(outFrames);
-    for (int t = 0; t < outFrames; ++t) {
-      latent[t].resize(OUT_DIMS);
-      for (int d = 0; d < OUT_DIMS; ++d) {
-        latent[t][d] = outputData[t * OUT_DIMS + d];
-      }
+    const size_t outputCount =
+        outputTensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    if (outputCount < static_cast<size_t>(OUT_DIMS)) {
+      return {};
     }
+    const int outFrames = static_cast<int>(outputCount / OUT_DIMS);
 
     // Step 6: Decode to F0
-    return decodeF0(latent, threshold);
+    return decodeF0(outputData, outFrames, threshold);
   } catch (const Ort::Exception &e) {
     DBG("ONNX Runtime error during inference: " << e.what());
     return {};
@@ -506,54 +504,51 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
 
     // Step 3: Prepare input tensor [1, T, N_MELS]
     int numFrames = static_cast<int>(mel.size());
-    std::vector<float> inputData(numFrames * N_MELS);
+    melInputScratch.resize(static_cast<size_t>(numFrames) * N_MELS);
 
     for (int t = 0; t < numFrames; ++t) {
       for (int m = 0; m < N_MELS; ++m) {
-        inputData[t * N_MELS + m] = mel[t][m];
+        melInputScratch[static_cast<size_t>(t) * N_MELS + m] = mel[t][m];
       }
     }
 
-    std::array<int64_t, 3> inputShape = {1, numFrames, N_MELS};
+    inputShapeScratch[1] = numFrames;
 
-    Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
+    static const auto memoryInfo = Ort::MemoryInfo::CreateCpu(
         OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+    static const Ort::RunOptions runOptions{nullptr};
 
-    Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-        memoryInfo, inputData.data(), inputData.size(), inputShape.data(),
-        inputShape.size());
+    inputTensorScratch.clear();
+    inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+        memoryInfo, melInputScratch.data(), melInputScratch.size(),
+        inputShapeScratch.data(), inputShapeScratch.size()));
 
     if (progressCallback)
       progressCallback(0.6);
 
     // Step 4: Run inference
-    auto outputTensors =
-        onnxSession->Run(Ort::RunOptions{nullptr}, inputNames.data(),
-                         &inputTensor, 1, outputNames.data(), 1);
+    auto outputTensors = onnxSession->Run(runOptions, inputNames.data(),
+                                          inputTensorScratch.data(),
+                                          inputTensorScratch.size(),
+                                          outputNames.data(), 1);
 
     if (progressCallback)
       progressCallback(0.8);
 
     // Step 5: Get output [1, T, OUT_DIMS]
     float *outputData = outputTensors[0].GetTensorMutableData<float>();
-    auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-
-    int outFrames = static_cast<int>(outputShape[1]);
-
-    // Convert to 2D vector
-    std::vector<std::vector<float>> latent(outFrames);
-    for (int t = 0; t < outFrames; ++t) {
-      latent[t].resize(OUT_DIMS);
-      for (int d = 0; d < OUT_DIMS; ++d) {
-        latent[t][d] = outputData[t * OUT_DIMS + d];
-      }
+    const size_t outputCount =
+        outputTensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    if (outputCount < static_cast<size_t>(OUT_DIMS)) {
+      return {};
     }
+    const int outFrames = static_cast<int>(outputCount / OUT_DIMS);
 
     if (progressCallback)
       progressCallback(0.9);
 
     // Step 6: Decode to F0
-    auto result = decodeF0(latent, threshold);
+    auto result = decodeF0(outputData, outFrames, threshold);
 
     if (progressCallback)
       progressCallback(1.0);

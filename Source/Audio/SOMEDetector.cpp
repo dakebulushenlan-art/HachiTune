@@ -2,9 +2,21 @@
 #include "../Utils/Localization.h"
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <juce_core/juce_core.h>
 #include <numeric>
+
+namespace {
+bool isSomeVerboseLogEnabled() {
+  static const bool enabled = []() {
+    const auto value = juce::SystemStats::getEnvironmentVariable(
+                           "HACHITUNE_SOME_TRACE", {})
+                           .trim()
+                           .toLowerCase();
+    return value == "1" || value == "true" || value == "yes";
+  }();
+  return enabled;
+}
+} // namespace
 
 SOMEDetector::SOMEDetector() = default;
 SOMEDetector::~SOMEDetector() = default;
@@ -17,7 +29,12 @@ bool SOMEDetector::loadModel(const juce::File &modelPath, GPUProvider provider,
         std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "SOMEDetector");
 
     Ort::SessionOptions sessionOptions;
-    sessionOptions.SetIntraOpNumThreads(4);
+    if (provider == GPUProvider::CPU) {
+      sessionOptions.SetIntraOpNumThreads(4);
+    } else {
+      sessionOptions.SetIntraOpNumThreads(1);
+      sessionOptions.SetInterOpNumThreads(1);
+    }
     sessionOptions.SetGraphOptimizationLevel(
         GraphOptimizationLevel::ORT_ENABLE_ALL);
 
@@ -103,6 +120,9 @@ bool SOMEDetector::loadModel(const juce::File &modelPath, GPUProvider provider,
       inputNames.push_back(name.c_str());
     for (const auto &name : outputNameStrings)
       outputNames.push_back(name.c_str());
+
+    inputShapeScratch.resize(2);
+    inputTensorScratch.reserve(1);
 
     loaded = true;
     DBG("SOME model loaded: " << inputNameStrings.size() << " inputs, "
@@ -257,24 +277,29 @@ bool SOMEDetector::inferChunk(const std::vector<float> &chunk,
                               std::vector<float> &midi, std::vector<bool> &rest,
                               std::vector<float> &dur) {
 #ifdef HAVE_ONNXRUNTIME
-  if (!onnxSession)
+  if (!onnxSession || chunk.empty())
     return false;
 
   try {
-    std::vector<int64_t> shape = {1, static_cast<int64_t>(chunk.size())};
-    Ort::MemoryInfo memInfo =
+    if (inputShapeScratch.size() != 2)
+      inputShapeScratch.resize(2);
+    inputShapeScratch[0] = 1;
+    inputShapeScratch[1] = static_cast<int64_t>(chunk.size());
+
+    static const auto memInfo =
         Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    static const Ort::RunOptions runOptions{nullptr};
 
-    std::vector<float> chunkCopy = chunk;
     Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-        memInfo, chunkCopy.data(), chunkCopy.size(), shape.data(),
-        shape.size());
+        memInfo, const_cast<float *>(chunk.data()), chunk.size(),
+        inputShapeScratch.data(), inputShapeScratch.size());
 
-    std::vector<Ort::Value> inputTensors;
-    inputTensors.push_back(std::move(inputTensor));
+    inputTensorScratch.clear();
+    inputTensorScratch.emplace_back(std::move(inputTensor));
 
-    auto outputs = onnxSession->Run(Ort::RunOptions{nullptr}, inputNames.data(),
-                                    inputTensors.data(), inputTensors.size(),
+    auto outputs = onnxSession->Run(runOptions, inputNames.data(),
+                                    inputTensorScratch.data(),
+                                    inputTensorScratch.size(),
                                     outputNames.data(), outputNames.size());
 
     float *midiData = outputs[0].GetTensorMutableData<float>();
@@ -305,6 +330,8 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
     const float *audio, int numSamples, int sampleRate,
     std::function<void(double)> progressCallback) {
 #ifdef HAVE_ONNXRUNTIME
+  const bool verboseSomeLog = isSomeVerboseLogEnabled();
+
   if (!loaded || !onnxSession) {
     DBG("SOME model not loaded");
     return {};
@@ -359,10 +386,10 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
     // Debug: log SOME output for diagnosis
     int restCount =
         static_cast<int>(std::count(noteRest.begin(), noteRest.end(), true));
-    DBG("SOME chunk: " << noteMidi.size()
-                       << " notes, rest count: " << restCount);
-    std::cout << "[SOME] Chunk: " << noteMidi.size() << " notes, " << restCount
-              << " rest notes" << std::endl;
+    if (verboseSomeLog) {
+      DBG("SOME chunk: " << noteMidi.size()
+                         << " notes, rest count: " << restCount);
+    }
 
     // Use chunk-local frame bounds and keep generated notes inside the chunk.
     const int chunkStartFrame = static_cast<int>(beginFrame / HOP_SIZE);
@@ -446,8 +473,6 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
       if (i >= note_frames.size()) {
         DBG("SOME: note_frames index "
             << i << " out of bounds (size=" << note_frames.size() << ")");
-        std::cout << "[SOME] ERROR: note_frames index " << i << " out of bounds"
-                  << std::endl;
         break;
       }
 
@@ -500,7 +525,9 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
       pendingRestPeakRms = 0.0f;
 
       // Log SOME output for debugging
-      DBG("SOME note: midi=" << noteMidi[i] << " (raw float from model)");
+      if (verboseSomeLog) {
+        DBG("SOME note: midi=" << noteMidi[i] << " (raw float from model)");
+      }
 
       // Advance position for next note (or rest)
       start_frame_temp = next_frame_temp;
@@ -508,11 +535,10 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
         break;
     }
 
-    DBG("SOME chunk built: " << notesCreated << " notes created, "
-                             << restSkipped << " rest skipped");
-    std::cout << "[SOME] Chunk built: " << notesCreated << " notes, "
-              << restSkipped << " rest, start=" << chunkStartFrame
-              << ", end=" << start_frame_temp << std::endl;
+    if (verboseSomeLog) {
+      DBG("SOME chunk built: " << notesCreated << " notes created, "
+                               << restSkipped << " rest skipped");
+    }
 
     processedFrames += (actualEnd - beginFrame);
     if (progressCallback)
@@ -538,7 +564,10 @@ void SOMEDetector::detectNotesStreaming(
     std::function<void(const std::vector<ChunkRange> &)> chunkCallback,
     std::function<void(const DebugChunk &)> debugChunkCallback) {
 #ifdef HAVE_ONNXRUNTIME
-  DBG("=== detectNotesStreaming CALLED: " << numSamples << " samples ===");
+  const bool verboseSomeLog = isSomeVerboseLogEnabled();
+  if (verboseSomeLog) {
+    DBG("=== detectNotesStreaming CALLED: " << numSamples << " samples ===");
+  }
 
   if (!loaded || !onnxSession) {
     DBG("SOME model not loaded");
@@ -595,7 +624,6 @@ void SOMEDetector::detectNotesStreaming(
 
     if (!inferChunk(chunkData, noteMidi, noteRest, noteDur)) {
       DBG("SOME chunk inference failed");
-      std::cout << "[SOME] Chunk inference failed" << std::endl;
       continue;
     }
 
@@ -605,8 +633,10 @@ void SOMEDetector::detectNotesStreaming(
     // Debug: log SOME output for diagnosis
     int restCount =
         static_cast<int>(std::count(noteRest.begin(), noteRest.end(), true));
-    DBG("SOME streaming chunk: " << noteMidi.size()
-                                 << " notes, rest count: " << restCount);
+    if (verboseSomeLog) {
+      DBG("SOME streaming chunk: " << noteMidi.size()
+                                   << " notes, rest count: " << restCount);
+    }
 
     const int chunkStartFrame = static_cast<int>(beginFrame / HOP_SIZE);
     const int chunkEndFrame =
@@ -694,8 +724,6 @@ void SOMEDetector::detectNotesStreaming(
       if (i >= note_frames.size()) {
         DBG("SOME streaming: note_frames index "
             << i << " out of bounds (size=" << note_frames.size() << ")");
-        std::cout << "[SOME] ERROR: note_frames index " << i << " out of bounds"
-                  << std::endl;
         break;
       }
 
@@ -760,8 +788,10 @@ void SOMEDetector::detectNotesStreaming(
       pendingRestPeakRms = 0.0f;
 
       // Log SOME output for debugging
-      DBG("SOME streaming note: midi=" << noteMidi[i]
-                                       << " (raw float from model)");
+      if (verboseSomeLog) {
+        DBG("SOME streaming note: midi=" << noteMidi[i]
+                                         << " (raw float from model)");
+      }
 
       // Advance position for next note (or rest)
       start_frame_temp = next_frame_temp;
@@ -769,8 +799,10 @@ void SOMEDetector::detectNotesStreaming(
         break;
     }
 
-    DBG("SOME streaming chunk built: " << notesCreated << " notes created, "
-                                       << restSkipped << " rest skipped");
+    if (verboseSomeLog) {
+      DBG("SOME streaming chunk built: " << notesCreated << " notes created, "
+                                         << restSkipped << " rest skipped");
+    }
 
     // Immediately callback with this chunk's notes
     if (noteCallback && !chunkNotes.empty())

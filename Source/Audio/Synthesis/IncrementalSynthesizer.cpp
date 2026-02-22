@@ -274,7 +274,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   DBG("synthesizeRegion: frames [" << startFrame << ", " << endFrame << "]");
 
   vocoder->inferAsync(
-      melRange, adjustedF0Range,
+      std::move(melRange), std::move(adjustedF0Range),
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
        blendMask = std::move(blendMask),

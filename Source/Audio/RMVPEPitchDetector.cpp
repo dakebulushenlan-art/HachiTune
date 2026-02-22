@@ -101,6 +101,8 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
     for (const auto &name : outputNameStrings)
       outputNames.push_back(name.c_str());
 
+    inputTensorScratch.reserve(2);
+
     loaded = true;
     DBG("RMVPE model loaded successfully");
     return true;
@@ -235,6 +237,8 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
 
       auto chunkF0 =
           extractF0Chunk(audio16k.data() + pos, chunkSize, threshold);
+      if (chunkF0.empty())
+        return {};
 
       if (pos == 0) {
         // First chunk: use all frames
@@ -269,31 +273,28 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
                                                       int numSamples,
                                                       float threshold) {
 #ifdef HAVE_ONNXRUNTIME
+  if (!onnxSession || numSamples <= 0)
+    return {};
+
   // Prepare input tensor [1, n_samples]
-  std::array<int64_t, 2> waveformShape = {1, static_cast<int64_t>(numSamples)};
+  waveformShapeScratch[1] = static_cast<int64_t>(numSamples);
+  thresholdScratch[0] = threshold;
 
-  Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
+  static const auto memoryInfo = Ort::MemoryInfo::CreateCpu(
       OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+  static const Ort::RunOptions runOptions{nullptr};
 
-  Ort::Value waveformTensor = Ort::Value::CreateTensor<float>(
-      memoryInfo, const_cast<float *>(audio16k), numSamples,
-      waveformShape.data(), waveformShape.size());
-
-  // Threshold tensor
-  std::array<int64_t, 1> thresholdShape = {1};
-  std::vector<float> thresholdData = {threshold};
-  Ort::Value thresholdTensor = Ort::Value::CreateTensor<float>(
-      memoryInfo, thresholdData.data(), 1, thresholdShape.data(),
-      thresholdShape.size());
-
-  // Run inference
-  std::vector<Ort::Value> inputTensors;
-  inputTensors.push_back(std::move(waveformTensor));
-  inputTensors.push_back(std::move(thresholdTensor));
+  inputTensorScratch.clear();
+  inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+      memoryInfo, const_cast<float *>(audio16k), static_cast<size_t>(numSamples),
+      waveformShapeScratch.data(), waveformShapeScratch.size()));
+  inputTensorScratch.emplace_back(Ort::Value::CreateTensor<float>(
+      memoryInfo, thresholdScratch.data(), thresholdScratch.size(),
+      thresholdShapeScratch.data(), thresholdShapeScratch.size()));
 
   auto outputTensors = onnxSession->Run(
-      Ort::RunOptions{nullptr}, inputNames.data(), inputTensors.data(),
-      inputTensors.size(), outputNames.data(), outputNames.size());
+      runOptions, inputNames.data(), inputTensorScratch.data(),
+      inputTensorScratch.size(), outputNames.data(), outputNames.size());
 
   // Get output - f0 [1, n_frames]
   float *f0Data = outputTensors[0].GetTensorMutableData<float>();
@@ -323,53 +324,49 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
     auto audio16k = resampleTo16k(audio, numSamples, sampleRate);
 
     if (progressCallback)
-      progressCallback(0.3);
+      progressCallback(0.25);
 
-    // Step 2: Prepare input tensor [1, n_samples]
-    std::array<int64_t, 2> waveformShape = {
-        1, static_cast<int64_t>(audio16k.size())};
+    // Process in chunks to avoid huge one-shot inference on long audio.
+    constexpr int MAX_CHUNK_SAMPLES = 16000 * 30;
+    constexpr int OVERLAP_SAMPLES = 16000; // 1 second overlap
 
-    Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(
-        OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+    std::vector<float> allF0;
+    int pos = 0;
+    const int totalSamples = static_cast<int>(audio16k.size());
 
-    Ort::Value waveformTensor = Ort::Value::CreateTensor<float>(
-        memoryInfo, audio16k.data(), audio16k.size(), waveformShape.data(),
-        waveformShape.size());
+    while (pos < totalSamples) {
+      const int chunkEnd = std::min(pos + MAX_CHUNK_SAMPLES, totalSamples);
+      const int chunkSize = chunkEnd - pos;
 
-    // Threshold tensor
-    std::array<int64_t, 1> thresholdShape = {1};
-    std::vector<float> thresholdData = {threshold};
-    Ort::Value thresholdTensor = Ort::Value::CreateTensor<float>(
-        memoryInfo, thresholdData.data(), 1, thresholdShape.data(),
-        thresholdShape.size());
+      auto chunkF0 = extractF0Chunk(audio16k.data() + pos, chunkSize, threshold);
+      if (chunkF0.empty())
+        return {};
 
-    if (progressCallback)
-      progressCallback(0.5);
+      if (pos == 0) {
+        allF0 = std::move(chunkF0);
+      } else {
+        const int overlapFrames = OVERLAP_SAMPLES / HOP_SIZE;
+        if (static_cast<int>(chunkF0.size()) > overlapFrames) {
+          allF0.insert(allF0.end(), chunkF0.begin() + overlapFrames,
+                       chunkF0.end());
+        }
+      }
 
-    // Step 3: Run inference
-    std::vector<Ort::Value> inputTensors;
-    inputTensors.push_back(std::move(waveformTensor));
-    inputTensors.push_back(std::move(thresholdTensor));
-
-    auto outputTensors = onnxSession->Run(
-        Ort::RunOptions{nullptr}, inputNames.data(), inputTensors.data(),
-        inputTensors.size(), outputNames.data(), outputNames.size());
-
-    if (progressCallback)
-      progressCallback(0.9);
-
-    // Step 4: Get output - f0 [1, n_frames]
-    float *f0Data = outputTensors[0].GetTensorMutableData<float>();
-    auto f0Shape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-    int numFrames = static_cast<int>(f0Shape[1]);
-
-    // Copy f0 values
-    std::vector<float> f0(f0Data, f0Data + numFrames);
+      pos += MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES;
+      if (progressCallback) {
+        const double processedRatio =
+            totalSamples > 0
+                ? static_cast<double>(std::min(pos, totalSamples)) /
+                      static_cast<double>(totalSamples)
+                : 1.0;
+        progressCallback(0.25 + 0.70 * processedRatio);
+      }
+    }
 
     if (progressCallback)
       progressCallback(1.0);
 
-    return f0;
+    return allF0;
   } catch (const Ort::Exception &e) {
     DBG("ONNX Runtime error during RMVPE inference: " << e.what());
     return {};

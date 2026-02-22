@@ -3,6 +3,7 @@
 #include "../JuceHeader.h"
 #include "FCPEPitchDetector.h"  // For GPUProvider enum
 #include <vector>
+#include <array>
 #include <memory>
 
 #ifdef HAVE_ONNXRUNTIME
@@ -109,5 +110,11 @@ private:
     std::vector<const char*> outputNames;
     std::vector<std::string> inputNameStrings;
     std::vector<std::string> outputNameStrings;
+
+    // Reused per-inference buffers to reduce hot-path allocations.
+    std::array<int64_t, 2> waveformShapeScratch{1, 0};
+    std::array<int64_t, 1> thresholdShapeScratch{1};
+    std::array<float, 1> thresholdScratch{DEFAULT_THRESHOLD};
+    std::vector<Ort::Value> inputTensorScratch;
 #endif
 };
