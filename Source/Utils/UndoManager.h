@@ -97,6 +97,53 @@ private:
 };
 
 /**
+ * Action for changing variance scale on multiple notes.
+ * Used for double-click toggle on smooth handles (flatten/restore).
+ */
+class VarianceScaleAction : public UndoableAction
+{
+public:
+    VarianceScaleAction(const std::vector<Note*>& notes,
+                        const std::vector<float>& oldScales,
+                        const std::vector<float>& newScales,
+                        std::function<void()> onChanged = nullptr)
+        : notes(notes), oldScales(oldScales), newScales(newScales),
+          onChanged(onChanged) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldScales.size(); ++i) {
+            if (notes[i]) {
+                notes[i]->setVarianceScale(oldScales[i]);
+                notes[i]->markDirty();
+            }
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < newScales.size(); ++i) {
+            if (notes[i]) {
+                notes[i]->setVarianceScale(newScales[i]);
+                notes[i]->markDirty();
+            }
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    juce::String getName() const override { return "Toggle Variance Scale"; }
+
+private:
+    std::vector<Note*> notes;
+    std::vector<float> oldScales;
+    std::vector<float> newScales;
+    std::function<void()> onChanged;
+};
+
+/**
  * Action for changing multiple F0 values (hand-drawing).
  */
 struct F0FrameEdit
@@ -758,6 +805,7 @@ public:
       if (notes[i] && i < oldParams.size())
       {
         const auto& params = oldParams[i];
+        notes[i]->setMidiNote(params.midiNote);
         notes[i]->setTiltLeft(params.tiltLeft);
         notes[i]->setTiltRight(params.tiltRight);
         notes[i]->setVarianceScale(params.varianceScale);
@@ -808,6 +856,7 @@ public:
       if (notes[i] && i < newParams.size())
       {
         const auto& params = newParams[i];
+        notes[i]->setMidiNote(params.midiNote);
         notes[i]->setTiltLeft(params.tiltLeft);
         notes[i]->setTiltRight(params.tiltRight);
         notes[i]->setVarianceScale(params.varianceScale);

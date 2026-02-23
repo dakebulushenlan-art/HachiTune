@@ -44,7 +44,8 @@ namespace
             seg.startFrame = note.getStartFrame();
             seg.endFrame = note.getEndFrame();
             // Base pitch already includes per-note offset
-            seg.midiNote = note.getMidiNote() + note.getPitchOffset();
+            seg.midiNote = note.getMidiNote() + note.getPitchOffset()
+                         - (note.getTiltLeft() + note.getTiltRight()) / 2.0f;
             segments.push_back(seg);
         }
 

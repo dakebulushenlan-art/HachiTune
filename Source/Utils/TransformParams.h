@@ -11,12 +11,13 @@ struct TransformParams
     float varianceScale = 1.0f;      // Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
     int smoothRightFrames = 0;       // Smoothing transition length at right boundary
+    float midiNote = 0.0f;           // MIDI note position (for undo/redo)
 
     TransformParams() = default;
 
-    TransformParams(float tiltL, float tiltR, float varScale, int smoothL, int smoothR)
+    TransformParams(float tiltL, float tiltR, float varScale, int smoothL, int smoothR, float midi = 0.0f)
         : tiltLeft(tiltL), tiltRight(tiltR), varianceScale(varScale),
-          smoothLeftFrames(smoothL), smoothRightFrames(smoothR) {}
+          smoothLeftFrames(smoothL), smoothRightFrames(smoothR), midiNote(midi) {}
 
     bool operator==(const TransformParams& other) const
     {
@@ -24,7 +25,8 @@ struct TransformParams
                tiltRight == other.tiltRight &&
                varianceScale == other.varianceScale &&
                smoothLeftFrames == other.smoothLeftFrames &&
-               smoothRightFrames == other.smoothRightFrames;
+               smoothRightFrames == other.smoothRightFrames &&
+               midiNote == other.midiNote;
     }
 
     bool operator!=(const TransformParams& other) const

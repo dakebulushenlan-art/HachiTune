@@ -2650,6 +2650,75 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e) {
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
+  // Check if double-click is on a pitch tool handle (ReduceVariance)
+  // to toggle variance scale between 0 (flatten) and 1 (original)
+  if (pitchToolHandles && !project->getSelectedNotes().empty()) {
+    int hitIndex = pitchToolHandles->hitTest(adjustedX, adjustedY);
+    if (hitIndex >= 0) {
+      const auto& handle = pitchToolHandles->getHandle(hitIndex);
+      if (handle.type == PitchToolHandles::HandleType::ReduceVariance) {
+        
+        auto selectedNotes = project->getSelectedNotes();
+        
+        // Get current variance scale from first selected note
+        float currentScale = selectedNotes[0]->getVarianceScale();
+        
+        // Toggle: if ~1.0, set to 0.0 (flatten), else set to 1.0 (original)
+        float newScale = (std::abs(currentScale - 1.0f) < 0.001f) ? 0.0f : 1.0f;
+        
+        // Create undo action
+        if (undoManager) {
+          std::vector<float> oldScales;
+          std::vector<float> newScales;
+          oldScales.reserve(selectedNotes.size());
+          newScales.reserve(selectedNotes.size());
+          
+          for (auto* note : selectedNotes) {
+            if (note) {
+              oldScales.push_back(note->getVarianceScale());
+              newScales.push_back(newScale);
+            }
+          }
+          
+          auto action = std::make_unique<VarianceScaleAction>(
+              selectedNotes, oldScales, newScales,
+              [this]() {
+                // Rebuild pitch curves on change
+                PitchCurveProcessor::rebuildBaseFromNotes(*project);
+                PitchCurveProcessor::composeF0InPlace(*project, false);
+                if (onPitchEdited)
+                  onPitchEdited();
+                if (onPitchEditFinished)
+                  onPitchEditFinished();
+                repaint();
+              });
+          undoManager->addAction(std::move(action));
+        }
+        
+        // Apply new variance scale to all selected notes
+        for (auto* note : selectedNotes) {
+          if (note) {
+            note->setVarianceScale(newScale);
+            note->markDirty();
+          }
+        }
+        
+        // Rebuild pitch curves
+        PitchCurveProcessor::rebuildBaseFromNotes(*project);
+        PitchCurveProcessor::composeF0InPlace(*project, false);
+        
+        // Notify listeners
+        if (onPitchEdited)
+          onPitchEdited();
+        if (onPitchEditFinished)
+          onPitchEditFinished();
+        
+        repaint();
+        return;  // Don't fall through to note snap behavior
+      }
+    }
+  }
+
   // Check if double-clicking on a note
   Note *note = findNoteAt(adjustedX, adjustedY);
 

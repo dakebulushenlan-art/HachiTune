@@ -47,6 +47,7 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
       params.varianceScale = note->getVarianceScale();
       params.smoothLeftFrames = note->getSmoothLeftFrames();
       params.smoothRightFrames = note->getSmoothRightFrames();
+      params.midiNote = note->getMidiNote();
       originalParams.push_back(params);
     }
     else
@@ -93,12 +94,12 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
     if (note)
     {
       TransformParams params;
-      params.tiltLeft = note->getTiltLeft();
-      params.tiltRight = note->getTiltRight();
-      params.varianceScale = note->getVarianceScale();
-      params.smoothLeftFrames = note->getSmoothLeftFrames();
-      params.smoothRightFrames = note->getSmoothRightFrames();
-      newParams.push_back(params);
+       params.tiltLeft = note->getTiltLeft();
+       params.tiltRight = note->getTiltRight();
+       params.varianceScale = note->getVarianceScale();
+       params.smoothLeftFrames = note->getSmoothLeftFrames();
+       params.smoothRightFrames = note->getSmoothRightFrames();
+       newParams.push_back(params);
     }
     else
     {
@@ -153,6 +154,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
 
     // Restore original parameters before applying new transformation
     const auto& origParams = originalParams[i];
+    note->setMidiNote(origParams.midiNote);
     note->setTiltLeft(origParams.tiltLeft);
     note->setTiltRight(origParams.tiltRight);
     note->setVarianceScale(origParams.varianceScale);
@@ -168,6 +170,10 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         const float amount = semitoneDelta;
         DBG("  TiltLeft: amount=" << amount << " semitones");
         note->setTiltLeft(origParams.tiltLeft + amount);
+        
+        // Calculate tilt mean shift
+        const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+        note->setMidiNote(origParams.midiNote + newTiltMean);
         break;
       }
       case PitchToolHandles::HandleType::TiltRight:
@@ -175,6 +181,10 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         const float amount = semitoneDelta;
         DBG("  TiltRight: amount=" << amount << " semitones");
         note->setTiltRight(origParams.tiltRight + amount);
+        
+        // Calculate tilt mean shift
+        const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+        note->setMidiNote(origParams.midiNote + newTiltMean);
         break;
       }
       case PitchToolHandles::HandleType::ReduceVariance:
@@ -248,6 +258,7 @@ void PitchToolController::cancel()
     if (i < originalParams.size() && affectedNotes[i])
     {
       const auto& params = originalParams[i];
+      affectedNotes[i]->setMidiNote(params.midiNote);
       affectedNotes[i]->setTiltLeft(params.tiltLeft);
       affectedNotes[i]->setTiltRight(params.tiltRight);
       affectedNotes[i]->setVarianceScale(params.varianceScale);
