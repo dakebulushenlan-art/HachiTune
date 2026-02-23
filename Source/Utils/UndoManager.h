@@ -144,6 +144,85 @@ private:
 };
 
 /**
+ * Action for resetting tilt values on multiple notes.
+ * Used for double-click on TiltLeft/TiltRight handles to reset to 0.
+ */
+class TiltResetAction : public UndoableAction
+{
+public:
+    enum class TiltSide { Left, Right };
+    
+    TiltResetAction(const std::vector<Note*>& notes,
+                    TiltSide side,
+                    const std::vector<float>& oldTilts,
+                    const std::vector<float>& oldMidiNotes,
+                    std::function<void()> onChanged = nullptr)
+        : notes(notes), side(side), oldTilts(oldTilts), 
+          oldMidiNotes(oldMidiNotes), onChanged(onChanged) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldTilts.size(); ++i) {
+            if (notes[i]) {
+                // Restore old tilt value
+                if (side == TiltSide::Left)
+                    notes[i]->setTiltLeft(oldTilts[i]);
+                else
+                    notes[i]->setTiltRight(oldTilts[i]);
+                
+                // Restore old midiNote position
+                if (i < oldMidiNotes.size())
+                    notes[i]->setMidiNote(oldMidiNotes[i]);
+                
+                notes[i]->markDirty();
+            }
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size(); ++i) {
+            if (notes[i]) {
+                // Reset tilt to 0
+                if (side == TiltSide::Left)
+                    notes[i]->setTiltLeft(0.0f);
+                else
+                    notes[i]->setTiltRight(0.0f);
+                
+                // Recalculate midiNote with new tiltMean
+                const float newTiltMean = (notes[i]->getTiltLeft() + notes[i]->getTiltRight()) / 2.0f;
+                if (i < oldMidiNotes.size()) {
+                    // Calculate baseline (old midiNote minus old tiltMean)
+                    const float oldTiltLeft = (side == TiltSide::Left) ? oldTilts[i] : notes[i]->getTiltLeft();
+                    const float oldTiltRight = (side == TiltSide::Right) ? oldTilts[i] : notes[i]->getTiltRight();
+                    const float oldTiltMean = (oldTiltLeft + oldTiltRight) / 2.0f;
+                    const float baseline = oldMidiNotes[i] - oldTiltMean;
+                    notes[i]->setMidiNote(baseline + newTiltMean);
+                }
+                
+                notes[i]->markDirty();
+            }
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    juce::String getName() const override 
+    { 
+        return side == TiltSide::Left ? "Reset Tilt Left" : "Reset Tilt Right"; 
+    }
+
+private:
+    std::vector<Note*> notes;
+    TiltSide side;
+    std::vector<float> oldTilts;
+    std::vector<float> oldMidiNotes;
+    std::function<void()> onChanged;
+};
+
+/**
  * Action for changing multiple F0 values (hand-drawing).
  */
 struct F0FrameEdit

@@ -2650,12 +2650,13 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e) {
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
-  // Check if double-click is on a pitch tool handle (ReduceVariance)
-  // to toggle variance scale between 0 (flatten) and 1 (original)
+  // Check if double-click is on a pitch tool handle
   if (pitchToolHandles && !project->getSelectedNotes().empty()) {
     int hitIndex = pitchToolHandles->hitTest(adjustedX, adjustedY);
     if (hitIndex >= 0) {
       const auto& handle = pitchToolHandles->getHandle(hitIndex);
+      
+      // ReduceVariance: Toggle variance scale between 0 (flatten) and 1 (original)
       if (handle.type == PitchToolHandles::HandleType::ReduceVariance) {
         
         auto selectedNotes = project->getSelectedNotes();
@@ -2715,6 +2716,128 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e) {
         
         repaint();
         return;  // Don't fall through to note snap behavior
+      }
+      
+      // TiltLeft: Reset tiltLeft to 0
+      if (handle.type == PitchToolHandles::HandleType::TiltLeft) {
+        auto selectedNotes = project->getSelectedNotes();
+        
+        // Create undo action
+        if (undoManager) {
+          std::vector<float> oldTilts;
+          std::vector<float> oldMidiNotes;
+          oldTilts.reserve(selectedNotes.size());
+          oldMidiNotes.reserve(selectedNotes.size());
+          
+          for (auto* note : selectedNotes) {
+            if (note) {
+              oldTilts.push_back(note->getTiltLeft());
+              oldMidiNotes.push_back(note->getMidiNote());
+            }
+          }
+          
+          auto action = std::make_unique<TiltResetAction>(
+              selectedNotes, TiltResetAction::TiltSide::Left,
+              oldTilts, oldMidiNotes,
+              [this]() {
+                PitchCurveProcessor::rebuildBaseFromNotes(*project);
+                PitchCurveProcessor::composeF0InPlace(*project, false);
+                if (onPitchEdited)
+                  onPitchEdited();
+                if (onPitchEditFinished)
+                  onPitchEditFinished();
+                repaint();
+              });
+          undoManager->addAction(std::move(action));
+        }
+        
+        // Reset tiltLeft and adjust midiNote
+        for (auto* note : selectedNotes) {
+          if (note) {
+            const float oldTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+            const float baseline = note->getMidiNote() - oldTiltMean;
+            
+            note->setTiltLeft(0.0f);
+            
+            const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+            note->setMidiNote(baseline + newTiltMean);
+            note->markDirty();
+          }
+        }
+        
+        // Rebuild pitch curves
+        PitchCurveProcessor::rebuildBaseFromNotes(*project);
+        PitchCurveProcessor::composeF0InPlace(*project, false);
+        
+        // Notify listeners
+        if (onPitchEdited)
+          onPitchEdited();
+        if (onPitchEditFinished)
+          onPitchEditFinished();
+        
+        repaint();
+        return;
+      }
+      
+      // TiltRight: Reset tiltRight to 0
+      if (handle.type == PitchToolHandles::HandleType::TiltRight) {
+        auto selectedNotes = project->getSelectedNotes();
+        
+        // Create undo action
+        if (undoManager) {
+          std::vector<float> oldTilts;
+          std::vector<float> oldMidiNotes;
+          oldTilts.reserve(selectedNotes.size());
+          oldMidiNotes.reserve(selectedNotes.size());
+          
+          for (auto* note : selectedNotes) {
+            if (note) {
+              oldTilts.push_back(note->getTiltRight());
+              oldMidiNotes.push_back(note->getMidiNote());
+            }
+          }
+          
+          auto action = std::make_unique<TiltResetAction>(
+              selectedNotes, TiltResetAction::TiltSide::Right,
+              oldTilts, oldMidiNotes,
+              [this]() {
+                PitchCurveProcessor::rebuildBaseFromNotes(*project);
+                PitchCurveProcessor::composeF0InPlace(*project, false);
+                if (onPitchEdited)
+                  onPitchEdited();
+                if (onPitchEditFinished)
+                  onPitchEditFinished();
+                repaint();
+              });
+          undoManager->addAction(std::move(action));
+        }
+        
+        // Reset tiltRight and adjust midiNote
+        for (auto* note : selectedNotes) {
+          if (note) {
+            const float oldTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+            const float baseline = note->getMidiNote() - oldTiltMean;
+            
+            note->setTiltRight(0.0f);
+            
+            const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+            note->setMidiNote(baseline + newTiltMean);
+            note->markDirty();
+          }
+        }
+        
+        // Rebuild pitch curves
+        PitchCurveProcessor::rebuildBaseFromNotes(*project);
+        PitchCurveProcessor::composeF0InPlace(*project, false);
+        
+        // Notify listeners
+        if (onPitchEdited)
+          onPitchEdited();
+        if (onPitchEditFinished)
+          onPitchEditFinished();
+        
+        repaint();
+        return;
       }
     }
   }

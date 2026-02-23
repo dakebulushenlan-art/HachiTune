@@ -47,7 +47,12 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
       params.varianceScale = note->getVarianceScale();
       params.smoothLeftFrames = note->getSmoothLeftFrames();
       params.smoothRightFrames = note->getSmoothRightFrames();
-      params.midiNote = note->getMidiNote();
+      
+      // Store baseline midiNote (without tilt mean shift)
+      // This ensures tilt adjustments are absolute, not cumulative
+      const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+      params.midiNote = note->getMidiNote() - currentTiltMean;
+      
       originalParams.push_back(params);
     }
     else
@@ -99,6 +104,7 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
        params.varianceScale = note->getVarianceScale();
        params.smoothLeftFrames = note->getSmoothLeftFrames();
        params.smoothRightFrames = note->getSmoothRightFrames();
+       params.midiNote = note->getMidiNote();
        newParams.push_back(params);
     }
     else
@@ -107,8 +113,18 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
     }
   }
 
+  // Fix oldParams to store live midiNote (with tilt mean) for correct undo/redo
+  // originalParams stores baseline midiNote (without tilt mean) for applyOperation,
+  // but undo/redo needs the live midiNote value
+  std::vector<TransformParams> undoOldParams = originalParams;
+  for (size_t i = 0; i < undoOldParams.size(); ++i)
+  {
+    const float tiltMean = (undoOldParams[i].tiltLeft + undoOldParams[i].tiltRight) / 2.0f;
+    undoOldParams[i].midiNote += tiltMean;
+  }
+
   auto action = std::make_unique<PitchToolAction>(
-      project, affectedNotes, originalParams, newParams, onRangeChanged);
+      project, affectedNotes, undoOldParams, newParams, onRangeChanged);
 
   if (undoManager)
     undoManager->addAction(std::move(action));
@@ -196,6 +212,10 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         DBG("  ReduceVariance: newScale=" << newScale << " (orig=" << origParams.varianceScale 
             << ", delta=" << dragDelta << ")");
         note->setVarianceScale(newScale);
+        
+        // Preserve tilt offset when adjusting variance
+        const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+        note->setMidiNote(origParams.midiNote + currentTiltMean);
         break;
       }
       case PitchToolHandles::HandleType::SmoothLeft:
@@ -205,6 +225,10 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(dragDeltaX / 5.0f));
         DBG("  SmoothLeft: transitionFrames=" << transitionFrames << " (dragX=" << dragDeltaX << ")");
         note->setSmoothLeftFrames(transitionFrames);
+        
+        // Preserve tilt offset when adjusting smoothing
+        const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+        note->setMidiNote(origParams.midiNote + currentTiltMean);
         break;
       }
       case PitchToolHandles::HandleType::SmoothRight:
@@ -214,6 +238,10 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(-dragDeltaX / 5.0f));
         DBG("  SmoothRight: transitionFrames=" << transitionFrames << " (dragX=" << dragDeltaX << ")");
         note->setSmoothRightFrames(transitionFrames);
+        
+        // Preserve tilt offset when adjusting smoothing
+        const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+        note->setMidiNote(origParams.midiNote + currentTiltMean);
         break;
       }
       case PitchToolHandles::HandleType::None:
@@ -258,12 +286,15 @@ void PitchToolController::cancel()
     if (i < originalParams.size() && affectedNotes[i])
     {
       const auto& params = originalParams[i];
-      affectedNotes[i]->setMidiNote(params.midiNote);
       affectedNotes[i]->setTiltLeft(params.tiltLeft);
       affectedNotes[i]->setTiltRight(params.tiltRight);
       affectedNotes[i]->setVarianceScale(params.varianceScale);
       affectedNotes[i]->setSmoothLeftFrames(params.smoothLeftFrames);
       affectedNotes[i]->setSmoothRightFrames(params.smoothRightFrames);
+      
+      // Restore midiNote with tilt mean (params.midiNote is baseline without tilt)
+      const float tiltMean = (params.tiltLeft + params.tiltRight) / 2.0f;
+      affectedNotes[i]->setMidiNote(params.midiNote + tiltMean);
     }
   }
 
