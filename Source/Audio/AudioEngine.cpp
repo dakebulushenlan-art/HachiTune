@@ -11,15 +11,9 @@ void AudioEngine::initializeAudio() {
       0, 2); // No input, stereo output
 
   if (result.isNotEmpty()) {
-    DBG("Audio device initialization error: " + result);
   } else {
-    DBG("Audio device initialized successfully");
     auto *device = deviceManager.getCurrentAudioDevice();
     if (device) {
-      DBG("Device name: " + device->getName());
-      DBG("Sample rate: " + juce::String(device->getCurrentSampleRate()));
-      DBG("Buffer size: " +
-          juce::String(device->getCurrentBufferSizeSamples()));
     }
   }
 
@@ -40,10 +34,6 @@ void AudioEngine::prepareToPlay(int samplesPerBlockExpected,
   interpolator.reset();
   fractionalPosition = 0.0;
 
-  DBG("AudioEngine::prepareToPlay - Device sample rate: " +
-      juce::String(sampleRate) +
-      " Hz, Waveform sample rate: " + juce::String(waveformSampleRate) +
-      " Hz, Playback ratio: " + juce::String(playbackRatio));
 }
 
 void AudioEngine::releaseResources() {}
@@ -217,12 +207,8 @@ void AudioEngine::loadWaveform(const juce::AudioBuffer<float> &buffer,
   // synthesis)
   if (preservePosition && wasPlaying) {
     playing = true;
-    DBG("Restored playback state after waveform update");
   }
 
-  DBG("Loaded waveform: " + juce::String(buffer.getNumSamples()) +
-      " samples at " + juce::String(sampleRate) +
-      " Hz, playback ratio: " + juce::String(playbackRatio));
 
   if (loopEnabled.load()) {
     auto loopStart = loopStartSample.load();
@@ -239,12 +225,9 @@ void AudioEngine::loadWaveform(const juce::AudioBuffer<float> &buffer,
 
 void AudioEngine::play() {
   if (currentWaveform.getNumSamples() == 0) {
-    DBG("Cannot play: no waveform loaded");
     return;
   }
 
-  DBG("Starting playback from position: " +
-      juce::String(currentPosition.load()));
   playing = true;
 }
 

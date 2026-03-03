@@ -2451,8 +2451,6 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta) {
           return;
 
         PitchCurveProcessor::rebuildBaseFromNotes(*project);
-        PitchCurveProcessor::composeF0InPlace(*project,
-                                              /*applyUvMask=*/false);
         invalidateBasePitchCache();
 
         const int f0Size = static_cast<int>(project->getAudioData().f0.size());

@@ -123,7 +123,6 @@ void PitchEditor::endNoteDrag() {
 
     // Rebuild pitch curves
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
-    PitchCurveProcessor::composeF0InPlace(*project, false);
 
     if (onBasePitchCacheInvalidated)
       onBasePitchCacheInvalidated();
@@ -157,7 +156,6 @@ void PitchEditor::endNoteDrag() {
            capturedF0Size](Note *n) {
             if (project) {
               PitchCurveProcessor::rebuildBaseFromNotes(*project);
-              PitchCurveProcessor::composeF0InPlace(*project, false);
               if (onBasePitchCacheInvalidated)
                 onBasePitchCacheInvalidated();
               int smoothStart = std::max(0, capturedExpandedStart - 60);
@@ -435,8 +433,9 @@ void PitchEditor::snapNoteToSemitone(Note *note) {
 
   if (std::abs(snappedOffset - currentOffset) > 0.001f) {
     if (undoManager) {
-      auto action = std::make_unique<PitchOffsetAction>(note, currentOffset,
-                                                        snappedOffset);
+      auto action = std::make_unique<NoteFloatPropertyAction>(
+          note, currentOffset, snappedOffset,
+          &Note::setPitchOffset, "Change Pitch Offset");
       undoManager->addAction(std::move(action));
     }
 
@@ -552,7 +551,6 @@ void PitchEditor::endMultiNoteDrag() {
 
     // Rebuild pitch curves
     PitchCurveProcessor::rebuildBaseFromNotes(*project);
-    PitchCurveProcessor::composeF0InPlace(*project, false);
 
     if (onBasePitchCacheInvalidated)
       onBasePitchCacheInvalidated();
@@ -596,7 +594,6 @@ void PitchEditor::endMultiNoteDrag() {
            capturedF0Size](const std::vector<Note *> &) {
             if (project) {
               PitchCurveProcessor::rebuildBaseFromNotes(*project);
-              PitchCurveProcessor::composeF0InPlace(*project, false);
               if (onBasePitchCacheInvalidated)
                 onBasePitchCacheInvalidated();
               int smoothStart = std::max(0, capturedExpandedStart - 60);

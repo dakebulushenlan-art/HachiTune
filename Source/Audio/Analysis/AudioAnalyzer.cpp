@@ -18,14 +18,10 @@ void AudioAnalyzer::initialize() {
   if (rmvpeModelPath.existsAsFile()) {
     rmvpeDetector = std::make_unique<RMVPEPitchDetector>();
     if (rmvpeDetector->loadModel(rmvpeModelPath)) {
-      DBG("AudioAnalyzer: RMVPE model loaded");
     } else {
       rmvpeDetector.reset();
-      DBG("AudioAnalyzer: Failed to load RMVPE model");
     }
   } else {
-    DBG("AudioAnalyzer: RMVPE model not found at "
-        << rmvpeModelPath.getFullPathName());
   }
 
   // Try to load FCPE model
@@ -34,13 +30,10 @@ void AudioAnalyzer::initialize() {
   if (fcpeModelPath.existsAsFile()) {
     fcpeDetector = std::make_unique<FCPEPitchDetector>();
     if (fcpeDetector->loadModel(fcpeModelPath)) {
-      DBG("AudioAnalyzer: FCPE model loaded");
     } else {
       fcpeDetector.reset();
-      DBG("AudioAnalyzer: Failed to load FCPE model");
     }
   } else {
-    DBG("AudioAnalyzer: FCPE model not found");
   }
 
   // Try to load SOME model
@@ -49,10 +42,8 @@ void AudioAnalyzer::initialize() {
   if (someModelPath.existsAsFile()) {
     someDetector = std::make_unique<SOMEDetector>();
     if (someDetector->loadModel(someModelPath)) {
-      DBG("AudioAnalyzer: SOME model loaded");
     } else {
       someDetector.reset();
-      DBG("AudioAnalyzer: Failed to load SOME model");
     }
   }
 }
@@ -96,11 +87,9 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
 
   // Try selected detector first
   if (detectorType == PitchDetectorType::RMVPE && isRMVPEAvailable()) {
-    DBG("Using RMVPE pitch detector");
     extractF0WithRMVPE(audioData, targetFrames);
     extracted = true;
   } else if (detectorType == PitchDetectorType::FCPE && isFCPEAvailable()) {
-    DBG("Using FCPE pitch detector");
     extractF0WithFCPE(audioData, targetFrames);
     extracted = true;
   }
@@ -108,10 +97,8 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
   // Fallback chain: RMVPE -> FCPE
   if (!extracted) {
     if (isRMVPEAvailable()) {
-      DBG("Fallback: Using RMVPE pitch detector");
       extractF0WithRMVPE(audioData, targetFrames);
     } else if (isFCPEAvailable()) {
-      DBG("Fallback: Using FCPE pitch detector");
       extractF0WithFCPE(audioData, targetFrames);
     }
   }

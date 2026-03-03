@@ -7,20 +7,25 @@
 #include <functional>
 
 /**
- * Action for changing a note's pitch offset.
+ * Generic action for changing a single float property on a Note.
+ * Uses a member function pointer to call the appropriate setter.
  */
-class PitchOffsetAction : public UndoableAction
+class NoteFloatPropertyAction : public UndoableAction
 {
 public:
-    PitchOffsetAction(Note* note, float oldOffset, float newOffset,
-                      std::function<void(Note*)> onNoteChanged = nullptr)
-        : note(note), oldOffset(oldOffset), newOffset(newOffset),
+    using Setter = void (Note::*)(float);
+
+    NoteFloatPropertyAction(Note* note, float oldVal, float newVal,
+                            Setter setter, juce::String actionName,
+                            std::function<void(Note*)> onNoteChanged = nullptr)
+        : note(note), oldVal(oldVal), newVal(newVal),
+          setter(setter), actionName(std::move(actionName)),
           onNoteChanged(onNoteChanged) {}
-    
+
     void undo() override
     {
         if (!note) return;
-        note->setPitchOffset(oldOffset);
+        (note->*setter)(oldVal);
         note->markDirty();
         if (onNoteChanged)
             onNoteChanged(note);
@@ -28,77 +33,45 @@ public:
     void redo() override
     {
         if (!note) return;
-        note->setPitchOffset(newOffset);
+        (note->*setter)(newVal);
         note->markDirty();
         if (onNoteChanged)
             onNoteChanged(note);
     }
-    juce::String getName() const override { return "Change Pitch Offset"; }
-    
+    juce::String getName() const override { return actionName; }
+
 private:
     Note* note;
-    float oldOffset;
-    float newOffset;
+    float oldVal;
+    float newVal;
+    Setter setter;
+    juce::String actionName;
     std::function<void(Note*)> onNoteChanged;
 };
 
 /**
- * Action for changing a note's volume (dB).
+ * Generic action for changing a single float property on multiple Notes.
+ * Uses a member function pointer to call the appropriate setter.
  */
-class NoteVolumeAction : public UndoableAction
+class MultiNoteFloatPropertyAction : public UndoableAction
 {
 public:
-    NoteVolumeAction(Note* note, float oldVolumeDb, float newVolumeDb,
-                     std::function<void(Note*)> onNoteChanged = nullptr)
-        : note(note), oldVolumeDb(oldVolumeDb), newVolumeDb(newVolumeDb),
-          onNoteChanged(onNoteChanged) {}
+    using Setter = void (Note::*)(float);
 
-    void undo() override
-    {
-        if (!note) return;
-        note->setVolumeDb(oldVolumeDb);
-        note->markDirty();
-        if (onNoteChanged)
-            onNoteChanged(note);
-    }
-
-    void redo() override
-    {
-        if (!note) return;
-        note->setVolumeDb(newVolumeDb);
-        note->markDirty();
-        if (onNoteChanged)
-            onNoteChanged(note);
-    }
-
-    juce::String getName() const override { return "Change Note Volume"; }
-
-private:
-    Note* note;
-    float oldVolumeDb;
-    float newVolumeDb;
-    std::function<void(Note*)> onNoteChanged;
-};
-
-/**
- * Action for changing variance scale on multiple notes.
- * Used for double-click toggle on smooth handles (flatten/restore).
- */
-class VarianceScaleAction : public UndoableAction
-{
-public:
-    VarianceScaleAction(const std::vector<Note*>& notes,
-                        const std::vector<float>& oldScales,
-                        const std::vector<float>& newScales,
-                        std::function<void()> onChanged = nullptr)
-        : notes(notes), oldScales(oldScales), newScales(newScales),
+    MultiNoteFloatPropertyAction(const std::vector<Note*>& notes,
+                                 const std::vector<float>& oldVals,
+                                 const std::vector<float>& newVals,
+                                 Setter setter, juce::String actionName,
+                                 std::function<void()> onChanged = nullptr)
+        : notes(notes), oldVals(oldVals), newVals(newVals),
+          setter(setter), actionName(std::move(actionName)),
           onChanged(onChanged) {}
 
     void undo() override
     {
-        for (size_t i = 0; i < notes.size() && i < oldScales.size(); ++i) {
+        for (size_t i = 0; i < notes.size() && i < oldVals.size(); ++i) {
             if (notes[i]) {
-                notes[i]->setVarianceScale(oldScales[i]);
+                (notes[i]->*setter)(oldVals[i]);
                 notes[i]->markDirty();
             }
         }
@@ -108,9 +81,9 @@ public:
 
     void redo() override
     {
-        for (size_t i = 0; i < notes.size() && i < newScales.size(); ++i) {
+        for (size_t i = 0; i < notes.size() && i < newVals.size(); ++i) {
             if (notes[i]) {
-                notes[i]->setVarianceScale(newScales[i]);
+                (notes[i]->*setter)(newVals[i]);
                 notes[i]->markDirty();
             }
         }
@@ -118,12 +91,14 @@ public:
             onChanged();
     }
 
-    juce::String getName() const override { return "Toggle Variance Scale"; }
+    juce::String getName() const override { return actionName; }
 
 private:
     std::vector<Note*> notes;
-    std::vector<float> oldScales;
-    std::vector<float> newScales;
+    std::vector<float> oldVals;
+    std::vector<float> newVals;
+    Setter setter;
+    juce::String actionName;
     std::function<void()> onChanged;
 };
 

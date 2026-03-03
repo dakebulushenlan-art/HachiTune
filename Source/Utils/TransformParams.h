@@ -1,25 +1,51 @@
 #pragma once
 
+#include "../Models/Note.h"
+
 /**
  * Stores pitch tool transformation parameters for a single note.
  * Used by UndoManager to capture and restore transformation state non-destructively.
  */
 struct TransformParams
 {
-    float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)
-    float tiltRight = 0.0f;          // Tilt amount at right edge (semitones)
-    float varianceScale = 1.0f;      // Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
-    int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
-    int smoothRightFrames = 0;       // Smoothing transition length at right boundary
-    float midiNote = 0.0f;           // MIDI note position (for undo/redo)
-    float deltaScale = 1.0f;         // Post-transformation scale (from delta control handles)
-    float deltaOffset = 0.0f;        // Post-transformation offset (from delta control handles)
+    float tiltLeft = 0.0f;
+    float tiltRight = 0.0f;
+    float varianceScale = 1.0f;
+    int smoothLeftFrames = 0;
+    int smoothRightFrames = 0;
+    float midiNote = 0.0f;
+    float deltaScale = 1.0f;
+    float deltaOffset = 0.0f;
 
     TransformParams() = default;
 
-    TransformParams(float tiltL, float tiltR, float varScale, int smoothL, int smoothR, float midi = 0.0f)
-        : tiltLeft(tiltL), tiltRight(tiltR), varianceScale(varScale),
-          smoothLeftFrames(smoothL), smoothRightFrames(smoothR), midiNote(midi) {}
+    /** Capture all transformation params from a note. */
+    static TransformParams fromNote(const Note& note)
+    {
+        TransformParams p;
+        p.tiltLeft = note.getTiltLeft();
+        p.tiltRight = note.getTiltRight();
+        p.varianceScale = note.getVarianceScale();
+        p.smoothLeftFrames = note.getSmoothLeftFrames();
+        p.smoothRightFrames = note.getSmoothRightFrames();
+        p.midiNote = note.getMidiNote();
+        p.deltaScale = note.getDeltaScale();
+        p.deltaOffset = note.getDeltaOffset();
+        return p;
+    }
+
+    /** Apply all transformation params back to a note. */
+    void applyToNote(Note& note) const
+    {
+        note.setMidiNote(midiNote);
+        note.setTiltLeft(tiltLeft);
+        note.setTiltRight(tiltRight);
+        note.setVarianceScale(varianceScale);
+        note.setSmoothLeftFrames(smoothLeftFrames);
+        note.setSmoothRightFrames(smoothRightFrames);
+        note.setDeltaScale(deltaScale);
+        note.setDeltaOffset(deltaOffset);
+    }
 
     bool operator==(const TransformParams& other) const
     {
@@ -38,7 +64,6 @@ struct TransformParams
         return !(*this == other);
     }
 
-    // Check if parameters are at default (identity transformation)
     bool isIdentity() const
     {
         return tiltLeft == 0.0f &&

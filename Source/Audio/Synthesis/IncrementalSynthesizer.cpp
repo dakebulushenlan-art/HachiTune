@@ -77,8 +77,6 @@ IncrementalSynthesizer::computeSynthesisRange(int dirtyStart, int dirtyEnd) {
   }
   end = std::min(totalFrames, end + kPadFrames);
 
-  DBG("computeSynthesisRange: [" << dirtyStart << ", " << dirtyEnd
-                                  << "] -> [" << start << ", " << end << "]");
   return {start, end};
 }
 
@@ -271,7 +269,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   auto capturedCancelFlag = cancelFlag;
   auto capturedProject = project;
 
-  DBG("synthesizeRegion: frames [" << startFrame << ", " << endFrame << "]");
 
   vocoder->inferAsync(
       std::move(melRange), std::move(adjustedF0Range),
@@ -417,8 +414,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
           }
 
-          DBG("synthesizeRegion: blended " << samplesToWrite
-                                            << " samples at " << startSample);
 
           capturedProject->clearAllDirty();
           isBusy = false;

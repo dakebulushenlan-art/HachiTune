@@ -4,14 +4,6 @@
 #include <cmath>
 #include <numeric>
 
-namespace {
-
-float clamp01(float value) {
-  return std::max(0.0f, std::min(1.0f, value));
-}
-
-} // namespace
-
 namespace PitchToolOperations {
 
 std::vector<float> tiltDeltaPitch(const std::vector<float>& deltaPitch,
@@ -26,7 +18,7 @@ std::vector<float> tiltDeltaPitch(const std::vector<float>& deltaPitch,
     return result;
   }
 
-  const float clampedPivot = clamp01(pivotPosition);
+  const float clampedPivot = std::clamp(pivotPosition, 0.0f, 1.0f);
   const float maxDistance = std::max(clampedPivot, 1.0f - clampedPivot);
   if (maxDistance <= 0.0f) {
     return result;

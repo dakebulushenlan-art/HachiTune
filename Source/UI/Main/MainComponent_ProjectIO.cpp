@@ -148,7 +148,6 @@ void MainComponent::openProjectFile(const juce::File &file) {
                     engine->setLoopEnabled(loopRange.enabled);
                     engine->setVolumeDb(project->getVolume());
                   } catch (...) {
-                    DBG("MainComponent::openProjectFile - EXCEPTION in loadWaveform!");
                   }
                 }
 
@@ -346,7 +345,6 @@ void MainComponent::loadAudioFile(const juce::File &file) {
             engine->setLoopEnabled(loopRange.enabled);
             engine->setVolumeDb(project->getVolume());
           } catch (...) {
-            DBG("MainComponent::loadAudioFile - EXCEPTION in loadWaveform!");
           }
         }
 

@@ -47,6 +47,18 @@ public:
   Note *getDraggedNote() const { return draggedNote; }
 
 private:
+  /** Rebuild base pitch, fire edited/finished callbacks, and repaint. */
+  void rebuildAndNotify();
+
+  /** Shared init logic for deltaScale / deltaOffset mouseDown. */
+  bool initDeltaDrag(float worldY,
+                     bool &isDraggingOut,
+                     float &dragStartYOut,
+                     std::vector<Note *> &targetNotesOut,
+                     std::vector<F0FrameEdit> &editsOut,
+                     int &minFrameOut,
+                     int &maxFrameOut);
+
   void prepareDragBasePreview();
   void applyDragBasePreview(float pitchOffsetSemitones);
   void restoreDragBasePreview();

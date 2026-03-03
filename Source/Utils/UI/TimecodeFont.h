@@ -44,7 +44,6 @@ public:
                     if (instance.customTypeface != nullptr)
                     {
                         instance.fontLoaded = true;
-                        DBG("Loaded timecode font: " + path);
                         break;
                     }
                 }

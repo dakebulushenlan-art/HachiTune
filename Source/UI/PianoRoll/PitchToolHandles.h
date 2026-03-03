@@ -80,7 +80,6 @@ private:
   int hoveredHandleIndex = -1;
 
   static constexpr float HANDLE_SIZE = 10.0f;
-  static constexpr float HANDLE_SIZE_HOVER = 10.0f;
 
   void addHandle(HandleType type, float worldX, float worldY, Note* note = nullptr);
   juce::Colour getColorForType(HandleType type) const;

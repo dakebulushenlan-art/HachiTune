@@ -535,7 +535,6 @@ void EditorController::resynthesizeIncrementalAsync(
             audioEnginePtr->loadWaveform(audioData.waveform,
                                          audioData.sampleRate, true);
           } catch (...) {
-            DBG("resynthesizeIncrementalAsync: EXCEPTION in loadWaveform!");
           }
         }
 
@@ -730,7 +729,6 @@ void EditorController::analyzeAudio(
 
   if (modelPath.existsAsFile() && !vocoder->isLoaded()) {
     if (vocoder->loadModel(modelPath)) {
-      DBG("Vocoder model loaded successfully: " + modelPath.getFullPathName());
     } else {
       juce::MessageManager::callAsync([modelPath]() {
         juce::AlertWindow::showMessageBoxAsync(
@@ -1022,7 +1020,6 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
     juce::Thread::sleep(100);
 
-    DBG("SOME segmented into " << notes.size() << " notes");
 
     if (!audioData.f0.empty())
       PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);

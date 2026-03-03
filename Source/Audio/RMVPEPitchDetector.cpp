@@ -34,9 +34,7 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
 
         Ort::ThrowOnError(ortDmlApi->SessionOptionsAppendExecutionProvider_DML(
             sessionOptions, deviceId));
-        DBG("RMVPE: DirectML execution provider added");
       } catch (const Ort::Exception &e) {
-        DBG("RMVPE: Failed to add DirectML provider, using CPU: " << e.what());
       }
     } else
 #endif
@@ -46,22 +44,17 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
         OrtCUDAProviderOptions cudaOptions;
         cudaOptions.device_id = deviceId;
         sessionOptions.AppendExecutionProvider_CUDA(cudaOptions);
-        DBG("RMVPE: CUDA execution provider added, device: " << deviceId);
       } catch (const Ort::Exception &e) {
-        DBG("RMVPE: Failed to add CUDA provider, using CPU: " << e.what());
       }
     } else
 #endif
         if (provider == GPUProvider::CoreML) {
       try {
         sessionOptions.AppendExecutionProvider("CoreML");
-        DBG("RMVPE: CoreML execution provider added");
       } catch (const Ort::Exception &e) {
-        DBG("RMVPE: Failed to add CoreML provider, using CPU: " << e.what());
       }
     } else {
       if (provider != GPUProvider::CPU) {
-        DBG("RMVPE: Using CPU execution provider");
       }
     }
 
@@ -104,19 +97,15 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
     inputTensorScratch.reserve(2);
 
     loaded = true;
-    DBG("RMVPE model loaded successfully");
     return true;
   } catch (const Ort::Exception &e) {
-    DBG("ONNX Runtime error: " << e.what());
     loaded = false;
     return false;
   } catch (const std::exception &e) {
-    DBG("Error loading RMVPE model: " << e.what());
     loaded = false;
     return false;
   }
 #else
-  DBG("ONNX Runtime not available");
   return false;
 #endif
 }
@@ -207,7 +196,6 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
                                                  float threshold) {
 #ifdef HAVE_ONNXRUNTIME
   if (!loaded) {
-    DBG("RMVPE model not loaded");
     return {};
   }
 
@@ -257,14 +245,11 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
 
     return allF0;
   } catch (const Ort::Exception &e) {
-    DBG("ONNX Runtime error during RMVPE inference: " << e.what());
     return {};
   } catch (const std::exception &e) {
-    DBG("Error during RMVPE F0 extraction: " << e.what());
     return {};
   }
 #else
-  DBG("ONNX Runtime not available");
   return {};
 #endif
 }
@@ -312,7 +297,6 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
     std::function<void(double)> progressCallback) {
 #ifdef HAVE_ONNXRUNTIME
   if (!loaded) {
-    DBG("RMVPE model not loaded");
     return {};
   }
 
@@ -368,14 +352,11 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
 
     return allF0;
   } catch (const Ort::Exception &e) {
-    DBG("ONNX Runtime error during RMVPE inference: " << e.what());
     return {};
   } catch (const std::exception &e) {
-    DBG("Error during RMVPE F0 extraction: " << e.what());
     return {};
   }
 #else
-  DBG("ONNX Runtime not available");
   return {};
 #endif
 }

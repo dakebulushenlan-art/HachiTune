@@ -606,8 +606,6 @@ void StretchHandler::updateStretchDrag(int targetFrame) {
   }
 
   PitchCurveProcessor::rebuildBaseFromNotes(*owner_.project);
-  PitchCurveProcessor::composeF0InPlace(*owner_.project,
-                                        /*applyUvMask=*/false);
   owner_.invalidateBasePitchCache();
 
   if (owner_.onPitchEdited)
@@ -794,8 +792,6 @@ void StretchHandler::finishStretchDrag() {
           if (!ownerPtr->project)
             return;
           PitchCurveProcessor::rebuildBaseFromNotes(*ownerPtr->project);
-          PitchCurveProcessor::composeF0InPlace(*ownerPtr->project,
-                                                /*applyUvMask=*/false);
           ownerPtr->invalidateBasePitchCache();
           const int f0Size =
               static_cast<int>(ownerPtr->project->getAudioData().f0.size());
@@ -929,7 +925,6 @@ void StretchHandler::cancelStretchDrag() {
   }
 
   PitchCurveProcessor::rebuildBaseFromNotes(*project);
-  PitchCurveProcessor::composeF0InPlace(*project, /*applyUvMask=*/false);
   owner_.invalidateBasePitchCache();
 
   if (owner_.onPitchEdited)

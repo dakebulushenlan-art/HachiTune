@@ -92,7 +92,6 @@ bool RealtimePitchProcessor::processBlock(
 void RealtimePitchProcessor::invalidate() {
   ready = false;
 
-  DBG("RealtimePitchProcessor::invalidate() called");
 
   Project *proj = nullptr;
   juce::AudioBuffer<float> waveformSnapshot;
@@ -109,7 +108,6 @@ void RealtimePitchProcessor::invalidate() {
   }
 
   if (!proj) {
-    DBG("  -> Skipped: project is null");
     return;
   }
 
@@ -118,8 +116,6 @@ void RealtimePitchProcessor::invalidate() {
   const int numChannels = waveformSnapshot.getNumChannels();
 
   if (numSamples <= 0 || numChannels <= 0) {
-    DBG("  -> Skipped: waveform is empty or invalid (samples="
-        << numSamples << ", channels=" << numChannels << ")");
     return;
   }
 
@@ -128,16 +124,12 @@ void RealtimePitchProcessor::invalidate() {
   // consistency with standalone mode
   const int dstSampleRate = static_cast<int>(sampleRate);
 
-  DBG("  -> srcSampleRate=" << srcSampleRate
-                            << ", dstSampleRate=" << dstSampleRate);
 
   if (srcSampleRate == dstSampleRate || srcSampleRate <= 0) {
     // No resampling needed
     const juce::ScopedLock sl(bufferLock);
     processedBuffer.makeCopyOf(waveformSnapshot);
     ready = true;
-    DBG("  -> Using project waveform directly, samples="
-        << processedBuffer.getNumSamples());
   } else {
     // Resample to host sample rate
     const double ratio = static_cast<double>(srcSampleRate) / dstSampleRate;
@@ -169,8 +161,6 @@ void RealtimePitchProcessor::invalidate() {
     const juce::ScopedLock sl(bufferLock);
     processedBuffer = std::move(resampled);
     ready = true;
-    DBG("  -> Resampled from " << srcSamples << " to " << dstSamples
-                               << " samples");
   }
 }
 
@@ -199,7 +189,6 @@ void RealtimePitchProcessor::startComputation() {
 }
 
 void RealtimePitchProcessor::computeInBackground() {
-  DBG("RealtimePitchProcessor::computeInBackground() started");
 
   Project *proj = nullptr;
   Vocoder *voc = nullptr;
@@ -223,48 +212,38 @@ void RealtimePitchProcessor::computeInBackground() {
   }
 
   if (!proj || !voc || !voc->isLoaded()) {
-    DBG("  -> Aborted: project/vocoder not ready");
     computing = false;
     return;
   }
 
   if (melSnapshot.empty()) {
-    DBG("  -> Aborted: melSpectrogram empty");
     computing = false;
     return;
   }
 
-  DBG("  -> adjustedF0 size=" << adjustedF0Snapshot.size()
-                              << ", melSpec size=" << melSnapshot.size());
 
   if (adjustedF0Snapshot.empty() ||
       adjustedF0Snapshot.size() != melSnapshot.size()) {
-    DBG("  -> Aborted: F0 size mismatch");
     computing = false;
     return;
   }
 
   if (cancelCompute.load()) {
-    DBG("  -> Cancelled before synthesis");
     computing = false;
     return;
   }
 
   // Synthesize
-  DBG("  -> Starting vocoder synthesis...");
   std::vector<float> synthesized;
   try {
     synthesized = voc->infer(melSnapshot, adjustedF0Snapshot);
   } catch (...) {
-    DBG("  -> Vocoder exception!");
     computing = false;
     return;
   }
 
-  DBG("  -> Synthesized " << synthesized.size() << " samples");
 
   if (cancelCompute.load() || synthesized.empty()) {
-    DBG("  -> Cancelled or empty result");
     computing = false;
     return;
   }
@@ -288,8 +267,6 @@ void RealtimePitchProcessor::computeInBackground() {
     const juce::ScopedLock sl(bufferLock);
     processedBuffer = std::move(output);
     ready = true;
-    DBG("  -> Buffer updated, ready=true, samples="
-        << processedBuffer.getNumSamples());
   }
   computing = false;
 }

@@ -46,23 +46,12 @@ private:
         for (size_t i = 0; i < notes.size(); ++i)
         {
             if (notes[i] && i < params.size())
-            {
-                const auto& p = params[i];
-                notes[i]->setMidiNote(p.midiNote);
-                notes[i]->setTiltLeft(p.tiltLeft);
-                notes[i]->setTiltRight(p.tiltRight);
-                notes[i]->setVarianceScale(p.varianceScale);
-                notes[i]->setSmoothLeftFrames(p.smoothLeftFrames);
-                notes[i]->setSmoothRightFrames(p.smoothRightFrames);
-                notes[i]->setDeltaScale(p.deltaScale);
-                notes[i]->setDeltaOffset(p.deltaOffset);
-            }
+                params[i].applyToNote(*notes[i]);
         }
 
         if (project)
         {
             PitchCurveProcessor::rebuildBaseFromNotes(*project);
-            PitchCurveProcessor::composeF0InPlace(*project, /*applyUvMask=*/false);
 
             if (!notes.empty())
             {

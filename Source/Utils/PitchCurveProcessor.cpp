@@ -7,11 +7,6 @@
 
 namespace
 {
-    inline float safeMidiToFreq(float midi)
-    {
-        return midiToFreq(midi);
-    }
-
     inline float safeFreqToMidi(float freq)
     {
         if (freq <= 0.0f)
@@ -28,6 +23,57 @@ namespace
             audioData.basePitch.assign(static_cast<size_t>(totalFrames), 0.0f);
         if (audioData.deltaPitch.size() != static_cast<size_t>(totalFrames))
             audioData.deltaPitch.assign(static_cast<size_t>(totalFrames), 0.0f);
+    }
+
+    PitchToolOperations::AdjacentNoteContext buildAdjacentContext(
+        const std::vector<Note>& allNotes, const Note& targetNote)
+    {
+        PitchToolOperations::AdjacentNoteContext ctx;
+
+        const Note* prevNote = nullptr;
+        int prevNoteEndFrame = -1;
+        for (const auto& candidate : allNotes) {
+            if (&candidate == &targetNote || candidate.isRest())
+                continue;
+            const int candidateEnd = candidate.getEndFrame();
+            if (candidateEnd <= targetNote.getStartFrame() && candidateEnd > prevNoteEndFrame) {
+                prevNote = &candidate;
+                prevNoteEndFrame = candidateEnd;
+            }
+        }
+
+        const Note* nextNote = nullptr;
+        int nextNoteStartFrame = std::numeric_limits<int>::max();
+        for (const auto& candidate : allNotes) {
+            if (&candidate == &targetNote || candidate.isRest())
+                continue;
+            const int candidateStart = candidate.getStartFrame();
+            if (candidateStart >= targetNote.getEndFrame() && candidateStart < nextNoteStartFrame) {
+                nextNote = &candidate;
+                nextNoteStartFrame = candidateStart;
+            }
+        }
+
+        if (prevNote) {
+            const auto& prevDelta = prevNote->hasOriginalDeltaPitch()
+                ? prevNote->getOriginalDeltaPitch()
+                : prevNote->getDeltaPitch();
+            if (!prevDelta.empty()) {
+                ctx.hasLeft = true;
+                ctx.leftBoundaryDelta = prevDelta.back();
+            }
+        }
+        if (nextNote) {
+            const auto& nextDelta = nextNote->hasOriginalDeltaPitch()
+                ? nextNote->getOriginalDeltaPitch()
+                : nextNote->getDeltaPitch();
+            if (!nextDelta.empty()) {
+                ctx.hasRight = true;
+                ctx.rightBoundaryDelta = nextDelta.front();
+            }
+        }
+
+        return ctx;
     }
 
     std::vector<BasePitchCurve::NoteSegment> collectNoteSegments(const std::vector<Note>& notes)
@@ -205,7 +251,7 @@ namespace PitchCurveProcessor
         // Cache base F0 (Hz) for backwards compatibility
         audioData.baseF0.resize(static_cast<size_t>(totalFrames));
         for (int i = 0; i < totalFrames; ++i)
-            audioData.baseF0[static_cast<size_t>(i)] = safeMidiToFreq(audioData.basePitch[static_cast<size_t>(i)]);
+            audioData.baseF0[static_cast<size_t>(i)] = midiToFreq(audioData.basePitch[static_cast<size_t>(i)]);
 
         composeF0InPlace(project, /*applyUvMask=*/false);
     }
@@ -243,54 +289,8 @@ namespace PitchCurveProcessor
             if (sourceData.empty())
                 continue;
             
-            // Build adjacent note context by searching for temporally adjacent notes
-            PitchToolOperations::AdjacentNoteContext adjacentContext;
-            
-            // Find previous note (closest note ending before this one)
-            const Note* prevNote = nullptr;
-            int prevNoteEndFrame = -1;
-            for (const auto& candidate : allNotes) {
-                if (&candidate == &note || candidate.isRest())
-                    continue;
-                const int candidateEnd = candidate.getEndFrame();
-                if (candidateEnd <= note.getStartFrame() && candidateEnd > prevNoteEndFrame) {
-                    prevNote = &candidate;
-                    prevNoteEndFrame = candidateEnd;
-                }
-            }
-            
-            // Find next note (closest note starting after this one)
-            const Note* nextNote = nullptr;
-            int nextNoteStartFrame = std::numeric_limits<int>::max();
-            for (const auto& candidate : allNotes) {
-                if (&candidate == &note || candidate.isRest())
-                    continue;
-                const int candidateStart = candidate.getStartFrame();
-                if (candidateStart >= note.getEndFrame() && candidateStart < nextNoteStartFrame) {
-                    nextNote = &candidate;
-                    nextNoteStartFrame = candidateStart;
-                }
-            }
-            
-            // Extract boundary delta values
-            if (prevNote) {
-                const auto& prevDelta = prevNote->hasOriginalDeltaPitch() 
-                    ? prevNote->getOriginalDeltaPitch() 
-                    : prevNote->getDeltaPitch();
-                if (!prevDelta.empty()) {
-                    adjacentContext.hasLeft = true;
-                    adjacentContext.leftBoundaryDelta = prevDelta.back();
-                }
-            }
-            if (nextNote) {
-                const auto& nextDelta = nextNote->hasOriginalDeltaPitch() 
-                    ? nextNote->getOriginalDeltaPitch() 
-                    : nextNote->getDeltaPitch();
-                if (!nextDelta.empty()) {
-                    adjacentContext.hasRight = true;
-                    adjacentContext.rightBoundaryDelta = nextDelta.front();
-                }
-            }
+            // Build adjacent note context
+            auto adjacentContext = buildAdjacentContext(allNotes, note);
             
             // Apply all transformation parameters NON-DESTRUCTIVELY
             std::vector<float> transformedDelta = PitchToolOperations::applyAllTransformations(
@@ -327,7 +327,7 @@ namespace PitchCurveProcessor
         // Update cached baseF0
         audioData.baseF0.resize(static_cast<size_t>(totalFrames));
         for (int i = 0; i < totalFrames; ++i)
-            audioData.baseF0[static_cast<size_t>(i)] = safeMidiToFreq(audioData.basePitch[static_cast<size_t>(i)]);
+            audioData.baseF0[static_cast<size_t>(i)] = midiToFreq(audioData.basePitch[static_cast<size_t>(i)]);
 
         composeF0InPlace(project, /*applyUvMask=*/false);
     }
@@ -354,50 +354,7 @@ namespace PitchCurveProcessor
                 continue;
 
             // Build adjacent note context
-            PitchToolOperations::AdjacentNoteContext adjacentContext;
-
-            const Note* prevNote = nullptr;
-            int prevNoteEndFrame = -1;
-            for (const auto& candidate : allNotes) {
-                if (&candidate == note || candidate.isRest())
-                    continue;
-                const int candidateEnd = candidate.getEndFrame();
-                if (candidateEnd <= note->getStartFrame() && candidateEnd > prevNoteEndFrame) {
-                    prevNote = &candidate;
-                    prevNoteEndFrame = candidateEnd;
-                }
-            }
-
-            const Note* nextNote = nullptr;
-            int nextNoteStartFrame = std::numeric_limits<int>::max();
-            for (const auto& candidate : allNotes) {
-                if (&candidate == note || candidate.isRest())
-                    continue;
-                const int candidateStart = candidate.getStartFrame();
-                if (candidateStart >= note->getEndFrame() && candidateStart < nextNoteStartFrame) {
-                    nextNote = &candidate;
-                    nextNoteStartFrame = candidateStart;
-                }
-            }
-
-            if (prevNote) {
-                const auto& prevDelta = prevNote->hasOriginalDeltaPitch()
-                    ? prevNote->getOriginalDeltaPitch()
-                    : prevNote->getDeltaPitch();
-                if (!prevDelta.empty()) {
-                    adjacentContext.hasLeft = true;
-                    adjacentContext.leftBoundaryDelta = prevDelta.back();
-                }
-            }
-            if (nextNote) {
-                const auto& nextDelta = nextNote->hasOriginalDeltaPitch()
-                    ? nextNote->getOriginalDeltaPitch()
-                    : nextNote->getDeltaPitch();
-                if (!nextDelta.empty()) {
-                    adjacentContext.hasRight = true;
-                    adjacentContext.rightBoundaryDelta = nextDelta.front();
-                }
-            }
+            auto adjacentContext = buildAdjacentContext(allNotes, *note);
 
             std::vector<float> transformedDelta = PitchToolOperations::applyAllTransformations(
                 sourceData,
@@ -441,7 +398,7 @@ namespace PitchCurveProcessor
             {
                 const float base = audioData.basePitch[static_cast<size_t>(i)];
                 const float delta = audioData.deltaPitch[static_cast<size_t>(i)];
-                audioData.f0[static_cast<size_t>(i)] = safeMidiToFreq(base + delta);
+                audioData.f0[static_cast<size_t>(i)] = midiToFreq(base + delta);
             }
         }
     }
@@ -465,7 +422,7 @@ namespace PitchCurveProcessor
                                     ? audioData.deltaPitch[static_cast<size_t>(i)]
                                     : 0.0f;
             const float midi = base + delta + globalPitchOffset;
-            result[static_cast<size_t>(i)] = safeMidiToFreq(midi);
+            result[static_cast<size_t>(i)] = midiToFreq(midi);
         }
 
         return result;

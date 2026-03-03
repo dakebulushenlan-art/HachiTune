@@ -108,7 +108,6 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
             melFilterbank[m][k] = data[m * numBins + k];
           }
         }
-        DBG("Loaded mel filterbank from file");
       }
     }
 
@@ -118,7 +117,6 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
       if (stream.openedOk()) {
         centTable.resize(OUT_DIMS);
         stream.read(centTable.data(), centTable.size() * sizeof(float));
-        DBG("Loaded cent table from file");
       }
     }
 
@@ -146,9 +144,7 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
 
         Ort::ThrowOnError(ortDmlApi->SessionOptionsAppendExecutionProvider_DML(
             sessionOptions, deviceId));
-        DBG("FCPE: DirectML execution provider added");
       } catch (const Ort::Exception &e) {
-        DBG("FCPE: Failed to add DirectML provider, using CPU: " << e.what());
       }
     } else
 #endif
@@ -158,23 +154,18 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
         OrtCUDAProviderOptions cudaOptions;
         cudaOptions.device_id = deviceId;
         sessionOptions.AppendExecutionProvider_CUDA(cudaOptions);
-        DBG("FCPE: CUDA execution provider added, device: " << deviceId);
       } catch (const Ort::Exception &e) {
-        DBG("FCPE: Failed to add CUDA provider, using CPU: " << e.what());
       }
     } else
 #endif
         if (provider == GPUProvider::CoreML) {
       try {
         sessionOptions.AppendExecutionProvider("CoreML");
-        DBG("FCPE: CoreML execution provider added");
       } catch (const Ort::Exception &e) {
-        DBG("FCPE: Failed to add CoreML provider, using CPU: " << e.what());
       }
     } else {
       // CPU fallback - do nothing, CPU is default
       if (provider != GPUProvider::CPU) {
-        DBG("FCPE: Using CPU execution provider");
       }
     }
 
@@ -217,19 +208,15 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
     inputTensorScratch.reserve(1);
 
     loaded = true;
-    DBG("FCPE model loaded successfully");
     return true;
   } catch (const Ort::Exception &e) {
-    DBG("ONNX Runtime error: " << e.what());
     loaded = false;
     return false;
   } catch (const std::exception &e) {
-    DBG("Error loading FCPE model: " << e.what());
     loaded = false;
     return false;
   }
 #else
-  DBG("ONNX Runtime not available");
   return false;
 #endif
 }
@@ -405,7 +392,6 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
                                                 float threshold) {
 #ifdef HAVE_ONNXRUNTIME
   if (!loaded) {
-    DBG("FCPE model not loaded");
     return {};
   }
 
@@ -417,7 +403,6 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
     auto mel = extractMel(audio16k);
 
     if (mel.empty()) {
-      DBG("Empty mel spectrogram");
       return {};
     }
 
@@ -460,14 +445,11 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
     // Step 6: Decode to F0
     return decodeF0(outputData, outFrames, threshold);
   } catch (const Ort::Exception &e) {
-    DBG("ONNX Runtime error during inference: " << e.what());
     return {};
   } catch (const std::exception &e) {
-    DBG("Error during F0 extraction: " << e.what());
     return {};
   }
 #else
-  DBG("ONNX Runtime not available");
   return {};
 #endif
 }
@@ -477,7 +459,6 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
     std::function<void(double)> progressCallback) {
 #ifdef HAVE_ONNXRUNTIME
   if (!loaded) {
-    DBG("FCPE model not loaded");
     return {};
   }
 
@@ -495,7 +476,6 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
     auto mel = extractMel(audio16k);
 
     if (mel.empty()) {
-      DBG("Empty mel spectrogram");
       return {};
     }
 
@@ -555,14 +535,11 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
 
     return result;
   } catch (const Ort::Exception &e) {
-    DBG("ONNX Runtime error during inference: " << e.what());
     return {};
   } catch (const std::exception &e) {
-    DBG("Error during F0 extraction: " << e.what());
     return {};
   }
 #else
-  DBG("ONNX Runtime not available");
   return {};
 #endif
 }

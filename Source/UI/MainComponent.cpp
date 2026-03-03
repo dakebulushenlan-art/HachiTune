@@ -1069,11 +1069,9 @@ void MainComponent::seek(double time) {
 }
 
 void MainComponent::resynthesizeIncremental() {
-  DBG("resynthesizeIncremental() called");
 
   auto *project = getProject();
   if (!project || !editorController) {
-    DBG("  Skipped: no project or controller");
     return;
   }
 
@@ -1097,7 +1095,6 @@ void MainComponent::resynthesizeIncremental() {
         safeThis->toolbar.hideProgress();
 
         if (!success) {
-          DBG("resynthesizeIncremental: Synthesis failed or was cancelled");
           return;
         }
 
@@ -1325,7 +1322,6 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
   if (!isPluginMode())
     return;
 
-  DBG("MainComponent::setHostAudio called - starting async analysis");
 
   if (!editorController)
     return;

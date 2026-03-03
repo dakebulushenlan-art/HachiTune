@@ -194,15 +194,11 @@ bool HachiTunePlaybackRenderer::processBlock(
                                         &adjustedPosInfo)) {
       return true;
     } else {
-      DBG("ARA processBlock: realtimeProcessor->processBlock returned false "
-          "(passthrough)");
     }
   } else {
     // Log why we're not using the processor
     if (!realtimeProcessor) {
-      DBG("ARA processBlock: realtimeProcessor is null");
     } else if (!realtimeProcessor->isReady()) {
-      DBG("ARA processBlock: realtimeProcessor not ready");
     }
   }
 

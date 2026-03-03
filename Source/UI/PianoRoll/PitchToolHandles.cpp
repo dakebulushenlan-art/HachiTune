@@ -79,12 +79,7 @@ void PitchToolHandles::draw(juce::Graphics& g) const {
 
     g.setColour(handle.color);
     
-    // Calculate bounds (expand if hovered)
     auto drawBounds = handle.bounds;
-    if (isHovered) {
-        float sizeDiff = HANDLE_SIZE_HOVER - HANDLE_SIZE;
-        drawBounds.expand(sizeDiff * 0.5f, sizeDiff * 0.5f);
-    }
     
     // Draw filled circle
     g.fillEllipse(drawBounds);

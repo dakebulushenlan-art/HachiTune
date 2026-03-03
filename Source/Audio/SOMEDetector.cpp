@@ -55,9 +55,7 @@ bool SOMEDetector::loadModel(const juce::File &modelPath, GPUProvider provider,
         Ort::ThrowOnError(
             ortDmlApi->SessionOptionsAppendExecutionProvider_DML(
                 sessionOptions, deviceId));
-        DBG("SOME: DirectML execution provider added");
       } catch (const Ort::Exception &e) {
-        DBG("SOME: Failed to add DirectML provider, using CPU");
       }
     } else
 #endif
@@ -67,22 +65,17 @@ bool SOMEDetector::loadModel(const juce::File &modelPath, GPUProvider provider,
         OrtCUDAProviderOptions cudaOptions{};
         cudaOptions.device_id = deviceId;
         sessionOptions.AppendExecutionProvider_CUDA(cudaOptions);
-        DBG("SOME: CUDA execution provider added");
       } catch (const Ort::Exception &e) {
-        DBG("SOME: Failed to add CUDA provider, using CPU");
       }
     } else
 #endif
         if (provider == GPUProvider::CoreML) {
       try {
         sessionOptions.AppendExecutionProvider("CoreML");
-        DBG("SOME: CoreML execution provider added");
       } catch (const Ort::Exception &e) {
-        DBG("SOME: Failed to add CoreML provider, using CPU");
       }
     } else {
       if (provider != GPUProvider::CPU) {
-        DBG("SOME: Using CPU execution provider");
       }
     }
 
@@ -125,11 +118,8 @@ bool SOMEDetector::loadModel(const juce::File &modelPath, GPUProvider provider,
     inputTensorScratch.reserve(1);
 
     loaded = true;
-    DBG("SOME model loaded: " << inputNameStrings.size() << " inputs, "
-                              << outputNameStrings.size() << " outputs");
     return true;
   } catch (const Ort::Exception &e) {
-    DBG("ONNX Runtime error: " << e.what());
     loaded = false;
     return false;
   }
@@ -313,7 +303,6 @@ bool SOMEDetector::inferChunk(const std::vector<float> &chunk,
 
     return true;
   } catch (const Ort::Exception &e) {
-    DBG("SOME chunk inference error: " << e.what());
     return false;
   }
 #else
@@ -333,7 +322,6 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
   const bool verboseSomeLog = isSomeVerboseLogEnabled();
 
   if (!loaded || !onnxSession) {
-    DBG("SOME model not loaded");
     return {};
   }
 
@@ -347,7 +335,6 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
     progressCallback(0.1);
 
   MarkerList chunks = sliceAudio(waveform);
-  DBG("SOME: sliced into " << chunks.size() << " chunks");
 
   if (chunks.empty())
     return {};
@@ -387,8 +374,6 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
     int restCount =
         static_cast<int>(std::count(noteRest.begin(), noteRest.end(), true));
     if (verboseSomeLog) {
-      DBG("SOME chunk: " << noteMidi.size()
-                         << " notes, rest count: " << restCount);
     }
 
     // Use chunk-local frame bounds and keep generated notes inside the chunk.
@@ -471,8 +456,6 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
     for (size_t i = 0; i < noteMidi.size(); ++i) {
       // CRITICAL: Check bounds for note_frames array
       if (i >= note_frames.size()) {
-        DBG("SOME: note_frames index "
-            << i << " out of bounds (size=" << note_frames.size() << ")");
         break;
       }
 
@@ -526,7 +509,6 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
 
       // Log SOME output for debugging
       if (verboseSomeLog) {
-        DBG("SOME note: midi=" << noteMidi[i] << " (raw float from model)");
       }
 
       // Advance position for next note (or rest)
@@ -536,8 +518,6 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
     }
 
     if (verboseSomeLog) {
-      DBG("SOME chunk built: " << notesCreated << " notes created, "
-                               << restSkipped << " rest skipped");
     }
 
     processedFrames += (actualEnd - beginFrame);
@@ -549,7 +529,6 @@ std::vector<SOMEDetector::NoteEvent> SOMEDetector::detectNotesWithProgress(
   if (progressCallback)
     progressCallback(1.0);
 
-  DBG("SOME: detected " << allNotes.size() << " notes total");
   return allNotes;
 
 #else
@@ -566,11 +545,9 @@ void SOMEDetector::detectNotesStreaming(
 #ifdef HAVE_ONNXRUNTIME
   const bool verboseSomeLog = isSomeVerboseLogEnabled();
   if (verboseSomeLog) {
-    DBG("=== detectNotesStreaming CALLED: " << numSamples << " samples ===");
   }
 
   if (!loaded || !onnxSession) {
-    DBG("SOME model not loaded");
     return;
   }
 
@@ -584,7 +561,6 @@ void SOMEDetector::detectNotesStreaming(
     progressCallback(0.1);
 
   MarkerList chunks = sliceAudio(waveform);
-  DBG("SOME streaming: sliced into " << chunks.size() << " chunks");
 
   if (chunks.empty())
     return;
@@ -623,7 +599,6 @@ void SOMEDetector::detectNotesStreaming(
     std::vector<float> noteDur;
 
     if (!inferChunk(chunkData, noteMidi, noteRest, noteDur)) {
-      DBG("SOME chunk inference failed");
       continue;
     }
 
@@ -634,8 +609,6 @@ void SOMEDetector::detectNotesStreaming(
     int restCount =
         static_cast<int>(std::count(noteRest.begin(), noteRest.end(), true));
     if (verboseSomeLog) {
-      DBG("SOME streaming chunk: " << noteMidi.size()
-                                   << " notes, rest count: " << restCount);
     }
 
     const int chunkStartFrame = static_cast<int>(beginFrame / HOP_SIZE);
@@ -722,8 +695,6 @@ void SOMEDetector::detectNotesStreaming(
     for (size_t i = 0; i < noteMidi.size(); ++i) {
       // CRITICAL: Check bounds for note_frames array
       if (i >= note_frames.size()) {
-        DBG("SOME streaming: note_frames index "
-            << i << " out of bounds (size=" << note_frames.size() << ")");
         break;
       }
 
@@ -789,8 +760,6 @@ void SOMEDetector::detectNotesStreaming(
 
       // Log SOME output for debugging
       if (verboseSomeLog) {
-        DBG("SOME streaming note: midi=" << noteMidi[i]
-                                         << " (raw float from model)");
       }
 
       // Advance position for next note (or rest)
@@ -800,8 +769,6 @@ void SOMEDetector::detectNotesStreaming(
     }
 
     if (verboseSomeLog) {
-      DBG("SOME streaming chunk built: " << notesCreated << " notes created, "
-                                         << restSkipped << " rest skipped");
     }
 
     // Immediately callback with this chunk's notes

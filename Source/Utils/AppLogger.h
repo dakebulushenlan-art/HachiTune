@@ -19,7 +19,6 @@ public:
     auto timestamp =
         juce::Time::getCurrentTime().toString(true, true, true, true);
     logFile.appendText("[" + timestamp + "] " + message + "\n");
-    DBG(message);
   }
 
   static void clear() {

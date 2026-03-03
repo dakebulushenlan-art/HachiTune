@@ -15,22 +15,16 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
 {
   juce::ignoreUnused(mapper);
 
-  DBG("PitchTool mouseDown: pos=(" << e.position.x << ", " << e.position.y 
-      << "), selectedNotes=" << selectedNotes.size() 
-      << ", totalHandles=" << handles.getHandles().size());
 
   const int hitIndex = handles.hitTest(e.position.x, e.position.y);
   
-  DBG("  hitTest result: hitIndex=" << hitIndex);
   
   if (hitIndex < 0 || selectedNotes.empty()) {
-    DBG("  → REJECTED (hitIndex<0 or no notes)");
     return false;
   }
 
   activeHandleType = handles.getHandle(hitIndex).type;
   
-  DBG("  → HIT! handleType=" << static_cast<int>(activeHandleType));
   
   affectedNotes = selectedNotes;
   
@@ -41,14 +35,7 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
   {
     if (note)
     {
-      TransformParams params;
-      params.tiltLeft = note->getTiltLeft();
-      params.tiltRight = note->getTiltRight();
-      params.varianceScale = note->getVarianceScale();
-      params.smoothLeftFrames = note->getSmoothLeftFrames();
-      params.smoothRightFrames = note->getSmoothRightFrames();
-      params.deltaScale = note->getDeltaScale();
-      params.deltaOffset = note->getDeltaOffset();
+      auto params = TransformParams::fromNote(*note);
       
       // Store baseline midiNote (without tilt mean shift)
       // This ensures tilt adjustments are absolute, not cumulative
@@ -59,7 +46,7 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
     }
     else
     {
-      originalParams.emplace_back();  // Default params for null note
+      originalParams.emplace_back();
     }
   }
 
@@ -99,22 +86,9 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
   for (auto* note : affectedNotes)
   {
     if (note)
-    {
-      TransformParams params;
-       params.tiltLeft = note->getTiltLeft();
-       params.tiltRight = note->getTiltRight();
-       params.varianceScale = note->getVarianceScale();
-       params.smoothLeftFrames = note->getSmoothLeftFrames();
-       params.smoothRightFrames = note->getSmoothRightFrames();
-       params.deltaScale = note->getDeltaScale();
-       params.deltaOffset = note->getDeltaOffset();
-       params.midiNote = note->getMidiNote();
-       newParams.push_back(params);
-    }
+      newParams.push_back(TransformParams::fromNote(*note));
     else
-    {
-      newParams.emplace_back();  // Default params for null note
-    }
+      newParams.emplace_back();
   }
 
   // Fix oldParams to store live midiNote (with tilt mean) for correct undo/redo
@@ -162,9 +136,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
   const float semitoneDelta = -dragDeltaY / pixelsPerSemitone;
 
   // Debug logging
-  DBG("PitchTool applyOperation: type=" << static_cast<int>(type) 
-      << ", deltaX=" << dragDeltaX << ", deltaY=" << dragDeltaY 
-      << ", semitoneDelta=" << semitoneDelta << ", notes=" << notes.size());
 
   for (size_t i = 0; i < notes.size(); ++i)
   {
@@ -174,14 +145,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
 
     // Restore original parameters before applying new transformation
     const auto& origParams = originalParams[i];
-    note->setMidiNote(origParams.midiNote);
-    note->setTiltLeft(origParams.tiltLeft);
-    note->setTiltRight(origParams.tiltRight);
-    note->setVarianceScale(origParams.varianceScale);
-    note->setSmoothLeftFrames(origParams.smoothLeftFrames);
-    note->setSmoothRightFrames(origParams.smoothRightFrames);
-    note->setDeltaScale(origParams.deltaScale);
-    note->setDeltaOffset(origParams.deltaOffset);
+    origParams.applyToNote(*note);
 
     // Apply new transformation by updating the appropriate parameter
     switch (type)
@@ -190,7 +154,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       {
         // Drag UP = positive semitoneDelta = left edge goes UP
         const float amount = semitoneDelta;
-        DBG("  TiltLeft: amount=" << amount << " semitones");
         note->setTiltLeft(origParams.tiltLeft + amount);
         
         // Calculate tilt mean shift
@@ -201,7 +164,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
       case PitchToolHandles::HandleType::TiltRight:
       {
         const float amount = semitoneDelta;
-        DBG("  TiltRight: amount=" << amount << " semitones");
         note->setTiltRight(origParams.tiltRight + amount);
         
         // Calculate tilt mean shift
@@ -215,8 +177,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Drag UP (negative Y) = increase variance, drag DOWN (positive Y) = decrease
         const float dragDelta = -dragDeltaY / 100.0f;
         const float newScale = origParams.varianceScale + dragDelta;
-        DBG("  ReduceVariance: newScale=" << newScale << " (orig=" << origParams.varianceScale 
-            << ", delta=" << dragDelta << ")");
         note->setVarianceScale(newScale);
         
         // Preserve tilt offset when adjusting variance
@@ -229,7 +189,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Drag RIGHT (positive X) into note = more smoothing
         // 5px per additional frame, range [5, 50]
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(dragDeltaX / 5.0f));
-        DBG("  SmoothLeft: transitionFrames=" << transitionFrames << " (dragX=" << dragDeltaX << ")");
         note->setSmoothLeftFrames(transitionFrames);
         
         // Preserve tilt offset when adjusting smoothing
@@ -242,7 +201,6 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
         // Drag LEFT (negative X) into note = more smoothing
         // Use -dragDeltaX so LEFT drag increases frames
         const int transitionFrames = juce::jlimit(5, 50, 5 + static_cast<int>(-dragDeltaX / 5.0f));
-        DBG("  SmoothRight: transitionFrames=" << transitionFrames << " (dragX=" << dragDeltaX << ")");
         note->setSmoothRightFrames(transitionFrames);
         
         // Preserve tilt offset when adjusting smoothing
@@ -291,13 +249,7 @@ void PitchToolController::cancel()
     if (i < originalParams.size() && affectedNotes[i])
     {
       const auto& params = originalParams[i];
-      affectedNotes[i]->setTiltLeft(params.tiltLeft);
-      affectedNotes[i]->setTiltRight(params.tiltRight);
-      affectedNotes[i]->setVarianceScale(params.varianceScale);
-      affectedNotes[i]->setSmoothLeftFrames(params.smoothLeftFrames);
-      affectedNotes[i]->setSmoothRightFrames(params.smoothRightFrames);
-      affectedNotes[i]->setDeltaScale(params.deltaScale);
-      affectedNotes[i]->setDeltaOffset(params.deltaOffset);
+      params.applyToNote(*affectedNotes[i]);
       
       // Restore midiNote with tilt mean (params.midiNote is baseline without tilt)
       const float tiltMean = (params.tiltLeft + params.tiltRight) / 2.0f;

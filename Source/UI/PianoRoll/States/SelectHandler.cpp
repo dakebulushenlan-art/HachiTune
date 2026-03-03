@@ -6,6 +6,8 @@
 #include "../../../Utils/TransformParams.h"
 #include "../../../Undo/PitchToolAction.h"
 
+#include <unordered_set>
+
 SelectHandler::SelectHandler(PianoRollComponent &owner)
     : InteractionHandler(owner) {}
 
@@ -89,109 +91,25 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
       }
 
       if (hitHandle == DeltaHandleHit::Scale) {
-        isDeltaScaleDragging = true;
-        deltaScaleDragStartY = worldY;
         deltaScaleFactor = 1.0f;
-        deltaScaleTargetNotes.clear();
-        deltaScaleEdits.clear();
-        deltaScaleMinFrame = std::numeric_limits<int>::max();
-        deltaScaleMaxFrame = std::numeric_limits<int>::min();
-
-        auto &audioData = project->getAudioData();
-        if (audioData.deltaPitch.size() < audioData.f0.size())
-          audioData.deltaPitch.resize(audioData.f0.size(), 0.0f);
-
-        std::unordered_set<int> seenFrames;
-        for (auto *selected : selectedNotes) {
-          if (!selected || selected->isRest())
-            continue;
-          deltaScaleTargetNotes.push_back(selected);
-
-          const int startFrame = std::max(0, selected->getStartFrame());
-          const int endFrame = std::min(
-              selected->getEndFrame(),
-              static_cast<int>(audioData.deltaPitch.size()));
-          for (int frame = startFrame; frame < endFrame; ++frame) {
-            if (!seenFrames.insert(frame).second)
-              continue;
-            F0FrameEdit edit;
-            edit.idx = frame;
-            edit.oldDelta =
-                audioData.deltaPitch[static_cast<size_t>(frame)];
-            if (frame < static_cast<int>(audioData.f0.size()))
-              edit.oldF0 = audioData.f0[static_cast<size_t>(frame)];
-            if (frame < static_cast<int>(audioData.voicedMask.size()))
-              edit.oldVoiced =
-                  audioData.voicedMask[static_cast<size_t>(frame)];
-            else
-              edit.oldVoiced = true;
-            edit.newVoiced = edit.oldVoiced;
-            deltaScaleEdits.push_back(edit);
-            deltaScaleMinFrame = std::min(deltaScaleMinFrame, frame);
-            deltaScaleMaxFrame = std::max(deltaScaleMaxFrame, frame);
-          }
+        if (initDeltaDrag(worldY, isDeltaScaleDragging,
+                          deltaScaleDragStartY, deltaScaleTargetNotes,
+                          deltaScaleEdits, deltaScaleMinFrame,
+                          deltaScaleMaxFrame)) {
+          owner_.repaint();
+          return true;
         }
-
-        if (deltaScaleEdits.empty()) {
-          isDeltaScaleDragging = false;
-          deltaScaleTargetNotes.clear();
-        }
-
-        owner_.repaint();
-        return true;
       }
 
       if (hitHandle == DeltaHandleHit::Offset) {
-        isDeltaOffsetDragging = true;
-        deltaOffsetDragStartY = worldY;
         deltaOffsetSemitones = 0.0f;
-        deltaOffsetTargetNotes.clear();
-        deltaOffsetEdits.clear();
-        deltaOffsetMinFrame = std::numeric_limits<int>::max();
-        deltaOffsetMaxFrame = std::numeric_limits<int>::min();
-
-        auto &audioData = project->getAudioData();
-        if (audioData.deltaPitch.size() < audioData.f0.size())
-          audioData.deltaPitch.resize(audioData.f0.size(), 0.0f);
-
-        std::unordered_set<int> seenFrames;
-        for (auto *selected : selectedNotes) {
-          if (!selected || selected->isRest())
-            continue;
-          deltaOffsetTargetNotes.push_back(selected);
-
-          const int startFrame = std::max(0, selected->getStartFrame());
-          const int endFrame = std::min(
-              selected->getEndFrame(),
-              static_cast<int>(audioData.deltaPitch.size()));
-          for (int frame = startFrame; frame < endFrame; ++frame) {
-            if (!seenFrames.insert(frame).second)
-              continue;
-            F0FrameEdit edit;
-            edit.idx = frame;
-            edit.oldDelta =
-                audioData.deltaPitch[static_cast<size_t>(frame)];
-            if (frame < static_cast<int>(audioData.f0.size()))
-              edit.oldF0 = audioData.f0[static_cast<size_t>(frame)];
-            if (frame < static_cast<int>(audioData.voicedMask.size()))
-              edit.oldVoiced =
-                  audioData.voicedMask[static_cast<size_t>(frame)];
-            else
-              edit.oldVoiced = true;
-            edit.newVoiced = edit.oldVoiced;
-            deltaOffsetEdits.push_back(edit);
-            deltaOffsetMinFrame = std::min(deltaOffsetMinFrame, frame);
-            deltaOffsetMaxFrame = std::max(deltaOffsetMaxFrame, frame);
-          }
+        if (initDeltaDrag(worldY, isDeltaOffsetDragging,
+                          deltaOffsetDragStartY, deltaOffsetTargetNotes,
+                          deltaOffsetEdits, deltaOffsetMinFrame,
+                          deltaOffsetMaxFrame)) {
+          owner_.repaint();
+          return true;
         }
-
-        if (deltaOffsetEdits.empty()) {
-          isDeltaOffsetDragging = false;
-          deltaOffsetTargetNotes.clear();
-        }
-
-        owner_.repaint();
-        return true;
       }
     }
   }
@@ -498,20 +416,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       // Capture old per-note params BEFORE updating
       std::vector<TransformParams> oldParams;
       oldParams.reserve(deltaScaleTargetNotes.size());
-      for (auto *note : deltaScaleTargetNotes) {
-        TransformParams p;
-        if (note) {
-          p.tiltLeft = note->getTiltLeft();
-          p.tiltRight = note->getTiltRight();
-          p.varianceScale = note->getVarianceScale();
-          p.smoothLeftFrames = note->getSmoothLeftFrames();
-          p.smoothRightFrames = note->getSmoothRightFrames();
-          p.midiNote = note->getMidiNote();
-          p.deltaScale = note->getDeltaScale();
-          p.deltaOffset = note->getDeltaOffset();
-        }
-        oldParams.push_back(p);
-      }
+      for (auto *note : deltaScaleTargetNotes)
+        oldParams.push_back(note ? TransformParams::fromNote(*note) : TransformParams{});
 
       // Update per-note deltaScale/deltaOffset
       for (auto *note : deltaScaleTargetNotes) {
@@ -527,20 +433,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       // Capture new per-note params AFTER updating
       std::vector<TransformParams> newParams;
       newParams.reserve(deltaScaleTargetNotes.size());
-      for (auto *note : deltaScaleTargetNotes) {
-        TransformParams p;
-        if (note) {
-          p.tiltLeft = note->getTiltLeft();
-          p.tiltRight = note->getTiltRight();
-          p.varianceScale = note->getVarianceScale();
-          p.smoothLeftFrames = note->getSmoothLeftFrames();
-          p.smoothRightFrames = note->getSmoothRightFrames();
-          p.midiNote = note->getMidiNote();
-          p.deltaScale = note->getDeltaScale();
-          p.deltaOffset = note->getDeltaOffset();
-        }
-        newParams.push_back(p);
-      }
+      for (auto *note : deltaScaleTargetNotes)
+        newParams.push_back(note ? TransformParams::fromNote(*note) : TransformParams{});
 
       // Set dirty range for synthesis
       const int f0Size = static_cast<int>(audioData.f0.size());
@@ -602,20 +496,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       // Capture old per-note params BEFORE updating
       std::vector<TransformParams> oldParams;
       oldParams.reserve(deltaOffsetTargetNotes.size());
-      for (auto *note : deltaOffsetTargetNotes) {
-        TransformParams p;
-        if (note) {
-          p.tiltLeft = note->getTiltLeft();
-          p.tiltRight = note->getTiltRight();
-          p.varianceScale = note->getVarianceScale();
-          p.smoothLeftFrames = note->getSmoothLeftFrames();
-          p.smoothRightFrames = note->getSmoothRightFrames();
-          p.midiNote = note->getMidiNote();
-          p.deltaScale = note->getDeltaScale();
-          p.deltaOffset = note->getDeltaOffset();
-        }
-        oldParams.push_back(p);
-      }
+      for (auto *note : deltaOffsetTargetNotes)
+        oldParams.push_back(note ? TransformParams::fromNote(*note) : TransformParams{});
 
       // Update per-note deltaOffset
       for (auto *note : deltaOffsetTargetNotes) {
@@ -630,20 +512,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       // Capture new per-note params AFTER updating
       std::vector<TransformParams> newParams;
       newParams.reserve(deltaOffsetTargetNotes.size());
-      for (auto *note : deltaOffsetTargetNotes) {
-        TransformParams p;
-        if (note) {
-          p.tiltLeft = note->getTiltLeft();
-          p.tiltRight = note->getTiltRight();
-          p.varianceScale = note->getVarianceScale();
-          p.smoothLeftFrames = note->getSmoothLeftFrames();
-          p.smoothRightFrames = note->getSmoothRightFrames();
-          p.midiNote = note->getMidiNote();
-          p.deltaScale = note->getDeltaScale();
-          p.deltaOffset = note->getDeltaOffset();
-        }
-        newParams.push_back(p);
-      }
+      for (auto *note : deltaOffsetTargetNotes)
+        newParams.push_back(note ? TransformParams::fromNote(*note) : TransformParams{});
 
       // Set dirty range for synthesis
       const int f0Size = static_cast<int>(audioData.f0.size());
@@ -749,8 +619,6 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
 
       // Rebuild base pitch curve and F0
       PitchCurveProcessor::rebuildBaseFromNotes(*project);
-      PitchCurveProcessor::composeF0InPlace(*project,
-                                            /*applyUvMask=*/false);
       owner_.invalidateBasePitchCache();
 
       // Mark dirty range for synthesis
@@ -785,8 +653,6 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
               if (ownerPtr->project) {
                 PitchCurveProcessor::rebuildBaseFromNotes(
                     *ownerPtr->project);
-                PitchCurveProcessor::composeF0InPlace(
-                    *ownerPtr->project, /*applyUvMask=*/false);
                 ownerPtr->invalidateBasePitchCache();
                 int smoothStart =
                     std::max(0, capturedExpandedStart - 60);
@@ -868,38 +734,15 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
               PitchToolHandles::HandleType::SmoothRight) {
         auto selectedNotes = project->getSelectedNotes();
         if (!selectedNotes.empty()) {
-          auto *ownerPtr = &owner_;
-          auto rebuildAndNotify = [ownerPtr]() {
-            PitchCurveProcessor::rebuildBaseFromNotes(
-                *ownerPtr->project);
-            PitchCurveProcessor::composeF0InPlace(
-                *ownerPtr->project, false);
-            if (ownerPtr->onPitchEdited)
-              ownerPtr->onPitchEdited();
-            if (ownerPtr->onPitchEditFinished)
-              ownerPtr->onPitchEditFinished();
-            ownerPtr->repaint();
-          };
 
           // Capture old params
           std::vector<TransformParams> oldParams;
           oldParams.reserve(selectedNotes.size());
           for (auto *note : selectedNotes) {
-            if (note) {
-              TransformParams params;
-              params.tiltLeft = note->getTiltLeft();
-              params.tiltRight = note->getTiltRight();
-              params.varianceScale = note->getVarianceScale();
-              params.smoothLeftFrames =
-                  note->getSmoothLeftFrames();
-              params.smoothRightFrames =
-                  note->getSmoothRightFrames();
-              params.deltaScale = note->getDeltaScale();
-              params.deltaOffset = note->getDeltaOffset();
-              oldParams.push_back(params);
-            } else {
+            if (note)
+              oldParams.push_back(TransformParams::fromNote(*note));
+            else
               oldParams.emplace_back();
-            }
           }
 
           // Apply toggle
@@ -923,38 +766,22 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           std::vector<TransformParams> newParams;
           newParams.reserve(selectedNotes.size());
           for (auto *note : selectedNotes) {
-            if (note) {
-              TransformParams params;
-              params.tiltLeft = note->getTiltLeft();
-              params.tiltRight = note->getTiltRight();
-              params.varianceScale = note->getVarianceScale();
-              params.smoothLeftFrames =
-                  note->getSmoothLeftFrames();
-              params.smoothRightFrames =
-                  note->getSmoothRightFrames();
-              params.deltaScale = note->getDeltaScale();
-              params.deltaOffset = note->getDeltaOffset();
-              newParams.push_back(params);
-            } else {
+            if (note)
+              newParams.push_back(TransformParams::fromNote(*note));
+            else
               newParams.emplace_back();
-            }
           }
 
           // Register undo
           if (owner_.undoManager) {
-            auto onRangeChanged =
-                [rebuildAndNotify](int, int) {
-                  rebuildAndNotify();
-                };
             auto action = std::make_unique<PitchToolAction>(
                 project, selectedNotes, oldParams, newParams,
-                onRangeChanged);
+                [this](int, int) { rebuildAndNotify(); });
             owner_.undoManager->addAction(std::move(action));
           }
 
           // Rebuild and update
           PitchCurveProcessor::rebuildBaseFromNotes(*project);
-          PitchCurveProcessor::composeF0InPlace(*project, false);
 
           // Mark dirty range
           int minFrame = std::numeric_limits<int>::max();
@@ -1003,20 +830,10 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             }
           }
 
-          auto *ownerPtr = &owner_;
-          auto action = std::make_unique<VarianceScaleAction>(
+          auto action = std::make_unique<MultiNoteFloatPropertyAction>(
               selectedNotes, oldScales, newScales,
-              [ownerPtr]() {
-                PitchCurveProcessor::rebuildBaseFromNotes(
-                    *ownerPtr->project);
-                PitchCurveProcessor::composeF0InPlace(
-                    *ownerPtr->project, false);
-                if (ownerPtr->onPitchEdited)
-                  ownerPtr->onPitchEdited();
-                if (ownerPtr->onPitchEditFinished)
-                  ownerPtr->onPitchEditFinished();
-                ownerPtr->repaint();
-              });
+              &Note::setVarianceScale, "Toggle Variance Scale",
+              [this]() { rebuildAndNotify(); });
           owner_.undoManager->addAction(std::move(action));
         }
 
@@ -1027,15 +844,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           }
         }
 
-        PitchCurveProcessor::rebuildBaseFromNotes(*project);
-        PitchCurveProcessor::composeF0InPlace(*project, false);
-
-        if (owner_.onPitchEdited)
-          owner_.onPitchEdited();
-        if (owner_.onPitchEditFinished)
-          owner_.onPitchEditFinished();
-
-        owner_.repaint();
+        rebuildAndNotify();
         return;
       }
 
@@ -1057,20 +866,10 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             }
           }
 
-          auto *ownerPtr = &owner_;
           auto action = std::make_unique<TiltResetAction>(
               selectedNotes, TiltResetAction::TiltSide::Left,
-              oldTilts, oldMidiNotes, [ownerPtr]() {
-                PitchCurveProcessor::rebuildBaseFromNotes(
-                    *ownerPtr->project);
-                PitchCurveProcessor::composeF0InPlace(
-                    *ownerPtr->project, false);
-                if (ownerPtr->onPitchEdited)
-                  ownerPtr->onPitchEdited();
-                if (ownerPtr->onPitchEditFinished)
-                  ownerPtr->onPitchEditFinished();
-                ownerPtr->repaint();
-              });
+              oldTilts, oldMidiNotes,
+              [this]() { rebuildAndNotify(); });
           owner_.undoManager->addAction(std::move(action));
         }
 
@@ -1090,15 +889,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           }
         }
 
-        PitchCurveProcessor::rebuildBaseFromNotes(*project);
-        PitchCurveProcessor::composeF0InPlace(*project, false);
-
-        if (owner_.onPitchEdited)
-          owner_.onPitchEdited();
-        if (owner_.onPitchEditFinished)
-          owner_.onPitchEditFinished();
-
-        owner_.repaint();
+        rebuildAndNotify();
         return;
       }
 
@@ -1120,20 +911,10 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             }
           }
 
-          auto *ownerPtr = &owner_;
           auto action = std::make_unique<TiltResetAction>(
               selectedNotes, TiltResetAction::TiltSide::Right,
-              oldTilts, oldMidiNotes, [ownerPtr]() {
-                PitchCurveProcessor::rebuildBaseFromNotes(
-                    *ownerPtr->project);
-                PitchCurveProcessor::composeF0InPlace(
-                    *ownerPtr->project, false);
-                if (ownerPtr->onPitchEdited)
-                  ownerPtr->onPitchEdited();
-                if (ownerPtr->onPitchEditFinished)
-                  ownerPtr->onPitchEditFinished();
-                ownerPtr->repaint();
-              });
+              oldTilts, oldMidiNotes,
+              [this]() { rebuildAndNotify(); });
           owner_.undoManager->addAction(std::move(action));
         }
 
@@ -1153,15 +934,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           }
         }
 
-        PitchCurveProcessor::rebuildBaseFromNotes(*project);
-        PitchCurveProcessor::composeF0InPlace(*project, false);
-
-        if (owner_.onPitchEdited)
-          owner_.onPitchEdited();
-        if (owner_.onPitchEditFinished)
-          owner_.onPitchEditFinished();
-
-        owner_.repaint();
+        rebuildAndNotify();
         return;
       }
     }
@@ -1171,17 +944,6 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
   Note *note = owner_.findNoteAt(worldX, worldY);
 
   if (note) {
-    auto *ownerPtr = &owner_;
-    auto rebuildAndNotify = [ownerPtr]() {
-      PitchCurveProcessor::rebuildBaseFromNotes(*ownerPtr->project);
-      PitchCurveProcessor::composeF0InPlace(*ownerPtr->project, false);
-      if (ownerPtr->onPitchEdited)
-        ownerPtr->onPitchEdited();
-      if (ownerPtr->onPitchEditFinished)
-        ownerPtr->onPitchEditFinished();
-      ownerPtr->repaint();
-    };
-
     auto snapForDoubleClick = [&owner_ = owner_](float midi) {
       const bool hasActiveScale =
           owner_.selectedScaleMode != ScaleMode::None &&
@@ -1247,8 +1009,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
             auto action =
                 std::make_unique<MultiNoteSnapToSemitoneAction>(
                     notesToSnap, oldMidis, oldOffsets, newMidis,
-                    [rebuildAndNotify](
-                        const std::vector<Note *> &) {
+                    [this](const std::vector<Note *> &) {
                       rebuildAndNotify();
                     });
             owner_.undoManager->addAction(std::move(action));
@@ -1277,9 +1038,7 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         auto action =
             std::make_unique<NoteSnapToSemitoneAction>(
                 note, oldMidi, oldOffset, snappedMidi,
-                [rebuildAndNotify](Note *n) {
-                  rebuildAndNotify();
-                });
+                [this](Note *) { rebuildAndNotify(); });
         owner_.undoManager->addAction(std::move(action));
       }
 
@@ -1353,6 +1112,80 @@ void SelectHandler::cancel() {
 }
 
 // --- Private helpers ---
+
+void SelectHandler::rebuildAndNotify() {
+  PitchCurveProcessor::rebuildBaseFromNotes(*owner_.project);
+  if (owner_.onPitchEdited)
+    owner_.onPitchEdited();
+  if (owner_.onPitchEditFinished)
+    owner_.onPitchEditFinished();
+  owner_.repaint();
+}
+
+bool SelectHandler::initDeltaDrag(
+    float worldY,
+    bool &isDraggingOut,
+    float &dragStartYOut,
+    std::vector<Note *> &targetNotesOut,
+    std::vector<F0FrameEdit> &editsOut,
+    int &minFrameOut,
+    int &maxFrameOut) {
+
+  auto *project = owner_.project;
+  if (!project)
+    return false;
+
+  isDraggingOut = true;
+  dragStartYOut = worldY;
+  targetNotesOut.clear();
+  editsOut.clear();
+  minFrameOut = std::numeric_limits<int>::max();
+  maxFrameOut = std::numeric_limits<int>::min();
+
+  auto &audioData = project->getAudioData();
+  if (audioData.deltaPitch.size() < audioData.f0.size())
+    audioData.deltaPitch.resize(audioData.f0.size(), 0.0f);
+
+  auto selectedNotes = project->getSelectedNotes();
+  std::unordered_set<int> seenFrames;
+  for (auto *selected : selectedNotes) {
+    if (!selected || selected->isRest())
+      continue;
+    targetNotesOut.push_back(selected);
+
+    const int startFrame = std::max(0, selected->getStartFrame());
+    const int endFrame = std::min(
+        selected->getEndFrame(),
+        static_cast<int>(audioData.deltaPitch.size()));
+    for (int frame = startFrame; frame < endFrame; ++frame) {
+      if (!seenFrames.insert(frame).second)
+        continue;
+      F0FrameEdit edit;
+      edit.idx = frame;
+      edit.oldDelta =
+          audioData.deltaPitch[static_cast<size_t>(frame)];
+      if (frame < static_cast<int>(audioData.f0.size()))
+        edit.oldF0 = audioData.f0[static_cast<size_t>(frame)];
+      if (frame < static_cast<int>(audioData.voicedMask.size()))
+        edit.oldVoiced =
+            audioData.voicedMask[static_cast<size_t>(frame)];
+      else
+        edit.oldVoiced = true;
+      edit.newVoiced = edit.oldVoiced;
+      editsOut.push_back(edit);
+      minFrameOut = std::min(minFrameOut, frame);
+      maxFrameOut = std::max(maxFrameOut, frame);
+    }
+  }
+
+  if (editsOut.empty()) {
+    isDraggingOut = false;
+    targetNotesOut.clear();
+    return false;
+  }
+
+  return true;
+}
 
 void SelectHandler::prepareDragBasePreview() {
   auto *project = owner_.project;

@@ -714,7 +714,6 @@ void SettingsComponent::updateDeviceList() {
       if (devices[i] == "DirectML") {
         selectedIndex = i;
         currentDevice = devices[i];
-        DBG("Auto-selecting DirectML (compiled in)");
         break;
       }
     }
@@ -724,13 +723,11 @@ void SettingsComponent::updateDeviceList() {
       if (devices[i] == "CUDA") {
         selectedIndex = i;
         currentDevice = devices[i];
-        DBG("Auto-selecting CUDA (compiled in)");
         break;
       }
     }
 #else
     // No GPU compiled in, stay on CPU
-    DBG("No GPU provider compiled in, using CPU");
 #endif
   }
 
@@ -775,7 +772,6 @@ void SettingsComponent::updateGPUDeviceList(const juce::String &deviceType) {
     for (const char *dllName : cudaDllNames) {
       cudaLib = LoadLibraryA(dllName);
       if (cudaLib) {
-        DBG("Loaded CUDA runtime: " + juce::String(dllName));
         break;
       }
     }
@@ -790,7 +786,6 @@ void SettingsComponent::updateGPUDeviceList(const juce::String &deviceType) {
       if (cudaGetDeviceCount) {
         int result = cudaGetDeviceCount(&deviceCount);
         if (result == 0 && deviceCount > 0) {
-          DBG("CUDA device count: " + juce::String(deviceCount));
 
           // Try to get device properties for names
           auto cudaGetDeviceProperties =
@@ -813,8 +808,6 @@ void SettingsComponent::updateGPUDeviceList(const juce::String &deviceType) {
                 char *name = propBuffer;
                 if (name[0] != '\0') {
                   deviceName = juce::String(name);
-                  DBG("CUDA device " + juce::String(deviceId) + ": " +
-                      deviceName);
                 }
               }
             }
@@ -823,12 +816,10 @@ void SettingsComponent::updateGPUDeviceList(const juce::String &deviceType) {
           }
           devicesDetected = true;
         } else {
-          DBG("cudaGetDeviceCount failed or returned 0 devices");
         }
       }
       FreeLibrary(cudaLib);
     } else {
-      DBG("Failed to load CUDA runtime library");
     }
 #endif
 
@@ -848,13 +839,11 @@ void SettingsComponent::updateGPUDeviceList(const juce::String &deviceType) {
     // If no devices detected, add default
     if (gpuDeviceComboBox.getNumItems() == 0) {
       gpuDeviceComboBox.addItem("GPU 0 (CUDA)", 1);
-      DBG("No CUDA devices detected, using default GPU 0");
     }
 #else
     // CUDA not compiled in, but provider is available
     // This shouldn't happen, but add default option
     gpuDeviceComboBox.addItem("GPU 0 (CUDA)", 1);
-    DBG("CUDA provider available but USE_CUDA not defined");
 #endif
   } else if (deviceType == "DirectML") {
 #ifdef USE_DIRECTML
@@ -877,7 +866,6 @@ void SettingsComponent::updateGPUDeviceList(const juce::String &deviceType) {
 #else
     // DirectML not compiled in
     gpuDeviceComboBox.addItem("GPU 0 (DirectML)", 1);
-    DBG("DirectML provider available but USE_DIRECTML not defined");
 #endif
   } else {
     // Other GPU providers (CoreML, TensorRT) - use default device
@@ -911,12 +899,8 @@ juce::StringArray SettingsComponent::getAvailableDevices() {
     bool hasCuda = false, hasDml = false, hasCoreML = false,
          hasTensorRT = false;
 
-    DBG("=== ONNX Runtime Provider Detection ===");
-    DBG("Total providers found: " + juce::String(availableProviders.size()));
-    DBG("Available ONNX Runtime providers:");
     for (const auto &provider : availableProviders) {
       juce::String providerStr(provider);
-      DBG("  - " + providerStr);
 
       if (providerStr == "CUDAExecutionProvider")
         hasCuda = true;
@@ -933,55 +917,35 @@ juce::StringArray SettingsComponent::getAvailableDevices() {
 #ifdef USE_DIRECTML
     if (hasDml) {
       devices.add("DirectML");
-      DBG("DirectML provider: ENABLED");
     }
 #elif defined(USE_CUDA)
     if (hasCuda) {
       devices.add("CUDA");
-      DBG("CUDA provider: ENABLED");
     }
 #else
     // No GPU compiled in, but show available providers for information
     if (hasCuda) {
       devices.add("CUDA");
-      DBG("CUDA provider: AVAILABLE (not compiled in)");
     }
     if (hasDml) {
       devices.add("DirectML");
-      DBG("DirectML provider: AVAILABLE (not compiled in)");
     }
 #endif
     if (hasCoreML) {
       devices.add("CoreML");
-      DBG("CoreML provider: ENABLED");
     }
     if (hasTensorRT) {
       devices.add("TensorRT");
-      DBG("TensorRT provider: ENABLED");
     }
 
     // If no GPU providers found, show info about how to enable them
     if (!hasCuda && !hasDml && !hasCoreML && !hasTensorRT) {
-      DBG("WARNING: No GPU execution providers available in this ONNX Runtime "
-          "build.");
-      DBG("This appears to be a CPU-only build of ONNX Runtime.");
-      DBG("To enable GPU acceleration:");
-      DBG("  - Windows DirectML: Use onnxruntime-directml package");
-      DBG("  - NVIDIA CUDA: Use onnxruntime-gpu package (requires CUDA "
-          "toolkit)");
     }
   } catch (const std::exception &e) {
-    DBG("ERROR: Failed to get ONNX Runtime providers: " +
-        juce::String(e.what()));
-    DBG("Falling back to CPU-only mode.");
   }
 #else
-  DBG("WARNING: HAVE_ONNXRUNTIME not defined - only CPU available");
-  DBG("To enable GPU support, ensure ONNX Runtime is properly configured in "
-      "CMakeLists.txt");
 #endif
 
-  DBG("Final device list: " + devices.joinIntoString(", "));
   return devices;
 }
 
@@ -1273,11 +1237,8 @@ void SettingsComponent::applyAudioSettings() {
   }
 
   if (targetOutputName.isEmpty()) {
-    DBG("No valid output device name resolved, reinitializing default audio "
-        "devices.");
     auto initError = deviceManager->initialiseWithDefaultDevices(0, 2);
     if (initError.isNotEmpty()) {
-      DBG("Audio device reinit failed: " + initError);
       return;
     }
 
@@ -1322,7 +1283,6 @@ void SettingsComponent::applyAudioSettings() {
 
   auto error = deviceManager->setAudioDeviceSetup(setup, true);
   if (error.isNotEmpty() && (setup.sampleRate != 0.0 || setup.bufferSize != 0)) {
-    DBG("Audio setup failed, retrying with device defaults: " + error);
     auto fallback = setup;
     fallback.sampleRate = 0.0;
     fallback.bufferSize = 0;
@@ -1332,7 +1292,6 @@ void SettingsComponent::applyAudioSettings() {
   }
 
   if (error.isNotEmpty()) {
-    DBG("Audio setup failed: " + error);
     updateAudioOutputDevices(true);
     return;
   }
@@ -1369,10 +1328,8 @@ void SettingsComponent::syncToSystemOutputIfNeeded() {
 
   auto error = deviceManager->setAudioDeviceSetup(setup, true);
   if (error.isNotEmpty()) {
-    DBG("Failed to follow system output switch: " + error);
     auto initError = deviceManager->initialiseWithDefaultDevices(0, 2);
-    if (initError.isNotEmpty())
-      DBG("Audio device reinit failed: " + initError);
+    juce::ignoreUnused(initError);
   }
 }
 

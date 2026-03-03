@@ -144,7 +144,6 @@ Vocoder::~Vocoder() {
 }
 
 void Vocoder::log(const std::string &message) {
-  DBG(message);
   if (logFile && logFile->is_open()) {
     auto now = std::chrono::system_clock::now();
     auto time = std::chrono::system_clock::to_time_t(now);
