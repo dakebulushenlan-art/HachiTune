@@ -10,48 +10,42 @@ DraggablePanel::DraggablePanel(const juce::String& id, const juce::String& panel
 void DraggablePanel::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
-    const float cornerRadius = 8.0f;
+    const float corner = 8.0f;
 
     // Clip to rounded rectangle for entire panel
     juce::Path clipPath;
-    clipPath.addRoundedRectangle(bounds, cornerRadius);
+    clipPath.addRoundedRectangle(bounds, corner);
     g.reduceClipRegion(clipPath);
 
-    // Content background (full area)
-    juce::ColourGradient bodyGradient(
-        APP_COLOR_SURFACE.brighter(0.05f), bounds.getX(), bounds.getY(),
-        APP_COLOR_SURFACE.darker(0.05f), bounds.getX(), bounds.getBottom(), false);
-    g.setGradientFill(bodyGradient);
+    // Flat surface background
+    g.setColour(APP_COLOR_SURFACE);
     g.fillRect(bounds);
 
-    // Header background
+    // Header — slightly raised
     auto headerBounds = bounds.removeFromTop(static_cast<float>(headerHeight));
-    juce::ColourGradient headerGradient(
-        APP_COLOR_SURFACE_RAISED, headerBounds.getX(), headerBounds.getY(),
-        APP_COLOR_SURFACE, headerBounds.getX(), headerBounds.getBottom(), false);
-    g.setGradientFill(headerGradient);
+    g.setColour(APP_COLOR_SURFACE_RAISED);
     g.fillRect(headerBounds);
 
-    // Accent line at the top of header
-    g.setColour(APP_COLOR_PRIMARY.withAlpha(0.5f));
-    g.fillRect(headerBounds.removeFromTop(1.0f));
+    // Accent line at top of header (thin primary stripe)
+    g.setColour(APP_COLOR_PRIMARY.withAlpha(0.45f));
+    g.fillRect(headerBounds.removeFromTop(1.5f));
 
     // Header text
     g.setColour(APP_COLOR_TEXT_PRIMARY);
-    g.setFont(juce::FontOptions(13.0f).withStyle("Bold"));
+    g.setFont(juce::FontOptions(12.5f).withStyle("Bold"));
     g.drawText(title, headerBounds.reduced(12, 0).toNearestInt(), juce::Justification::centredLeft);
 
-    // Separator line under header
+    // Separator under header
     g.setColour(APP_COLOR_BORDER_SUBTLE);
     g.drawHorizontalLine(headerHeight - 1, 0, static_cast<float>(getWidth()));
 }
 
 void DraggablePanel::paintOverChildren(juce::Graphics& g)
 {
-    // Draw rounded border on top
+    // Clean rounded border
     auto bounds = getLocalBounds().toFloat();
-    g.setColour(APP_COLOR_BORDER);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.0f);
+    g.setColour(APP_COLOR_BORDER.withAlpha(0.5f));
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 0.75f);
 }
 
 void DraggablePanel::resized()

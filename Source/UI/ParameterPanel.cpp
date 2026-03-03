@@ -321,10 +321,10 @@ ParameterPanel::ParameterPanel()
 {
     addAndMakeVisible(pitchSectionLabel);
     pitchSectionLabel.setColour(juce::Label::textColourId, APP_COLOR_PRIMARY);
-    pitchSectionLabel.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+    pitchSectionLabel.setFont(AppFont::getBoldFont(14.0f));
     addAndMakeVisible(timeSectionLabel);
     timeSectionLabel.setColour(juce::Label::textColourId, APP_COLOR_PRIMARY);
-    timeSectionLabel.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+    timeSectionLabel.setFont(AppFont::getBoldFont(14.0f));
 
     for (auto* toggle : { &chromaticToggle, &scaleToggle, &showScaleColorsToggle,
                           &snapToSemitonesToggle, &beatsTimelineToggle, &timeTimelineToggle,
@@ -397,116 +397,141 @@ void ParameterPanel::setupTextButton(juce::TextButton& button)
 
 void ParameterPanel::paint(juce::Graphics& g)
 {
-    if (pitchCardBounds.isEmpty() && timeCardBounds.isEmpty())
-        return;
+    // Two separate cards for Pitch and Time sections
+    const float radius = 8.0f;
 
-    auto drawCard = [&g](const juce::Rectangle<int>& bounds)
+    if (!pitchCardBounds.isEmpty())
     {
-        if (bounds.isEmpty())
-            return;
+        auto pitchRect = pitchCardBounds.toFloat();
+        g.setColour(APP_COLOR_SURFACE_RAISED.withAlpha(0.72f));
+        g.fillRoundedRectangle(pitchRect, radius);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+        g.drawRoundedRectangle(pitchRect.reduced(0.5f), radius, 0.75f);
+    }
 
-        const float radius = 10.0f;
-        g.setColour(APP_COLOR_SURFACE_RAISED);
-        g.fillRoundedRectangle(bounds.toFloat(), radius);
-
-        juce::Path borderPath;
-        borderPath.addRoundedRectangle(bounds.toFloat().reduced(0.5f), radius);
-        juce::ColourGradient borderGradient(
-            APP_COLOR_BORDER_HIGHLIGHT, bounds.getX(), bounds.getY(),
-            APP_COLOR_BORDER.darker(0.3f), bounds.getRight(), bounds.getBottom(), false);
-        g.setGradientFill(borderGradient);
-        g.strokePath(borderPath, juce::PathStrokeType(1.1f));
-
-        g.setColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.45f));
-        g.drawRoundedRectangle(bounds.toFloat().reduced(1.2f), radius - 1.0f, 0.6f);
-    };
-
-    drawCard(pitchCardBounds);
-    drawCard(timeCardBounds);
+    if (!timeCardBounds.isEmpty())
+    {
+        auto timeRect = timeCardBounds.toFloat();
+        g.setColour(APP_COLOR_SURFACE_RAISED.withAlpha(0.72f));
+        g.fillRoundedRectangle(timeRect, radius);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.4f));
+        g.drawRoundedRectangle(timeRect.reduced(0.5f), radius, 0.75f);
+    }
 }
 
 void ParameterPanel::resized()
 {
-    auto bounds = getLocalBounds().reduced(12);
-    constexpr int pitchCardHeight = 296;
-    constexpr int timeCardHeight = 154;
-    pitchCardBounds = bounds.removeFromTop(juce::jmin(bounds.getHeight(), pitchCardHeight));
-    bounds.removeFromTop(8);
-    timeCardBounds = bounds.removeFromTop(juce::jmin(bounds.getHeight(), timeCardHeight));
+    auto outerBounds = getLocalBounds();
 
-    auto area = pitchCardBounds.reduced(10);
-    constexpr int rowGap = 6;
-    constexpr int columnGap = 8;
+    constexpr int cardPadX = 8;    // horizontal padding outside cards
+    constexpr int cardPadY = 6;    // vertical padding outside cards
+    constexpr int cardGap = 6;     // gap between pitch and time cards
+    constexpr int innerPadX = 10;  // padding inside each card
+    constexpr int innerPadY = 8;   // padding inside each card
+    constexpr int rowGap = 5;
+    constexpr int columnGap = 6;
 
-    pitchSectionLabel.setBounds(area.removeFromTop(18));
-    area.removeFromTop(rowGap);
+    // =========================================================================
+    // PITCH CARD
+    // =========================================================================
+    auto cardArea = outerBounds.reduced(cardPadX, cardPadY);
+    auto pitchCardStart = cardArea.getY();
+    auto bounds = cardArea;
+    bounds = bounds.reduced(innerPadX, innerPadY);
 
-    auto modeRow = area.removeFromTop(24);
+    pitchSectionLabel.setBounds(bounds.removeFromTop(16));
+    bounds.removeFromTop(rowGap + 2);
+
+    // Mode toggles: Chromatic | Scale
+    auto modeRow = bounds.removeFromTop(22);
     auto chromaticArea = modeRow.removeFromLeft((modeRow.getWidth() - columnGap) / 2);
     modeRow.removeFromLeft(columnGap);
     chromaticToggle.setBounds(chromaticArea);
     scaleToggle.setBounds(modeRow);
 
-    area.removeFromTop(rowGap + 2);
+    bounds.removeFromTop(rowGap + 1);
 
-    auto referenceRow = area.removeFromTop(30);
-    referenceLabel.setBounds(referenceRow.removeFromLeft(120));
-    auto refMenuArea = referenceRow.removeFromRight(34);
+    // Reference row
+    auto referenceRow = bounds.removeFromTop(26);
+    referenceLabel.setBounds(referenceRow.removeFromLeft(110));
+    auto refMenuArea = referenceRow.removeFromRight(30);
     referenceMenuButton.setBounds(refMenuArea);
-    referenceEditor.setBounds(referenceRow.reduced(0, 2));
+    referenceEditor.setBounds(referenceRow.reduced(0, 1));
 
-    area.removeFromTop(rowGap);
+    bounds.removeFromTop(rowGap);
 
-    auto scaleLabelRow = area.removeFromTop(16);
+    // Scale Root / Mode labels
+    auto scaleLabelRow = bounds.removeFromTop(14);
     auto rootLabelArea = scaleLabelRow.removeFromLeft((scaleLabelRow.getWidth() - columnGap) / 2);
     scaleLabelRow.removeFromLeft(columnGap);
     scaleRootLabel.setBounds(rootLabelArea);
     scaleModeLabel.setBounds(scaleLabelRow);
 
-    auto scaleValueRow = area.removeFromTop(28);
+    // Scale Root / Mode buttons
+    auto scaleValueRow = bounds.removeFromTop(26);
     auto rootValueArea = scaleValueRow.removeFromLeft((scaleValueRow.getWidth() - columnGap) / 2);
     scaleValueRow.removeFromLeft(columnGap);
     scaleRootButton.setBounds(rootValueArea);
     scaleModeButton.setBounds(scaleValueRow);
 
-    area.removeFromTop(rowGap + 2);
-    showDetectedScalesButton.setBounds(area.removeFromTop(30));
+    bounds.removeFromTop(rowGap + 1);
+    showDetectedScalesButton.setBounds(bounds.removeFromTop(26));
 
-    area.removeFromTop(rowGap + 2);
-    showScaleColorsToggle.setBounds(area.removeFromTop(24));
-    area.removeFromTop(4);
-    snapToSemitonesToggle.setBounds(area.removeFromTop(24));
+    bounds.removeFromTop(rowGap + 1);
+    showScaleColorsToggle.setBounds(bounds.removeFromTop(22));
+    bounds.removeFromTop(3);
+    snapToSemitonesToggle.setBounds(bounds.removeFromTop(22));
 
-    area.removeFromTop(rowGap + 2);
-    auto doubleClickRow = area.removeFromTop(30);
-    doubleClickSnapLabel.setBounds(doubleClickRow.removeFromLeft(130));
+    bounds.removeFromTop(rowGap + 1);
+    auto doubleClickRow = bounds.removeFromTop(26);
+    doubleClickSnapLabel.setBounds(doubleClickRow.removeFromLeft(120));
     doubleClickSnapButton.setBounds(doubleClickRow);
 
-    auto timeArea = timeCardBounds.reduced(10);
-    timeSectionLabel.setBounds(timeArea.removeFromTop(18));
-    timeArea.removeFromTop(rowGap);
+    // Pitch card ends here (content bottom + inner padding)
+    int pitchCardBottom = bounds.getY() + innerPadY;
+    pitchCardBounds = juce::Rectangle<int>(cardArea.getX(), pitchCardStart,
+                                            cardArea.getWidth(), pitchCardBottom - pitchCardStart);
 
-    auto timelineModeRow = timeArea.removeFromTop(24);
+    // =========================================================================
+    // TIME CARD
+    // =========================================================================
+    int timeCardStart = pitchCardBottom + cardGap;
+    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
+                                   cardArea.getWidth() - innerPadX * 2, cardArea.getBottom() - timeCardStart - innerPadY * 2);
+
+    timeSectionLabel.setBounds(bounds.removeFromTop(16));
+    bounds.removeFromTop(rowGap + 2);
+
+    // Timeline mode: Beats | Time
+    auto timelineModeRow = bounds.removeFromTop(22);
     auto beatsArea = timelineModeRow.removeFromLeft((timelineModeRow.getWidth() - columnGap) / 2);
     timelineModeRow.removeFromLeft(columnGap);
     beatsTimelineToggle.setBounds(beatsArea);
     timeTimelineToggle.setBounds(timelineModeRow);
 
-    timeArea.removeFromTop(rowGap + 2);
-    auto beatTempoRow = timeArea.removeFromTop(30);
-    timelineBeatLabel.setBounds(beatTempoRow.removeFromLeft(40));
-    auto beatButtonArea = beatTempoRow.removeFromLeft(66);
-    timelineBeatButton.setBounds(beatButtonArea);
-    beatTempoRow.removeFromLeft(10);
-    timelineTempoLabel.setBounds(beatTempoRow.removeFromLeft(52));
-    timelineTempoEditor.setBounds(beatTempoRow.reduced(0, 2));
+    bounds.removeFromTop(rowGap + 1);
 
-    timeArea.removeFromTop(rowGap);
-    auto gridRow = timeArea.removeFromTop(30);
-    timelineGridLabel.setBounds(gridRow.removeFromLeft(40));
-    timelineGridButton.setBounds(gridRow.removeFromLeft(82));
-    gridRow.removeFromLeft(10);
+    // Beat / Tempo row
+    auto beatTempoRow = bounds.removeFromTop(26);
+    timelineBeatLabel.setBounds(beatTempoRow.removeFromLeft(36));
+    auto beatButtonArea = beatTempoRow.removeFromLeft(60);
+    timelineBeatButton.setBounds(beatButtonArea);
+    beatTempoRow.removeFromLeft(8);
+    timelineTempoLabel.setBounds(beatTempoRow.removeFromLeft(46));
+    timelineTempoEditor.setBounds(beatTempoRow.reduced(0, 1));
+
+    bounds.removeFromTop(rowGap);
+
+    // Grid / Snap Cycle row
+    auto gridRow = bounds.removeFromTop(26);
+    timelineGridLabel.setBounds(gridRow.removeFromLeft(36));
+    timelineGridButton.setBounds(gridRow.removeFromLeft(74));
+    gridRow.removeFromLeft(8);
     timelineSnapCycleToggle.setBounds(gridRow);
+
+    int timeCardBottom = bounds.getY() + innerPadY;
+    timeCardBounds = juce::Rectangle<int>(cardArea.getX(), timeCardStart,
+                                           cardArea.getWidth(), timeCardBottom - timeCardStart);
 }
 
 void ParameterPanel::buttonClicked(juce::Button* button)

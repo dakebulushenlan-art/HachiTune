@@ -77,6 +77,8 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
     Note secondNote;
     secondNote.setStartFrame(splitFrame);
     secondNote.setEndFrame(endFrame);
+    secondNote.setSrcStartFrame(splitFrame);
+    secondNote.setSrcEndFrame(endFrame);
     secondNote.setMidiNote(note->getMidiNote());
     secondNote.setLyric(note->getLyric());
     secondNote.setPitchOffset(0.0f);
@@ -105,6 +107,7 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
 
     // Modify the first note (left part)
     note->setEndFrame(splitFrame);
+    note->setSrcEndFrame(splitFrame);
 
     // Save first note BEFORE addNote (addNote may invalidate note pointer due to vector reallocation)
     Note firstNote = *note;

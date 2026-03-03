@@ -1,5 +1,6 @@
 #include "PitchCurveProcessor.h"
 #include "BasePitchCurve.h"
+#include "CurveResampler.h"
 #include "PitchToolOperations.h"
 #include "../Utils/Constants.h"
 #include <algorithm>
@@ -285,9 +286,27 @@ namespace PitchCurveProcessor
                 continue;
                 
             // Use originalDeltaPitch if available, else fall back to deltaPitch
-            const auto& sourceData = note.hasOriginalDeltaPitch() ? note.getOriginalDeltaPitch() : note.getDeltaPitch();
-            if (sourceData.empty())
+            const auto& rawSourceData = note.hasOriginalDeltaPitch() ? note.getOriginalDeltaPitch() : note.getDeltaPitch();
+            if (rawSourceData.empty())
                 continue;
+
+            const int startFrame = note.getStartFrame();
+            const int endFrame = note.getEndFrame();
+            const int numFrames = endFrame - startFrame;
+            if (numFrames <= 0)
+                continue;
+
+            // If the note has been time-stretched, resample its stored delta
+            // to match the current output frame count so the pitch shape scales
+            // together with the note duration.
+            std::vector<float> resampledBuf;
+            const std::vector<float>* sourceDataPtr = &rawSourceData;
+            if (static_cast<int>(rawSourceData.size()) != numFrames)
+            {
+                resampledBuf = CurveResampler::resampleLinear(rawSourceData, numFrames);
+                sourceDataPtr = &resampledBuf;
+            }
+            const auto& sourceData = *sourceDataPtr;
             
             // Build adjacent note context
             auto adjacentContext = buildAdjacentContext(allNotes, note);
@@ -311,10 +330,6 @@ namespace PitchCurveProcessor
                 for (auto& v : transformedDelta)
                     v = v * dScale + dOffset;
             }
-                
-            const int startFrame = note.getStartFrame();
-            const int endFrame = note.getEndFrame();
-            const int numFrames = endFrame - startFrame;
             
             for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
             {
@@ -348,10 +363,27 @@ namespace PitchCurveProcessor
             if (!note || note->isRest())
                 continue;
 
-            const auto& sourceData = note->hasOriginalDeltaPitch()
+            const auto& rawSourceData = note->hasOriginalDeltaPitch()
                 ? note->getOriginalDeltaPitch() : note->getDeltaPitch();
-            if (sourceData.empty())
+            if (rawSourceData.empty())
                 continue;
+
+            const int startFrame = note->getStartFrame();
+            const int endFrame = note->getEndFrame();
+            const int numFrames = endFrame - startFrame;
+            if (numFrames <= 0)
+                continue;
+
+            // If the note has been time-stretched, resample its stored delta
+            // to match the current output frame count.
+            std::vector<float> resampledBuf;
+            const std::vector<float>* sourceDataPtr = &rawSourceData;
+            if (static_cast<int>(rawSourceData.size()) != numFrames)
+            {
+                resampledBuf = CurveResampler::resampleLinear(rawSourceData, numFrames);
+                sourceDataPtr = &resampledBuf;
+            }
+            const auto& sourceData = *sourceDataPtr;
 
             // Build adjacent note context
             auto adjacentContext = buildAdjacentContext(allNotes, *note);
@@ -375,9 +407,6 @@ namespace PitchCurveProcessor
                     v = v * dScale + dOffset;
             }
 
-            const int startFrame = note->getStartFrame();
-            const int endFrame = note->getEndFrame();
-            const int numFrames = endFrame - startFrame;
             minAffectedFrame = std::min(minAffectedFrame, startFrame);
             maxAffectedFrame = std::max(maxAffectedFrame, endFrame);
 

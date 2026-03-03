@@ -150,7 +150,7 @@ void PianoRollWorkspaceView::resized()
 
   overviewToggleButton.setBounds(
       zoomXRect.getRight() + zoomCornerGap,
-      zoomYRect.getBottom() - toggleSize + 22, toggleSize, toggleSize);
+      zoomXRect.getY() + (zoomXHeight - toggleSize) / 2, toggleSize, toggleSize);
 
   zoomXBg = zoomXRect.toFloat().expanded(static_cast<float>(zoomBgPadding),
                                          static_cast<float>(zoomBgPadding));

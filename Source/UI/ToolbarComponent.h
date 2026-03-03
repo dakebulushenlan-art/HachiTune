@@ -19,29 +19,26 @@ public:
     void paint(juce::Graphics& g) override
     {
         auto bounds = getLocalBounds().toFloat().reduced(2.0f);
+        auto corner = 6.0f;
 
         if (isActive)
         {
-            juce::ColourGradient activeGradient(
-                APP_COLOR_PRIMARY.withAlpha(0.9f), bounds.getX(), bounds.getY(),
-                APP_COLOR_PRIMARY.darker(0.25f), bounds.getX(), bounds.getBottom(), false);
-            g.setGradientFill(activeGradient);
-            g.fillRoundedRectangle(bounds, 5.0f);
+            // Solid primary fill with subtle inner brightness
+            g.setColour(APP_COLOR_PRIMARY.withAlpha(0.85f));
+            g.fillRoundedRectangle(bounds, corner);
 
-            // Subtle glow
-            g.setColour(APP_COLOR_PRIMARY_GLOW.withAlpha(0.35f));
-            g.drawRoundedRectangle(bounds.expanded(1.5f), 6.0f, 1.5f);
+            // Soft inner highlight along top edge
+            g.setColour(juce::Colour(0x18FFFFFFu));
+            g.fillRoundedRectangle(bounds.removeFromTop(bounds.getHeight() * 0.45f), corner);
         }
         else if (isMouseOver())
         {
-            g.setColour(APP_COLOR_SURFACE_RAISED);
-            g.fillRoundedRectangle(bounds, 5.0f);
+            g.setColour(APP_COLOR_SURFACE_RAISED.brighter(0.06f));
+            g.fillRoundedRectangle(bounds, corner);
+            g.setColour(APP_COLOR_BORDER.withAlpha(0.5f));
+            g.drawRoundedRectangle(bounds, corner, 0.75f);
         }
-        else
-        {
-            g.setColour(juce::Colours::transparentBlack);
-            g.fillRoundedRectangle(bounds, 5.0f);
-        }
+
         juce::DrawableButton::paint(g);
     }
 
@@ -73,6 +70,7 @@ public:
     void setZoom(float pixelsPerSecond);  // Update zoom slider without triggering callback
     void setLoopEnabled(bool enabled);
     void setParametersVisible(bool visible);
+    void setRippleMode(bool ripple);  // Update ripple toggle visual
     bool isFollowPlayback() const { return followPlayback; }
     bool isLoopEnabled() const { return loopEnabled; }
 
@@ -97,6 +95,7 @@ public:
     std::function<void(float)> onZoomChanged;
     std::function<void(EditMode)> onEditModeChanged;
     std::function<void(bool)> onLoopToggled;
+    std::function<void(bool)> onRippleModeToggled;  // Called with true = Ripple, false = Absorb
 
     // Plugin mode callbacks
     std::function<void()> onReanalyze;
@@ -113,6 +112,8 @@ private:
     juce::DrawableButton goToEndButton { "End", juce::DrawableButton::ImageFitted };
     std::unique_ptr<juce::Drawable> playDrawable;
     std::unique_ptr<juce::Drawable> pauseDrawable;
+    std::unique_ptr<juce::Drawable> absorbDrawable;
+    std::unique_ptr<juce::Drawable> rippleDrawable;
 
     // Plugin mode buttons
     juce::TextButton reanalyzeButton { "Re-analyze" };
@@ -126,10 +127,13 @@ private:
     ToolButton stretchModeButton { "Stretch" };
     ToolButton drawModeButton { "Draw" };
     ToolButton splitModeButton { "Split" };
+    ToolButton rippleToggleButton { "RippleToggle" };  // Absorb/Ripple stretch sub-mode toggle
     ToolButton followButton { "Follow" };
     ToolButton loopButton { "Loop" };
     ToolButton parametersButton { "Parameters" };
     juce::Rectangle<int> toolContainerBounds;  // For drawing container background
+    juce::Rectangle<int> transportCapsuleBounds;  // For drawing transport capsule background
+    juce::Rectangle<int> timeCapsuleBounds;  // For drawing centered time capsule
     
     juce::Label timeLabel;
     
@@ -153,6 +157,7 @@ private:
     bool isPlaying = false;
     bool followPlayback = true;
     bool loopEnabled = false;
+    bool isRippleStretchMode = false;
     int currentEditModeInt = 0;  // 0 = Select, 1 = Stretch, 2 = Draw, 3 = Split
 
 #if JUCE_MAC

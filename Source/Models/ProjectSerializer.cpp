@@ -190,6 +190,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note) {
 
     obj->setProperty("startFrame", note.getStartFrame());
     obj->setProperty("endFrame", note.getEndFrame());
+    obj->setProperty("srcStartFrame", note.getSrcStartFrame());
+    obj->setProperty("srcEndFrame", note.getSrcEndFrame());
     obj->setProperty("midiNote", note.getMidiNote());
     obj->setProperty("pitchOffset", note.getPitchOffset());
     obj->setProperty("volumeDb", note.getVolumeDb());
@@ -223,8 +225,13 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     if (!json.isObject())
         return false;
 
-    note.setStartFrame(json.getProperty("startFrame", 0));
-    note.setEndFrame(json.getProperty("endFrame", 0));
+    const int startFrame = json.getProperty("startFrame", 0);
+    const int endFrame = json.getProperty("endFrame", 0);
+    note.setStartFrame(startFrame);
+    note.setEndFrame(endFrame);
+    // Backward compat: if srcStartFrame/srcEndFrame not in file, default to startFrame/endFrame
+    note.setSrcStartFrame(static_cast<int>(json.getProperty("srcStartFrame", startFrame)));
+    note.setSrcEndFrame(static_cast<int>(json.getProperty("srcEndFrame", endFrame)));
     note.setMidiNote(static_cast<float>(json.getProperty("midiNote", 60.0)));
     note.setPitchOffset(static_cast<float>(json.getProperty("pitchOffset", 0.0)));
     note.setVolumeDb(static_cast<float>(json.getProperty("volumeDb", 0.0)));

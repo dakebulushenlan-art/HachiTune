@@ -34,7 +34,7 @@ void SettingsOverlay::paint(juce::Graphics &g) {
   g.fillAll(APP_COLOR_OVERLAY_DIM);
 
   if (!contentBounds.isEmpty()) {
-    juce::DropShadow shadow(APP_COLOR_OVERLAY_SHADOW, 18, {0, 10});
+    juce::DropShadow shadow(APP_COLOR_OVERLAY_SHADOW, 24, {0, 8});
     shadow.drawForRectangle(g, contentBounds);
   }
 }

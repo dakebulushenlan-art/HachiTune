@@ -359,15 +359,11 @@ void SettingsComponent::paint(juce::Graphics &g) {
   rounded.addRoundedRectangle(getLocalBounds().toFloat(), cornerRadius);
   g.reduceClipRegion(rounded);
 
-  auto bounds = getLocalBounds().toFloat();
-  juce::ColourGradient bgGradient(
-      APP_COLOR_SURFACE_ALT, bounds.getX(), bounds.getY(),
-      APP_COLOR_BACKGROUND, bounds.getX(), bounds.getBottom(), false);
-  g.setGradientFill(bgGradient);
-  g.fillRoundedRectangle(bounds, cornerRadius);
+  // Flat background fill
+  g.setColour(APP_COLOR_SURFACE_ALT);
+  g.fillRoundedRectangle(getLocalBounds().toFloat(), cornerRadius);
 
   if (!sidebarBounds.isEmpty()) {
-    // Keep only a subtle divider; remove the outer sidebar layer to reduce nesting.
     g.setColour(APP_COLOR_BORDER_SUBTLE);
     g.drawLine((float)sidebarBounds.getRight(), (float)sidebarBounds.getY(),
                (float)sidebarBounds.getRight(),
@@ -376,26 +372,19 @@ void SettingsComponent::paint(juce::Graphics &g) {
 
   if (!tabListBounds.isEmpty()) {
     auto tabCard = tabListBounds.toFloat();
-    juce::ColourGradient tabGradient(APP_COLOR_SURFACE_RAISED, tabCard.getX(),
-                                     tabCard.getY(), APP_COLOR_SURFACE,
-                                     tabCard.getX(), tabCard.getBottom(),
-                                     false);
-    g.setGradientFill(tabGradient);
+    g.setColour(APP_COLOR_SURFACE_RAISED);
     g.fillRoundedRectangle(tabCard, 10.0f);
-    g.setColour(APP_COLOR_BORDER.withAlpha(0.85f));
-    g.drawRoundedRectangle(tabCard.reduced(0.5f), 10.0f, 1.0f);
+    g.setColour(APP_COLOR_BORDER.withAlpha(0.55f));
+    g.drawRoundedRectangle(tabCard.reduced(0.5f), 10.0f, 0.75f);
   }
 
   if (!cardBounds.isEmpty()) {
     auto card = cardBounds.toFloat();
-    juce::ColourGradient cardGradient(
-        APP_COLOR_SURFACE_RAISED, card.getX(), card.getY(),
-        APP_COLOR_SURFACE, card.getX(), card.getBottom(), false);
-    g.setGradientFill(cardGradient);
+    g.setColour(APP_COLOR_SURFACE_RAISED);
     g.fillRoundedRectangle(card, 8.0f);
 
-    g.setColour(APP_COLOR_BORDER);
-    g.drawRoundedRectangle(card.reduced(0.5f), 8.0f, 1.0f);
+    g.setColour(APP_COLOR_BORDER.withAlpha(0.55f));
+    g.drawRoundedRectangle(card.reduced(0.5f), 8.0f, 0.75f);
 
     g.setColour(APP_COLOR_BORDER_SUBTLE);
     for (int i = 0; i < separatorYs.size(); ++i) {

@@ -183,6 +183,13 @@ public:
     bool hasF0DirtyRange() const;
     std::pair<int, int> getF0DirtyRange() const;
     
+    // Synthesis range ceiling (for ripple mode stretch).
+    // When set (>= 0), IncrementalSynthesizer clamps the synthesis end frame
+    // so it does not expand into shifted notes whose waveform was moved in place.
+    void setSynthesisCeiling(int frame) { synthesisCeiling_ = frame; }
+    int getSynthesisCeiling() const { return synthesisCeiling_; }
+    void clearSynthesisCeiling() { synthesisCeiling_ = -1; }
+    
     // Modified state
     bool isModified() const { return modified; }
     void setModified(bool mod) { modified = mod; }
@@ -236,6 +243,9 @@ private:
     // F0 direct edit dirty range
     int f0DirtyStart = -1;
     int f0DirtyEnd = -1;
+    
+    // Synthesis range ceiling (ripple mode)
+    int synthesisCeiling_ = -1;
     
     bool modified = false;
 

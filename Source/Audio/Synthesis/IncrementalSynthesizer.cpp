@@ -203,6 +203,13 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   endFrame =
       std::min(static_cast<int>(audioData.melSpectrogram.size()), endFrame);
 
+  // Apply synthesis ceiling if set (ripple mode stretch).
+  // Prevents the synthesis range from expanding into shifted notes whose
+  // waveform was already moved in place by finishStretchDrag().
+  int ceiling = project->getSynthesisCeiling();
+  if (ceiling >= 0)
+    endFrame = std::min(endFrame, ceiling);
+
   if (startFrame >= endFrame) {
     if (onComplete)
       onComplete(false);
@@ -415,11 +422,12 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           }
 
 
-          capturedProject->clearAllDirty();
           isBusy = false;
-          if (onComplete)
-            juce::MessageManager::callAsync(
-                [onComplete]() { onComplete(true); });
+          juce::MessageManager::callAsync(
+              [capturedProject, onComplete]() {
+                capturedProject->clearAllDirty();
+                if (onComplete) onComplete(true);
+              });
         }).detach();
       });
 }

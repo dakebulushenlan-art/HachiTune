@@ -1026,6 +1026,8 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
         note.setStartFrame(newStart);
         note.setEndFrame(newEnd);
+        note.setSrcStartFrame(newStart);
+        note.setSrcEndFrame(newEnd);
         std::vector<float> f0Values(audioData.f0.begin() + newStart,
                                     audioData.f0.begin() + newEnd);
         note.setF0Values(std::move(f0Values));

@@ -5,8 +5,13 @@
 #include <cmath>
 
 /**
- * VST-style 3D knob LookAndFeel.
- * Draws a realistic rotary knob with metallic appearance and pointer indicator.
+ * Premium rotary knob LookAndFeel.
+ *
+ * Renders a smooth, modern knob with:
+ *  - Concentric arc value indicator (bipolar from centre)
+ *  - Soft radial gradient body with top highlight
+ *  - Clean pointer line with accent-coloured tip dot
+ *  - Subtle drop-shadow for depth
  */
 class KnobLookAndFeel : public juce::LookAndFeel_V4
 {
@@ -18,80 +23,113 @@ public:
                           float rotaryEndAngle, juce::Slider& slider) override
     {
         const float diameter = static_cast<float>(juce::jmin(width, height));
-        const float radius = (diameter / 2.0f) - 4.0f;
-        const float centreX = static_cast<float>(x) + static_cast<float>(width) * 0.5f;
-        const float centreY = static_cast<float>(y) + static_cast<float>(height) * 0.5f;
-        const float angle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
+        const float radius   = (diameter * 0.5f) - 4.0f;
+        const float centreX  = static_cast<float>(x) + static_cast<float>(width)  * 0.5f;
+        const float centreY  = static_cast<float>(y) + static_cast<float>(height) * 0.5f;
+        const float angle    = rotaryStartAngle
+                             + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
 
-        const bool isEnabled = slider.isEnabled();
-        const float alpha = isEnabled ? 1.0f : 0.4f;
+        const bool  isEnabled = slider.isEnabled();
+        const float alpha     = isEnabled ? 1.0f : 0.35f;
 
-        // === Outer progress ring ===
-        const float trackRadius = radius + 2.0f;
-        const float ringThickness = 3.0f;
-        juce::Path ringPath;
-        ringPath.addCentredArc(centreX, centreY, trackRadius, trackRadius, 0.0f,
-                               rotaryStartAngle, rotaryEndAngle, true);
-        g.setColour(APP_COLOR_BORDER.withAlpha(alpha));
-        g.strokePath(ringPath, juce::PathStrokeType(ringThickness, juce::PathStrokeType::curved));
+        // ── 1. Track arc (inactive portion) ──────────────────────
+        const float arcRadius   = radius + 2.5f;
+        const float arcWidth    = 2.8f;
 
-        // Bipolar progress from center (for symmetric ranges like -12..+12)
-        const double minValue = slider.getMinimum();
-        const double maxValue = slider.getMaximum();
-        const double midValue = (minValue + maxValue) * 0.5;
-        const double value = slider.getValue();
-        const double span = static_cast<double>(rotaryEndAngle - rotaryStartAngle);
-        const double midAngle = static_cast<double>(rotaryStartAngle) + span * 0.5;
-        const double valueOffset = (value - midValue) / (maxValue - minValue); // [-0.5, 0.5]
-        const double arcSpan = valueOffset * span;
-
-        if (std::abs(arcSpan) > 1e-6)
         {
-            juce::Path valuePath;
-            const double startAngle = arcSpan > 0.0 ? midAngle : midAngle + arcSpan;
-            const double endAngle = arcSpan > 0.0 ? midAngle + arcSpan : midAngle;
-            valuePath.addCentredArc(centreX, centreY, trackRadius, trackRadius, 0.0f,
-                                    static_cast<float>(startAngle), static_cast<float>(endAngle), true);
-            g.setColour(APP_COLOR_PRIMARY.withAlpha(alpha));
-            g.strokePath(valuePath, juce::PathStrokeType(ringThickness, juce::PathStrokeType::curved));
+            juce::Path track;
+            track.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
+                                rotaryStartAngle, rotaryEndAngle, true);
+            g.setColour(APP_COLOR_BORDER.withAlpha(alpha * 0.55f));
+            g.strokePath(track, juce::PathStrokeType(arcWidth, juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded));
         }
 
-        // === Knob body ===
-        const float knobRadius = radius * 0.85f;
+        // ── 2. Value arc (bipolar from centre) ───────────────────
+        {
+            const double minVal   = slider.getMinimum();
+            const double maxVal   = slider.getMaximum();
+            const double midVal   = (minVal + maxVal) * 0.5;
+            const double curVal   = slider.getValue();
+            const double span     = static_cast<double>(rotaryEndAngle - rotaryStartAngle);
+            const double midAngle = static_cast<double>(rotaryStartAngle) + span * 0.5;
+            const double offset   = (curVal - midVal) / (maxVal - minVal); // [-0.5, 0.5]
+            const double arcSpan  = offset * span;
 
-        // Outer shadow
-        g.setColour(APP_COLOR_KNOB_SHADOW.withAlpha(alpha * 0.5f));
-        g.fillEllipse(centreX - knobRadius - 1.0f, centreY - knobRadius + 2.0f,
-                      knobRadius * 2.0f + 2.0f, knobRadius * 2.0f + 2.0f);
+            if (std::abs(arcSpan) > 1e-6)
+            {
+                const double a0 = arcSpan > 0.0 ? midAngle : midAngle + arcSpan;
+                const double a1 = arcSpan > 0.0 ? midAngle + arcSpan : midAngle;
 
-        // Main knob body - gradient from top-left to bottom-right
-        juce::ColourGradient bodyGradient(
-            APP_COLOR_SURFACE_RAISED.withAlpha(alpha), centreX - knobRadius * 0.7f, centreY - knobRadius * 0.7f,
-            APP_COLOR_SURFACE_ALT.withAlpha(alpha), centreX + knobRadius * 0.7f, centreY + knobRadius * 0.7f, false);
-        g.setGradientFill(bodyGradient);
-        g.fillEllipse(centreX - knobRadius, centreY - knobRadius, knobRadius * 2.0f, knobRadius * 2.0f);
+                juce::Path valueArc;
+                valueArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
+                                       static_cast<float>(a0), static_cast<float>(a1), true);
+                g.setColour(APP_COLOR_PRIMARY.withAlpha(alpha));
+                g.strokePath(valueArc, juce::PathStrokeType(arcWidth, juce::PathStrokeType::curved,
+                                                             juce::PathStrokeType::rounded));
+            }
+        }
 
-        // Inner bevel / rim
-        g.setColour(APP_COLOR_BORDER.withAlpha(alpha));
-        g.drawEllipse(centreX - knobRadius + 1.5f, centreY - knobRadius + 1.5f,
-                      (knobRadius - 1.5f) * 2.0f, (knobRadius - 1.5f) * 2.0f, 1.0f);
+        // ── 3. Knob body ─────────────────────────────────────────
+        const float knobR = radius * 0.82f;
 
-        // === Pointer line ===
-        const float pointerLength = knobRadius * 0.6f;
-        const float pointerStartRadius = knobRadius * 0.2f;
+        // Drop shadow — two layers for soft spread
+        {
+            g.setColour(APP_COLOR_KNOB_SHADOW.withAlpha(alpha * 0.35f));
+            g.fillEllipse(centreX - knobR - 0.5f, centreY - knobR + 2.5f,
+                          knobR * 2.0f + 1.0f, knobR * 2.0f + 1.0f);
+            g.setColour(APP_COLOR_KNOB_SHADOW.withAlpha(alpha * 0.2f));
+            g.fillEllipse(centreX - knobR - 1.0f, centreY - knobR + 4.0f,
+                          knobR * 2.0f + 2.0f, knobR * 2.0f + 2.0f);
+        }
 
-        juce::Path pointer;
-        pointer.startNewSubPath(0.0f, -pointerStartRadius);
-        pointer.lineTo(0.0f, -pointerLength);
+        // Radial gradient body (lighter at top-left, darker at bottom-right)
+        {
+            auto topColour = APP_COLOR_SURFACE_RAISED.brighter(0.12f).withAlpha(alpha);
+            auto botColour = APP_COLOR_SURFACE.darker(0.05f).withAlpha(alpha);
+            juce::ColourGradient bodyGrad(topColour, centreX, centreY - knobR * 0.7f,
+                                          botColour, centreX, centreY + knobR * 0.7f, true);
+            g.setGradientFill(bodyGrad);
+            g.fillEllipse(centreX - knobR, centreY - knobR, knobR * 2.0f, knobR * 2.0f);
+        }
 
-        g.setColour(APP_COLOR_PRIMARY.withAlpha(alpha));
-        g.strokePath(pointer, juce::PathStrokeType(3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded),
-                     juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+        // Rim / bevel
+        {
+            g.setColour(APP_COLOR_BORDER.withAlpha(alpha * 0.6f));
+            g.drawEllipse(centreX - knobR, centreY - knobR, knobR * 2.0f, knobR * 2.0f, 1.0f);
+        }
 
-        // Small dot at pointer tip
-        float tipX = centreX + std::sin(angle) * (pointerLength - 2.0f);
-        float tipY = centreY - std::cos(angle) * (pointerLength - 2.0f);
-        g.fillEllipse(tipX - 2.5f, tipY - 2.5f, 5.0f, 5.0f);
+        // Top highlight crescent (gives the 3-D convex look)
+        {
+            auto hlRadius = knobR * 0.72f;
+            auto hlY = centreY - knobR * 0.25f;
+            g.setColour(juce::Colour(0x0AFFFFFF).withAlpha(alpha));
+            g.fillEllipse(centreX - hlRadius, hlY - hlRadius, hlRadius * 2.0f, hlRadius * 2.0f);
+        }
+
+        // ── 4. Pointer line ──────────────────────────────────────
+        const float ptrLen   = knobR * 0.55f;
+        const float ptrStart = knobR * 0.18f;
+
+        {
+            juce::Path pointer;
+            pointer.startNewSubPath(0.0f, -ptrStart);
+            pointer.lineTo(0.0f, -ptrLen);
+
+            g.setColour(APP_COLOR_PRIMARY.withAlpha(alpha));
+            g.strokePath(pointer,
+                         juce::PathStrokeType(2.6f, juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded),
+                         juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+        }
+
+        // Tip dot
+        {
+            const float tipX = centreX + std::sin(angle) * (ptrLen - 1.5f);
+            const float tipY = centreY - std::cos(angle) * (ptrLen - 1.5f);
+            g.setColour(APP_COLOR_PRIMARY.withAlpha(alpha));
+            g.fillEllipse(tipX - 2.2f, tipY - 2.2f, 4.4f, 4.4f);
+        }
     }
 
     static KnobLookAndFeel& getInstance()

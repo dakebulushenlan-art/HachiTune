@@ -37,15 +37,15 @@ private:
   juce::Rectangle<float> zoomYBg;
   juce::Rectangle<float> toggleBg;
 
-  static constexpr int overviewHeight = 78;
-  static constexpr int cardGap = 8;
-  static constexpr int toggleSize = 24;
-  static constexpr int toggleMargin = 8;
-  static constexpr int zoomSliderWidth = 20;
-  static constexpr int zoomSliderHeight = 96;
-  static constexpr int zoomSliderLength = 120;
-  static constexpr int zoomGap = 8;
-  static constexpr int zoomBgPadding = 6;
+  static constexpr int overviewHeight = 60;
+  static constexpr int cardGap = 6;
+  static constexpr int toggleSize = 22;
+  static constexpr int toggleMargin = 6;
+  static constexpr int zoomSliderWidth = 18;
+  static constexpr int zoomSliderHeight = 88;
+  static constexpr int zoomSliderLength = 110;
+  static constexpr int zoomGap = 6;
+  static constexpr int zoomBgPadding = 5;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PianoRollWorkspaceView)
 };

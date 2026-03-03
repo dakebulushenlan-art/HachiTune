@@ -2,6 +2,7 @@
 #include "../../PianoRollComponent.h"
 #include "../../../Utils/CurveResampler.h"
 #include "../../../Utils/PitchCurveProcessor.h"
+#include <cstring>
 
 StretchHandler::StretchHandler(PianoRollComponent &owner)
     : InteractionHandler(owner) {
@@ -18,7 +19,11 @@ bool StretchHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   if (boundaryIndex >= 0) {
     auto boundaries = collectStretchBoundaries();
     if (boundaryIndex < static_cast<int>(boundaries.size())) {
-      startStretchDrag(boundaries[static_cast<size_t>(boundaryIndex)]);
+      // Lock the effective mode at drag start (Alt toggles)
+      StretchMode effectiveMode =
+          owner_.getEffectiveStretchMode(e.mods);
+      startStretchDrag(boundaries[static_cast<size_t>(boundaryIndex)],
+                       effectiveMode);
       owner_.repaint();
       return true;
     }
@@ -227,7 +232,63 @@ int StretchHandler::findStretchBoundaryIndex(float worldX,
   return bestIndex;
 }
 
-void StretchHandler::startStretchDrag(const StretchBoundary &boundary) {
+std::vector<Note *> StretchHandler::collectRippleNotes(int afterFrame) const {
+  auto *project = owner_.project;
+  if (!project)
+    return {};
+
+  std::vector<Note *> result;
+  for (auto &note : project->getNotes()) {
+    if (note.isRest())
+      continue;
+    // Collect notes whose start is strictly after the boundary
+    // (the note being stretched itself is NOT included)
+    if (note.getStartFrame() >= afterFrame) {
+      // Exclude the notes that are part of the boundary
+      if (&note != stretchDrag.boundary.left &&
+          &note != stretchDrag.boundary.right) {
+        result.push_back(&note);
+      }
+    }
+  }
+  std::sort(result.begin(), result.end(),
+            [](const Note *a, const Note *b) {
+              return a->getStartFrame() < b->getStartFrame();
+            });
+  return result;
+}
+
+void StretchHandler::applyRippleShift(int deltaFrames) {
+  for (auto *note : stretchDrag.rippleNotes) {
+    // Find this note's original index
+    for (size_t i = 0; i < stretchDrag.rippleNotes.size(); ++i) {
+      if (stretchDrag.rippleNotes[i] == note) {
+        int newStart = stretchDrag.originalRippleStarts[i] + deltaFrames;
+        int newEnd = stretchDrag.originalRippleEnds[i] + deltaFrames;
+        // Clamp to prevent negative frames
+        newStart = std::max(0, newStart);
+        newEnd = std::max(newStart + 1, newEnd);
+        note->setStartFrame(newStart);
+        note->setEndFrame(newEnd);
+        note->markDirty();
+        break;
+      }
+    }
+  }
+}
+
+void StretchHandler::restoreRippleNotes() {
+  for (size_t i = 0; i < stretchDrag.rippleNotes.size(); ++i) {
+    stretchDrag.rippleNotes[i]->setStartFrame(
+        stretchDrag.originalRippleStarts[i]);
+    stretchDrag.rippleNotes[i]->setEndFrame(
+        stretchDrag.originalRippleEnds[i]);
+    stretchDrag.rippleNotes[i]->markDirty();
+  }
+}
+
+void StretchHandler::startStretchDrag(const StretchBoundary &boundary,
+                                      StretchMode effectiveMode) {
   auto *project = owner_.project;
   if (!project)
     return;
@@ -239,6 +300,7 @@ void StretchHandler::startStretchDrag(const StretchBoundary &boundary) {
   stretchDrag = {};
   stretchDrag.active = true;
   stretchDrag.boundary = boundary;
+  stretchDrag.mode = effectiveMode;
 
   auto &audioData = project->getAudioData();
   const int totalFrames = static_cast<int>(audioData.f0.size());
@@ -255,10 +317,29 @@ void StretchHandler::startStretchDrag(const StretchBoundary &boundary) {
     stretchDrag.originalLeftEnd = boundary.left->getEndFrame();
     stretchDrag.originalRightStart = boundary.right->getStartFrame();
     stretchDrag.originalRightEnd = boundary.right->getEndFrame();
-    stretchDrag.minFrame =
-        stretchDrag.originalLeftStart + minStretchNoteFrames;
-    stretchDrag.maxFrame =
-        stretchDrag.originalRightEnd - minStretchNoteFrames;
+
+    if (effectiveMode == StretchMode::Absorb) {
+      // Absorb: constrain within the two-note span
+      stretchDrag.minFrame =
+          stretchDrag.originalLeftStart + minStretchNoteFrames;
+      stretchDrag.maxFrame =
+          stretchDrag.originalRightEnd - minStretchNoteFrames;
+    } else {
+      // Ripple: the left note can grow freely (right note + all after shift)
+      // Left note still has a minimum size
+      stretchDrag.minFrame =
+          stretchDrag.originalLeftStart + minStretchNoteFrames;
+      // Right note still has minimum size, but the boundary can go further
+      // since subsequent notes shift
+      stretchDrag.maxFrame =
+          stretchDrag.originalRightEnd - minStretchNoteFrames;
+      // Actually in ripple mode the right note stays the SAME length,
+      // it just shifts. So maxFrame is essentially unlimited (clamped to
+      // totalFrames - minStretchNoteFrames for the right note's new position).
+      // But we need to ensure the right note doesn't go past totalFrames.
+      // For now, allow generous range; we'll validate during drag.
+      stretchDrag.maxFrame = totalFrames - minStretchNoteFrames;
+    }
   } else if (boundary.right) {
     // Only right note - stretch its left boundary
     stretchDrag.originalBoundary = boundary.right->getStartFrame();
@@ -379,6 +460,79 @@ void StretchHandler::startStretchDrag(const StretchBoundary &boundary) {
         audioData.melSpectrogram.begin() + stretchDrag.rangeStartFull,
         audioData.melSpectrogram.begin() + melEnd);
   }
+
+  // --- Ripple mode: collect and save subsequent notes ---
+  if (effectiveMode == StretchMode::Ripple) {
+    // Determine the frame after which notes should be collected for ripple
+    int rippleAfterFrame = stretchDrag.originalBoundary;
+    stretchDrag.rippleNotes = collectRippleNotes(rippleAfterFrame);
+    stretchDrag.originalRippleStarts.reserve(stretchDrag.rippleNotes.size());
+    stretchDrag.originalRippleEnds.reserve(stretchDrag.rippleNotes.size());
+    stretchDrag.rippleVoicedData.reserve(stretchDrag.rippleNotes.size());
+    stretchDrag.rippleMelData.reserve(stretchDrag.rippleNotes.size());
+    for (auto *note : stretchDrag.rippleNotes) {
+      stretchDrag.originalRippleStarts.push_back(note->getStartFrame());
+      stretchDrag.originalRippleEnds.push_back(note->getEndFrame());
+
+      // Save per-note voicedMask
+      int ns = std::max(0, note->getStartFrame());
+      int ne = std::min(totalFrames, note->getEndFrame());
+      if (ne > ns && static_cast<int>(audioData.voicedMask.size()) >= ne) {
+        stretchDrag.rippleVoicedData.emplace_back(
+            audioData.voicedMask.begin() + ns,
+            audioData.voicedMask.begin() + ne);
+      } else {
+        stretchDrag.rippleVoicedData.emplace_back();
+      }
+
+      // Save per-note mel
+      int melSize = static_cast<int>(audioData.melSpectrogram.size());
+      if (ne > ns && ns < melSize) {
+        int melEnd = std::min(ne, melSize);
+        stretchDrag.rippleMelData.emplace_back(
+            audioData.melSpectrogram.begin() + ns,
+            audioData.melSpectrogram.begin() + melEnd);
+      } else {
+        stretchDrag.rippleMelData.emplace_back();
+      }
+    }
+
+    // Extend rangeEndFull to cover maximum possible shifted extent.
+    // Max shift = maxFrame - originalBoundary.
+    int maxShift = stretchDrag.maxFrame - stretchDrag.originalBoundary;
+    // Right boundary note extends to originalRightEnd + maxShift
+    int maxRightEnd = stretchDrag.originalRightEnd + maxShift;
+    stretchDrag.rangeEndFull = std::max(stretchDrag.rangeEndFull,
+                                        std::min(totalFrames, maxRightEnd));
+    // Ripple notes extend to their original end + maxShift
+    if (!stretchDrag.rippleNotes.empty()) {
+      int lastRippleEnd = stretchDrag.originalRippleEnds.back() + maxShift;
+      stretchDrag.rangeEndFull = std::max(stretchDrag.rangeEndFull,
+                                          std::min(totalFrames, lastRippleEnd));
+    }
+
+    // Re-capture the expanded range snapshots
+    if (stretchDrag.rangeEndFull > stretchDrag.rangeStartFull) {
+      int rStart = stretchDrag.rangeStartFull;
+      int rEnd = std::min(stretchDrag.rangeEndFull, totalFrames);
+
+      stretchDrag.originalDeltaRangeFull.assign(
+          audioData.deltaPitch.begin() + rStart,
+          audioData.deltaPitch.begin() + rEnd);
+      stretchDrag.originalVoicedRangeFull.assign(
+          audioData.voicedMask.begin() + rStart,
+          audioData.voicedMask.begin() + rEnd);
+
+      if (!audioData.melSpectrogram.empty() &&
+          rStart < static_cast<int>(audioData.melSpectrogram.size())) {
+        int melEnd = std::min(rEnd,
+                              static_cast<int>(audioData.melSpectrogram.size()));
+        stretchDrag.originalMelRangeFull.assign(
+            audioData.melSpectrogram.begin() + rStart,
+            audioData.melSpectrogram.begin() + melEnd);
+      }
+    }
+  }
 }
 
 void StretchHandler::updateStretchDrag(int targetFrame) {
@@ -397,18 +551,34 @@ void StretchHandler::updateStretchDrag(int targetFrame) {
   if (targetFrame == stretchDrag.currentBoundary)
     return;
 
-  // Calculate new lengths based on which notes exist
+  const bool isRipple = (stretchDrag.mode == StretchMode::Ripple);
+
+  // Calculate new lengths based on which notes exist and mode
   int newLeftLength = 0;
   int newRightLength = 0;
 
   if (stretchDrag.boundary.left && stretchDrag.boundary.right) {
-    newLeftLength = targetFrame - stretchDrag.originalLeftStart;
-    newRightLength = stretchDrag.originalRightEnd - targetFrame;
-    if (newLeftLength < minStretchNoteFrames ||
-        newRightLength < minStretchNoteFrames)
-      return;
+    if (isRipple) {
+      // Ripple mode: left note stretches, right note keeps original length
+      // but shifts. The boundary moves and everything after shifts.
+      newLeftLength = targetFrame - stretchDrag.originalLeftStart;
+      newRightLength = stretchDrag.originalRightEnd - stretchDrag.originalRightStart;
+      if (newLeftLength < minStretchNoteFrames)
+        return;
+    } else {
+      // Absorb mode: zero-sum between left and right
+      newLeftLength = targetFrame - stretchDrag.originalLeftStart;
+      newRightLength = stretchDrag.originalRightEnd - targetFrame;
+      if (newLeftLength < minStretchNoteFrames ||
+          newRightLength < minStretchNoteFrames)
+        return;
+    }
   } else if (stretchDrag.boundary.right) {
     newRightLength = stretchDrag.originalRightEnd - targetFrame;
+    if (isRipple) {
+      // Ripple: right note stays same length but shifts
+      newRightLength = stretchDrag.originalRightEnd - stretchDrag.originalRightStart;
+    }
     if (newRightLength < minStretchNoteFrames)
       return;
   } else {
@@ -422,10 +592,6 @@ void StretchHandler::updateStretchDrag(int targetFrame) {
 
   auto &audioData = owner_.project->getAudioData();
   const int totalFrames = static_cast<int>(audioData.deltaPitch.size());
-  if (audioData.deltaPitch.size() < static_cast<size_t>(totalFrames))
-    audioData.deltaPitch.resize(static_cast<size_t>(totalFrames), 0.0f);
-  if (audioData.voicedMask.size() < static_cast<size_t>(totalFrames))
-    audioData.voicedMask.resize(static_cast<size_t>(totalFrames), true);
 
   // Restore original region to avoid cumulative errors during drag.
   if (!stretchDrag.originalDeltaRangeFull.empty() &&
@@ -447,6 +613,19 @@ void StretchHandler::updateStretchDrag(int targetFrame) {
       audioData
           .melSpectrogram[static_cast<size_t>(stretchDrag.rangeStartFull) +
                           i] = stretchDrag.originalMelRangeFull[i];
+  }
+
+  // Restore ripple notes to original positions before re-applying
+  if (isRipple) {
+    restoreRippleNotes();
+    // Clear voicedMask from new boundary to rangeEndFull to prevent stale
+    // voiced=true at notes' original positions after ripple shift.
+    // Without this, the synthesizer sees voiced frames at both old and new
+    // positions, producing duplicate audio segments.
+    int clearStart = std::max(0, targetFrame);
+    int clearEnd = std::min(stretchDrag.rangeEndFull, totalFrames);
+    for (int i = clearStart; i < clearEnd; ++i)
+      audioData.voicedMask[static_cast<size_t>(i)] = false;
   }
 
   auto smoothResampledVoiced = [](std::vector<bool> &mask) {
@@ -475,7 +654,7 @@ void StretchHandler::updateStretchDrag(int targetFrame) {
         CurveResampler::resampleNearest(stretchDrag.leftVoiced, newLeftLength);
     smoothResampledVoiced(newLeftVoiced);
 
-    for (int i = 0; i < newLeftLength; ++i) {
+    for (int i = 0; i < newLeftLength && (leftStart + i) < totalFrames; ++i) {
       audioData.deltaPitch[static_cast<size_t>(leftStart + i)] =
           newLeftDelta[static_cast<size_t>(i)];
       audioData.voicedMask[static_cast<size_t>(leftStart + i)] =
@@ -494,31 +673,121 @@ void StretchHandler::updateStretchDrag(int targetFrame) {
   }
 
   // Update right note if exists
-  if (stretchDrag.boundary.right && newRightLength > 0 &&
-      !stretchDrag.rightDelta.empty()) {
-    auto newRightDelta =
-        CurveResampler::resampleLinear(stretchDrag.rightDelta, newRightLength);
-    auto newRightVoiced = CurveResampler::resampleNearest(
-        stretchDrag.rightVoiced, newRightLength);
-    smoothResampledVoiced(newRightVoiced);
+  if (stretchDrag.boundary.right) {
+    if (isRipple && stretchDrag.boundary.left) {
+      // Ripple mode with shared boundary: right note keeps its original
+      // length but shifts to start at the new boundary position.
+      int rippleDelta = targetFrame - stretchDrag.originalBoundary;
+      int newRightStart = stretchDrag.originalRightStart + rippleDelta;
+      int newRightEnd = stretchDrag.originalRightEnd + rippleDelta;
 
-    for (int i = 0; i < newRightLength; ++i) {
-      audioData.deltaPitch[static_cast<size_t>(targetFrame + i)] =
-          newRightDelta[static_cast<size_t>(i)];
-      audioData.voicedMask[static_cast<size_t>(targetFrame + i)] =
-          newRightVoiced[static_cast<size_t>(i)];
+      // Write original right data at the new position
+      if (!stretchDrag.rightDelta.empty()) {
+        int origLen = static_cast<int>(stretchDrag.rightDelta.size());
+        for (int i = 0; i < origLen && (newRightStart + i) < totalFrames; ++i) {
+          if (newRightStart + i >= 0) {
+            audioData.deltaPitch[static_cast<size_t>(newRightStart + i)] =
+                stretchDrag.rightDelta[static_cast<size_t>(i)];
+            audioData.voicedMask[static_cast<size_t>(newRightStart + i)] =
+                stretchDrag.rightVoiced[static_cast<size_t>(i)];
+          }
+        }
+      }
+
+      // Restore original clip (no resampling, just shift)
+      if (!stretchDrag.originalRightClip.empty()) {
+        stretchDrag.boundary.right->setClipWaveform(stretchDrag.originalRightClip);
+      }
+
+      stretchDrag.boundary.right->setStartFrame(newRightStart);
+      stretchDrag.boundary.right->setEndFrame(newRightEnd);
+      stretchDrag.boundary.right->markDirty();
+
+      // Apply ripple shift to all subsequent notes
+      stretchDrag.rippleDelta = rippleDelta;
+      applyRippleShift(rippleDelta);
+
+      // Write voicedMask and mel for ripple notes at their shifted positions
+      for (size_t ri = 0; ri < stretchDrag.rippleNotes.size(); ++ri) {
+        auto *rNote = stretchDrag.rippleNotes[ri];
+        int rStart = rNote->getStartFrame();
+
+        // Write voicedMask
+        const auto &rVoiced = stretchDrag.rippleVoicedData[ri];
+        if (!rVoiced.empty()) {
+          int rLen = static_cast<int>(rVoiced.size());
+          for (int i = 0; i < rLen && (rStart + i) < totalFrames; ++i) {
+            if (rStart + i >= 0)
+              audioData.voicedMask[static_cast<size_t>(rStart + i)] =
+                  rVoiced[static_cast<size_t>(i)];
+          }
+        }
+
+        // Write mel at shifted position
+        const auto &rMel = stretchDrag.rippleMelData[ri];
+        if (!rMel.empty() && !audioData.melSpectrogram.empty()) {
+          int melSize = static_cast<int>(audioData.melSpectrogram.size());
+          int rMelLen = static_cast<int>(rMel.size());
+          for (int i = 0; i < rMelLen && (rStart + i) < melSize; ++i) {
+            if (rStart + i >= 0)
+              audioData.melSpectrogram[static_cast<size_t>(rStart + i)] =
+                  rMel[static_cast<size_t>(i)];
+          }
+        }
+      }
+    } else if (!isRipple && newRightLength > 0 &&
+               !stretchDrag.rightDelta.empty()) {
+      // Absorb mode: resample right note to new length
+      auto newRightDelta =
+          CurveResampler::resampleLinear(stretchDrag.rightDelta, newRightLength);
+      auto newRightVoiced = CurveResampler::resampleNearest(
+          stretchDrag.rightVoiced, newRightLength);
+      smoothResampledVoiced(newRightVoiced);
+
+      for (int i = 0; i < newRightLength && (targetFrame + i) < totalFrames; ++i) {
+        audioData.deltaPitch[static_cast<size_t>(targetFrame + i)] =
+            newRightDelta[static_cast<size_t>(i)];
+        audioData.voicedMask[static_cast<size_t>(targetFrame + i)] =
+            newRightVoiced[static_cast<size_t>(i)];
+      }
+
+      if (!stretchDrag.originalRightClip.empty()) {
+        const int newRightSamples = std::max(0, newRightLength * HOP_SIZE);
+        auto newRightClip = CurveResampler::resampleLinear(
+            stretchDrag.originalRightClip, newRightSamples);
+        stretchDrag.boundary.right->setClipWaveform(std::move(newRightClip));
+      }
+
+      stretchDrag.boundary.right->setStartFrame(targetFrame);
+      stretchDrag.boundary.right->setEndFrame(stretchDrag.originalRightEnd);
+      stretchDrag.boundary.right->markDirty();
+    } else if (isRipple && !stretchDrag.boundary.left) {
+      // Free left edge in ripple mode: stretch the right note's left side
+      // and shift everything after
+      auto newRightDelta =
+          CurveResampler::resampleLinear(stretchDrag.rightDelta, newRightLength);
+      auto newRightVoiced = CurveResampler::resampleNearest(
+          stretchDrag.rightVoiced, newRightLength);
+      smoothResampledVoiced(newRightVoiced);
+
+      for (int i = 0; i < newRightLength && (targetFrame + i) < totalFrames; ++i) {
+        audioData.deltaPitch[static_cast<size_t>(targetFrame + i)] =
+            newRightDelta[static_cast<size_t>(i)];
+        audioData.voicedMask[static_cast<size_t>(targetFrame + i)] =
+            newRightVoiced[static_cast<size_t>(i)];
+      }
+
+      if (!stretchDrag.originalRightClip.empty()) {
+        const int newRightSamples = std::max(0, newRightLength * HOP_SIZE);
+        auto newRightClip = CurveResampler::resampleLinear(
+            stretchDrag.originalRightClip, newRightSamples);
+        stretchDrag.boundary.right->setClipWaveform(std::move(newRightClip));
+      }
+
+      stretchDrag.boundary.right->setStartFrame(targetFrame);
+      stretchDrag.boundary.right->setEndFrame(stretchDrag.originalRightEnd);
+      stretchDrag.boundary.right->markDirty();
     }
-
-    if (!stretchDrag.originalRightClip.empty()) {
-      const int newRightSamples = std::max(0, newRightLength * HOP_SIZE);
-      auto newRightClip = CurveResampler::resampleLinear(
-          stretchDrag.originalRightClip, newRightSamples);
-      stretchDrag.boundary.right->setClipWaveform(std::move(newRightClip));
-    }
-
-    stretchDrag.boundary.right->setStartFrame(targetFrame);
-    stretchDrag.boundary.right->setEndFrame(stretchDrag.originalRightEnd);
-    stretchDrag.boundary.right->markDirty();
   }
 
   // Update mel spectrogram using fast nearest neighbor during drag
@@ -527,81 +796,132 @@ void StretchHandler::updateStretchDrag(int targetFrame) {
       stretchDrag.rangeStartFull <
           static_cast<int>(audioData.melSpectrogram.size())) {
     const int melSize = static_cast<int>(audioData.melSpectrogram.size());
-    int rangeStart = stretchDrag.rangeStartFull;
-    int rangeEnd = stretchDrag.rangeEndFull;
 
-    // Adjust range based on which notes exist
-    if (stretchDrag.boundary.left && !stretchDrag.boundary.right) {
-      rangeEnd = targetFrame;
-    } else if (!stretchDrag.boundary.left && stretchDrag.boundary.right) {
-      rangeStart = targetFrame;
-    }
-
-    rangeStart = std::clamp(rangeStart, 0, melSize);
-    rangeEnd = std::clamp(rangeEnd, 0, melSize);
-
-    std::vector<std::vector<float>> newMel;
-    if (rangeEnd > rangeStart) {
-      // Use fast nearest neighbor resampling for drag preview
-      std::vector<std::vector<float>> newLeftMel;
+    if (isRipple) {
+      // Ripple mode: write each note's mel directly at its current position.
+      // Left note: resampled mel at its original start position.
       if (stretchDrag.boundary.left && newLeftLength > 0) {
         const int leftOffset =
             stretchDrag.originalLeftStart - stretchDrag.rangeStartFull;
         if (leftOffset >= 0 &&
             leftOffset + (stretchDrag.originalLeftEnd -
                           stretchDrag.originalLeftStart) <=
-                static_cast<int>(
-                    stretchDrag.originalMelRangeFull.size())) {
+                static_cast<int>(stretchDrag.originalMelRangeFull.size())) {
           std::vector<std::vector<float>> leftMel(
               stretchDrag.originalMelRangeFull.begin() + leftOffset,
               stretchDrag.originalMelRangeFull.begin() + leftOffset +
                   (stretchDrag.originalLeftEnd -
                    stretchDrag.originalLeftStart));
-          newLeftMel =
+          auto newLeftMel =
               CurveResampler::resampleNearest2D(leftMel, newLeftLength);
+          int leftStart = stretchDrag.originalLeftStart;
+          for (int i = 0; i < static_cast<int>(newLeftMel.size()); ++i) {
+            if (leftStart + i >= 0 && leftStart + i < melSize)
+              audioData.melSpectrogram[static_cast<size_t>(leftStart + i)] =
+                  newLeftMel[static_cast<size_t>(i)];
+          }
         }
       }
 
-      std::vector<std::vector<float>> newRightMel;
-      if (stretchDrag.boundary.right && newRightLength > 0) {
+      // Right note in ripple: write original mel at shifted position.
+      // (rightDelta/rightVoiced are already written at shifted position above;
+      //  rightMel is saved in originalMelRangeFull at original offset.)
+      if (stretchDrag.boundary.right && stretchDrag.boundary.left) {
+        int rightStart = stretchDrag.boundary.right->getStartFrame();
         const int rightOffset =
             stretchDrag.originalRightStart - stretchDrag.rangeStartFull;
+        int origRightLen = stretchDrag.originalRightEnd - stretchDrag.originalRightStart;
         if (rightOffset >= 0 &&
-            rightOffset + (stretchDrag.originalRightEnd -
-                           stretchDrag.originalRightStart) <=
-                static_cast<int>(
-                    stretchDrag.originalMelRangeFull.size())) {
-          std::vector<std::vector<float>> rightMel(
-              stretchDrag.originalMelRangeFull.begin() + rightOffset,
-              stretchDrag.originalMelRangeFull.begin() + rightOffset +
-                  (stretchDrag.originalRightEnd -
-                   stretchDrag.originalRightStart));
-          newRightMel =
-              CurveResampler::resampleNearest2D(rightMel, newRightLength);
+            rightOffset + origRightLen <=
+                static_cast<int>(stretchDrag.originalMelRangeFull.size())) {
+          for (int i = 0; i < origRightLen; ++i) {
+            if (rightStart + i >= 0 && rightStart + i < melSize)
+              audioData.melSpectrogram[static_cast<size_t>(rightStart + i)] =
+                  stretchDrag.originalMelRangeFull[static_cast<size_t>(rightOffset + i)];
+          }
         }
       }
 
-      // Combine mel spectrograms
-      if (stretchDrag.boundary.left && stretchDrag.boundary.right) {
-        newMel.reserve(
-            static_cast<size_t>(newLeftLength + newRightLength));
-        newMel.insert(newMel.end(), newLeftMel.begin(), newLeftMel.end());
-        newMel.insert(newMel.end(), newRightMel.begin(),
-                      newRightMel.end());
-      } else if (stretchDrag.boundary.left) {
-        newMel = std::move(newLeftMel);
-      } else {
-        newMel = std::move(newRightMel);
-      }
-    }
+      // Ripple notes' mel is already written in the applyRippleShift block above.
 
-    if (!newMel.empty() &&
-        static_cast<int>(newMel.size()) == (rangeEnd - rangeStart)) {
-      for (int i = rangeStart; i < rangeEnd; ++i)
-        audioData.melSpectrogram[static_cast<size_t>(i)] =
-            newMel[static_cast<size_t>(i - rangeStart)];
-      previewRangeStart = rangeStart;
-      previewRangeEnd = rangeEnd;
+      previewRangeStart = stretchDrag.rangeStartFull;
+      previewRangeEnd = stretchDrag.rangeEndFull;
+    } else {
+      // Absorb mode: combine left + right mel into contiguous range
+      int rangeStart = stretchDrag.rangeStartFull;
+      int rangeEnd = stretchDrag.rangeEndFull;
+
+      if (stretchDrag.boundary.left && !stretchDrag.boundary.right) {
+        rangeEnd = targetFrame;
+      } else if (!stretchDrag.boundary.left && stretchDrag.boundary.right) {
+        rangeStart = targetFrame;
+      }
+
+      rangeStart = std::clamp(rangeStart, 0, melSize);
+      rangeEnd = std::clamp(rangeEnd, 0, melSize);
+
+      std::vector<std::vector<float>> newMel;
+      if (rangeEnd > rangeStart) {
+        std::vector<std::vector<float>> newLeftMel;
+        if (stretchDrag.boundary.left && newLeftLength > 0) {
+          const int leftOffset =
+              stretchDrag.originalLeftStart - stretchDrag.rangeStartFull;
+          if (leftOffset >= 0 &&
+              leftOffset + (stretchDrag.originalLeftEnd -
+                            stretchDrag.originalLeftStart) <=
+                  static_cast<int>(
+                      stretchDrag.originalMelRangeFull.size())) {
+            std::vector<std::vector<float>> leftMel(
+                stretchDrag.originalMelRangeFull.begin() + leftOffset,
+                stretchDrag.originalMelRangeFull.begin() + leftOffset +
+                    (stretchDrag.originalLeftEnd -
+                     stretchDrag.originalLeftStart));
+            newLeftMel =
+                CurveResampler::resampleNearest2D(leftMel, newLeftLength);
+          }
+        }
+
+        std::vector<std::vector<float>> newRightMel;
+        if (stretchDrag.boundary.right && newRightLength > 0) {
+          const int rightOffset =
+              stretchDrag.originalRightStart - stretchDrag.rangeStartFull;
+          if (rightOffset >= 0 &&
+              rightOffset + (stretchDrag.originalRightEnd -
+                             stretchDrag.originalRightStart) <=
+                  static_cast<int>(
+                      stretchDrag.originalMelRangeFull.size())) {
+            std::vector<std::vector<float>> rightMel(
+                stretchDrag.originalMelRangeFull.begin() + rightOffset,
+                stretchDrag.originalMelRangeFull.begin() + rightOffset +
+                    (stretchDrag.originalRightEnd -
+                     stretchDrag.originalRightStart));
+            newRightMel =
+                CurveResampler::resampleNearest2D(rightMel, newRightLength);
+          }
+        }
+
+        // Combine mel spectrograms
+        if (stretchDrag.boundary.left && stretchDrag.boundary.right) {
+          newMel.reserve(
+              static_cast<size_t>(newLeftLength + newRightLength));
+          newMel.insert(newMel.end(), newLeftMel.begin(), newLeftMel.end());
+          newMel.insert(newMel.end(), newRightMel.begin(),
+                        newRightMel.end());
+        } else if (stretchDrag.boundary.left) {
+          newMel = std::move(newLeftMel);
+        } else {
+          newMel = std::move(newRightMel);
+        }
+      }
+
+      if (!newMel.empty() &&
+          static_cast<int>(newMel.size()) == (rangeEnd - rangeStart)) {
+        for (int i = rangeStart; i < rangeEnd; ++i)
+          audioData.melSpectrogram[static_cast<size_t>(i)] =
+              newMel[static_cast<size_t>(i - rangeStart)];
+        previewRangeStart = rangeStart;
+        previewRangeEnd = rangeEnd;
+      }
     }
   }
 
@@ -611,13 +931,9 @@ void StretchHandler::updateStretchDrag(int targetFrame) {
   if (owner_.onPitchEdited)
     owner_.onPitchEdited();
 
-  // Mark dirty range for synthesis when drag finishes (not during drag)
-  if (previewRangeStart >= 0 && previewRangeEnd > previewRangeStart) {
-    const int f0Size = static_cast<int>(audioData.f0.size());
-    int smoothStart = std::max(0, previewRangeStart - 60);
-    int smoothEnd = std::min(f0Size, previewRangeEnd + 60);
-    owner_.project->setF0DirtyRange(smoothStart, smoothEnd);
-  }
+  // NOTE: Do NOT set f0 dirty range during drag — it accumulates (union of
+  // all ranges) and can grow to cover the entire file. The dirty range is
+  // only needed after drag finishes, which is handled in finishStretchDrag().
 }
 
 void StretchHandler::finishStretchDrag() {
@@ -631,6 +947,8 @@ void StretchHandler::finishStretchDrag() {
     cancelStretchDrag();
     return;
   }
+
+  const bool isRipple = (stretchDrag.mode == StretchMode::Ripple);
 
   auto &audioData = project->getAudioData();
   const int totalFrames = static_cast<int>(audioData.deltaPitch.size());
@@ -650,16 +968,21 @@ void StretchHandler::finishStretchDrag() {
   if (!audioData.melSpectrogram.empty() &&
       rangeEnd <= static_cast<int>(audioData.melSpectrogram.size()) &&
       audioData.waveform.getNumSamples() > 0 && centeredMelComputer) {
-    // Only compute length for notes that actually exist
+    // Only compute HQ mel for notes that were actually stretched (not in ripple shift)
     const int leftLen = stretchDrag.boundary.left
                             ? (currentBoundary - stretchDrag.originalLeftStart)
                             : 0;
-    const int rightLen =
-        stretchDrag.boundary.right
-            ? (stretchDrag.originalRightEnd - currentBoundary)
-            : 0;
+    int rightLen = 0;
+    if (stretchDrag.boundary.right) {
+      if (isRipple && stretchDrag.boundary.left) {
+        // In ripple mode with shared boundary, right note was NOT stretched,
+        // it just shifted. No HQ mel recomputation needed for it.
+        rightLen = 0;
+      } else {
+        rightLen = stretchDrag.originalRightEnd - currentBoundary;
+      }
+    }
 
-    // Use CenteredMelSpectrogram for high-quality time stretching
     const float *globalAudio = audioData.waveform.getReadPointer(0);
     const int numSamples = audioData.waveform.getNumSamples();
 
@@ -713,20 +1036,71 @@ void StretchHandler::finishStretchDrag() {
       newRightMel = CurveResampler::resampleNearest2D(rightMel, rightLen);
     }
 
-    newMel.reserve(static_cast<size_t>(leftLen + rightLen));
-    newMel.insert(newMel.end(), newLeftMel.begin(), newLeftMel.end());
-    newMel.insert(newMel.end(), newRightMel.begin(), newRightMel.end());
+    // Write each note's HQ mel at its actual position in the global array,
+    // rather than checking total size against range (which fails for single-note
+    // and ripple cases where totalMelLen != rangeEnd - rangeStart).
+    const int melSize = static_cast<int>(audioData.melSpectrogram.size());
 
-    if (!newMel.empty() &&
-        static_cast<int>(newMel.size()) == (rangeEnd - rangeStart)) {
-      for (int i = rangeStart; i < rangeEnd; ++i)
-        audioData.melSpectrogram[static_cast<size_t>(i)] =
-            newMel[static_cast<size_t>(i - rangeStart)];
-    } else {
-      newMel.clear();
+    if (!newLeftMel.empty() && stretchDrag.boundary.left) {
+      const int leftStart = stretchDrag.originalLeftStart;
+      for (int i = 0; i < static_cast<int>(newLeftMel.size()); ++i) {
+        const int globalIdx = leftStart + i;
+        if (globalIdx >= 0 && globalIdx < melSize)
+          audioData.melSpectrogram[static_cast<size_t>(globalIdx)] =
+              newLeftMel[static_cast<size_t>(i)];
+      }
     }
+
+    if (!newRightMel.empty() && stretchDrag.boundary.right) {
+      const int rightStart = currentBoundary;
+      for (int i = 0; i < static_cast<int>(newRightMel.size()); ++i) {
+        const int globalIdx = rightStart + i;
+        if (globalIdx >= 0 && globalIdx < melSize)
+          audioData.melSpectrogram[static_cast<size_t>(globalIdx)] =
+              newRightMel[static_cast<size_t>(i)];
+      }
+    }
+
+    // In ripple mode, write the right note's original mel at its shifted position,
+    // and write each ripple note's original mel at its shifted position.
+    if (isRipple) {
+      if (stretchDrag.boundary.right && stretchDrag.boundary.left) {
+        int rightStart = stretchDrag.boundary.right->getStartFrame();
+        const int rightOffset =
+            stretchDrag.originalRightStart - stretchDrag.rangeStartFull;
+        int origRightLen = stretchDrag.originalRightEnd - stretchDrag.originalRightStart;
+        if (rightOffset >= 0 &&
+            rightOffset + origRightLen <=
+                static_cast<int>(stretchDrag.originalMelRangeFull.size())) {
+          for (int i = 0; i < origRightLen; ++i) {
+            if (rightStart + i >= 0 && rightStart + i < melSize)
+              audioData.melSpectrogram[static_cast<size_t>(rightStart + i)] =
+                  stretchDrag.originalMelRangeFull[static_cast<size_t>(rightOffset + i)];
+          }
+        }
+      }
+
+      for (size_t ri = 0; ri < stretchDrag.rippleNotes.size(); ++ri) {
+        auto *rNote = stretchDrag.rippleNotes[ri];
+        const auto &rMel = stretchDrag.rippleMelData[ri];
+        if (!rMel.empty()) {
+          int rStart = rNote->getStartFrame();
+          for (int i = 0; i < static_cast<int>(rMel.size()); ++i) {
+            if (rStart + i >= 0 && rStart + i < melSize)
+              audioData.melSpectrogram[static_cast<size_t>(rStart + i)] =
+                  rMel[static_cast<size_t>(i)];
+          }
+        }
+      }
+    }
+
+    // Build newMel for undo data — must cover full rangeStart..rangeEnd
+    // so that applyState()'s size check (mel.size() == rangeEnd - rangeStart) passes.
+    newMel.assign(audioData.melSpectrogram.begin() + rangeStart,
+                  audioData.melSpectrogram.begin() + std::min(rangeEnd, melSize));
   }
 
+  // Capture final note positions for undo
   int newLeftStart = stretchDrag.boundary.left
                          ? stretchDrag.boundary.left->getStartFrame()
                          : 0;
@@ -775,91 +1149,265 @@ void StretchHandler::finishStretchDrag() {
       }
     }
 
-    // Capture owner_ pointer for the lambda
     auto *ownerPtr = &owner_;
-    auto action = std::make_unique<NoteTimingStretchAction>(
-        stretchDrag.boundary.left, stretchDrag.boundary.right,
-        &audioData.deltaPitch, &audioData.voicedMask,
-        &audioData.melSpectrogram, capturedRangeStart, capturedRangeEnd,
-        stretchDrag.originalLeftStart, stretchDrag.originalLeftEnd,
-        stretchDrag.originalRightStart, stretchDrag.originalRightEnd,
-        newLeftStart, newLeftEnd, currentBoundary,
-        stretchDrag.originalRightEnd, stretchDrag.originalLeftClip,
-        newLeftClip, stretchDrag.originalRightClip, newRightClip,
-        std::move(oldDelta), std::move(newDelta), std::move(oldVoiced),
-        std::move(newVoiced), std::move(oldMel), std::move(newMel),
-        [ownerPtr](int startFrame, int endFrame) {
-          if (!ownerPtr->project)
-            return;
-          PitchCurveProcessor::rebuildBaseFromNotes(*ownerPtr->project);
-          ownerPtr->invalidateBasePitchCache();
-          const int f0Size =
-              static_cast<int>(ownerPtr->project->getAudioData().f0.size());
-          int smoothStart = std::max(0, startFrame - 60);
-          int smoothEnd = std::min(f0Size, endFrame + 60);
-          ownerPtr->project->setF0DirtyRange(smoothStart, smoothEnd);
-        });
-    owner_.undoManager->addAction(std::move(action));
+
+    if (isRipple) {
+      // Ripple undo action: captures both the stretched note and all shifted notes.
+      // The right boundary note also shifts in ripple mode, so include it
+      // in the ripple notes list for proper undo/redo of its position.
+      std::vector<Note *> allRippleNotes;
+      std::vector<int> allOldStarts;
+      std::vector<int> allOldEnds;
+      std::vector<int> allNewStarts;
+      std::vector<int> allNewEnds;
+
+      // Prepend right note if it exists (its position shifted during ripple)
+      if (stretchDrag.boundary.right) {
+        allRippleNotes.push_back(stretchDrag.boundary.right);
+        allOldStarts.push_back(stretchDrag.originalRightStart);
+        allOldEnds.push_back(stretchDrag.originalRightEnd);
+        allNewStarts.push_back(stretchDrag.boundary.right->getStartFrame());
+        allNewEnds.push_back(stretchDrag.boundary.right->getEndFrame());
+      }
+
+      // Append the rest of the ripple notes
+      for (size_t ri = 0; ri < stretchDrag.rippleNotes.size(); ++ri) {
+        allRippleNotes.push_back(stretchDrag.rippleNotes[ri]);
+        allOldStarts.push_back(stretchDrag.originalRippleStarts[ri]);
+        allOldEnds.push_back(stretchDrag.originalRippleEnds[ri]);
+        allNewStarts.push_back(stretchDrag.rippleNotes[ri]->getStartFrame());
+        allNewEnds.push_back(stretchDrag.rippleNotes[ri]->getEndFrame());
+      }
+
+      auto action = std::make_unique<NoteTimingRippleAction>(
+          stretchDrag.boundary.left, stretchDrag.boundary.right,
+          std::move(allRippleNotes),
+          &audioData.deltaPitch, &audioData.voicedMask,
+          &audioData.melSpectrogram, capturedRangeStart, capturedRangeEnd,
+          stretchDrag.originalLeftStart, stretchDrag.originalLeftEnd,
+          newLeftStart, newLeftEnd,
+          std::move(allOldStarts),
+          std::move(allOldEnds),
+          std::move(allNewStarts),
+          std::move(allNewEnds),
+          stretchDrag.originalLeftClip, newLeftClip,
+          stretchDrag.originalRightClip, newRightClip,
+          std::move(oldDelta), std::move(newDelta),
+          std::move(oldVoiced), std::move(newVoiced),
+          std::move(oldMel), std::move(newMel),
+          [ownerPtr](int startFrame, int endFrame) {
+            if (!ownerPtr->project)
+              return;
+            PitchCurveProcessor::rebuildBaseFromNotes(*ownerPtr->project);
+            ownerPtr->invalidateBasePitchCache();
+            const int f0Size =
+                static_cast<int>(ownerPtr->project->getAudioData().f0.size());
+            int smoothStart = std::max(0, startFrame - 60);
+            int smoothEnd = std::min(f0Size, endFrame + 60);
+            ownerPtr->project->setF0DirtyRange(smoothStart, smoothEnd);
+          });
+      owner_.undoManager->addAction(std::move(action));
+    } else {
+      // Absorb undo action
+      auto action = std::make_unique<NoteTimingStretchAction>(
+          stretchDrag.boundary.left, stretchDrag.boundary.right,
+          &audioData.deltaPitch, &audioData.voicedMask,
+          &audioData.melSpectrogram, capturedRangeStart, capturedRangeEnd,
+          stretchDrag.originalLeftStart, stretchDrag.originalLeftEnd,
+          stretchDrag.originalRightStart, stretchDrag.originalRightEnd,
+          newLeftStart, newLeftEnd, currentBoundary,
+          stretchDrag.originalRightEnd, stretchDrag.originalLeftClip,
+          newLeftClip, stretchDrag.originalRightClip, newRightClip,
+          std::move(oldDelta), std::move(newDelta), std::move(oldVoiced),
+          std::move(newVoiced), std::move(oldMel), std::move(newMel),
+          [ownerPtr](int startFrame, int endFrame) {
+            if (!ownerPtr->project)
+              return;
+            PitchCurveProcessor::rebuildBaseFromNotes(*ownerPtr->project);
+            ownerPtr->invalidateBasePitchCache();
+            const int f0Size =
+                static_cast<int>(ownerPtr->project->getAudioData().f0.size());
+            int smoothStart = std::max(0, startFrame - 60);
+            int smoothEnd = std::min(f0Size, endFrame + 60);
+            ownerPtr->project->setF0DirtyRange(smoothStart, smoothEnd);
+          });
+      owner_.undoManager->addAction(std::move(action));
+    }
   }
 
-  // Restore waveform regions outside current note boundaries to original audio.
+  // Shift or restore waveform data depending on stretch mode.
   if (audioData.waveform.getNumSamples() > 0) {
     const int totalSamples = audioData.waveform.getNumSamples();
     const int numChannels = audioData.waveform.getNumChannels();
-    const auto &origWave =
-        audioData.originalWaveform.getNumSamples() > 0
-            ? audioData.originalWaveform
-            : audioData.waveform;
-    const int origChannels = origWave.getNumChannels();
-    const int origSamples = origWave.getNumSamples();
 
-    // Calculate the sample range that should remain as note audio
-    int noteStartSample, noteEndSample;
-    if (stretchDrag.boundary.left && stretchDrag.boundary.right) {
-      noteStartSample = stretchDrag.rangeStartFull * HOP_SIZE;
-      noteEndSample = stretchDrag.rangeEndFull * HOP_SIZE;
-    } else if (stretchDrag.boundary.left) {
-      noteStartSample = stretchDrag.originalLeftStart * HOP_SIZE;
-      noteEndSample = currentBoundary * HOP_SIZE;
+    if (isRipple) {
+      // Ripple mode: shift existing waveform data for all shifted notes
+      // to their new positions, then silence the vacated gaps. This avoids
+      // costly re-inference of unchanged audio content.
+      //
+      // IMPORTANT: We must also shift originalWaveform in the same way.
+      // computeSynthesisRange() expands the synthesis range beyond the
+      // stretched note into shifted notes (adjacent voiced frames bridge
+      // gaps ≤ 16 frames). The vocoder blends synthesized audio with
+      // originalWaveform for unvoiced gaps (blend=0.0) and edge stitching.
+      // If originalWaveform is NOT shifted, the blend writes stale content
+      // from the original recording at old note positions, causing:
+      //   - Duplicate audio fragments (note content at both old and new pos)
+      //   - Breath sounds overwritten by originalWaveform's old content
+      const int rippleShiftFrames =
+          stretchDrag.currentBoundary - stretchDrag.originalBoundary;
+      const int shiftSamples = rippleShiftFrames * HOP_SIZE;
+
+      if (shiftSamples != 0) {
+        // Source range: original positions of all shifted content
+        int srcStartFrame = stretchDrag.originalRightStart;
+        int srcEndFrame = stretchDrag.originalRightEnd;
+        if (!stretchDrag.originalRippleEnds.empty())
+          srcEndFrame =
+              std::max(srcEndFrame, stretchDrag.originalRippleEnds.back());
+
+        int srcStartSample =
+            std::clamp(srcStartFrame * HOP_SIZE, 0, totalSamples);
+        int srcEndSample =
+            std::clamp(srcEndFrame * HOP_SIZE, 0, totalSamples);
+        int count = srcEndSample - srcStartSample;
+
+        int dstStartSample =
+            std::clamp(srcStartSample + shiftSamples, 0, totalSamples);
+        int moveCount = std::min(count, totalSamples - dstStartSample);
+
+        // Helper lambda: shift + silence a waveform buffer in-place.
+        auto shiftBuffer = [&](juce::AudioBuffer<float> &buffer) {
+          const int bufSamples = buffer.getNumSamples();
+          const int bufChannels = buffer.getNumChannels();
+          if (bufSamples == 0)
+            return;
+
+          // Recompute clamped values for this buffer's size
+          int bSrcStart = std::clamp(srcStartFrame * HOP_SIZE, 0, bufSamples);
+          int bSrcEnd = std::clamp(srcEndFrame * HOP_SIZE, 0, bufSamples);
+          int bCount = bSrcEnd - bSrcStart;
+          int bDstStart = std::clamp(bSrcStart + shiftSamples, 0, bufSamples);
+          int bMoveCount = std::min(bCount, bufSamples - bDstStart);
+
+          for (int ch = 0; ch < bufChannels; ++ch) {
+            float *buf = buffer.getWritePointer(ch);
+
+            if (bMoveCount > 0)
+              std::memmove(buf + bDstStart, buf + bSrcStart,
+                           static_cast<size_t>(bMoveCount) * sizeof(float));
+
+            if (shiftSamples > 0) {
+              int silStart = std::max(0, bSrcStart);
+              int silEnd = std::min(bDstStart, bufSamples);
+              if (silEnd > silStart)
+                std::fill(buf + silStart, buf + silEnd, 0.0f);
+            } else {
+              int silStart = std::max(0, bDstStart + bMoveCount);
+              int silEnd = std::min(bSrcEnd, bufSamples);
+              if (silEnd > silStart)
+                std::fill(buf + silStart, buf + silEnd, 0.0f);
+            }
+          }
+        };
+
+        // Shift both waveform and originalWaveform
+        shiftBuffer(audioData.waveform);
+        shiftBuffer(audioData.originalWaveform);
+      }
     } else {
-      noteStartSample = currentBoundary * HOP_SIZE;
-      noteEndSample = stretchDrag.originalRightEnd * HOP_SIZE;
+      // Absorb mode: restore waveform outside note boundaries to original.
+      const auto &origWave =
+          audioData.originalWaveform.getNumSamples() > 0
+              ? audioData.originalWaveform
+              : audioData.waveform;
+      const int origChannels = origWave.getNumChannels();
+      const int origSamples = origWave.getNumSamples();
+
+      int noteStartSample, noteEndSample;
+      if (stretchDrag.boundary.left && stretchDrag.boundary.right) {
+        noteStartSample = stretchDrag.rangeStartFull * HOP_SIZE;
+        noteEndSample = stretchDrag.rangeEndFull * HOP_SIZE;
+      } else if (stretchDrag.boundary.left) {
+        noteStartSample = stretchDrag.originalLeftStart * HOP_SIZE;
+        noteEndSample = currentBoundary * HOP_SIZE;
+      } else {
+        noteStartSample = currentBoundary * HOP_SIZE;
+        noteEndSample = stretchDrag.originalRightEnd * HOP_SIZE;
+      }
+
+      const int rangeStartSample = stretchDrag.rangeStartFull * HOP_SIZE;
+      const int rangeEndSample = stretchDrag.rangeEndFull * HOP_SIZE;
+
+      for (int ch = 0; ch < numChannels; ++ch) {
+        float *dst = audioData.waveform.getWritePointer(ch);
+        const float *srcOrig = origWave.getReadPointer(
+            std::min(ch, std::max(0, origChannels - 1)));
+
+        if (rangeStartSample < noteStartSample) {
+          const int silenceEnd = std::min(noteStartSample, totalSamples);
+          for (int i = std::max(0, rangeStartSample); i < silenceEnd; ++i) {
+            if (i < origSamples)
+              dst[i] = srcOrig[i];
+          }
+        }
+
+        if (rangeEndSample > noteEndSample) {
+          const int silenceStart = std::max(0, noteEndSample);
+          const int silenceEnd = std::min(rangeEndSample, totalSamples);
+          for (int i = silenceStart; i < silenceEnd; ++i) {
+            if (i < origSamples)
+              dst[i] = srcOrig[i];
+          }
+        }
+      }
     }
+  }
 
-    // Restore waveform outside the note boundaries
-    const int rangeStartSample = stretchDrag.rangeStartFull * HOP_SIZE;
-    const int rangeEndSample = stretchDrag.rangeEndFull * HOP_SIZE;
-
-    for (int ch = 0; ch < numChannels; ++ch) {
-      float *dst = audioData.waveform.getWritePointer(ch);
-      const float *srcOrig = origWave.getReadPointer(
-          std::min(ch, std::max(0, origChannels - 1)));
-
-      // Restore before note start (if within our range)
-      if (rangeStartSample < noteStartSample) {
-        const int silenceEnd = std::min(noteStartSample, totalSamples);
-        for (int i = std::max(0, rangeStartSample); i < silenceEnd; ++i) {
-          if (i < origSamples)
-            dst[i] = srcOrig[i];
-        }
-      }
-
-      // Restore after note end (if within our range)
-      if (rangeEndSample > noteEndSample) {
-        const int silenceStart = std::max(0, noteEndSample);
-        const int silenceEnd = std::min(rangeEndSample, totalSamples);
-        for (int i = silenceStart; i < silenceEnd; ++i) {
-          if (i < origSamples)
-            dst[i] = srcOrig[i];
-        }
-      }
+  // Compute tight dirty range based on actual affected note positions.
+  int dirtyStart, dirtyEnd;
+  if (isRipple) {
+    // Ripple mode: only the stretched note needs resynthesis.
+    // Shifted notes' waveform was moved to new positions above.
+    if (stretchDrag.boundary.left) {
+      dirtyStart = stretchDrag.boundary.left->getStartFrame();
+      dirtyEnd = stretchDrag.currentBoundary;
+    } else {
+      dirtyStart = stretchDrag.currentBoundary;
+      dirtyEnd = stretchDrag.boundary.right->getEndFrame();
+    }
+    // Clear dirty marks on shifted notes so getDirtyFrameRange()
+    // does not expand the synthesis range to cover them all.
+    if (stretchDrag.boundary.right)
+      stretchDrag.boundary.right->clearDirty();
+    for (auto *rNote : stretchDrag.rippleNotes)
+      rNote->clearDirty();
+  } else {
+    // Absorb mode
+    if (stretchDrag.boundary.left && stretchDrag.boundary.right) {
+      dirtyStart = stretchDrag.boundary.left->getStartFrame();
+      dirtyEnd = stretchDrag.boundary.right->getEndFrame();
+    } else if (stretchDrag.boundary.left) {
+      dirtyStart = stretchDrag.boundary.left->getStartFrame();
+      dirtyEnd = currentBoundary;
+    } else {
+      dirtyStart = currentBoundary;
+      dirtyEnd = stretchDrag.boundary.right->getEndFrame();
     }
   }
 
   const int f0Size = static_cast<int>(audioData.f0.size());
-  int smoothStart = std::max(0, rangeStart - 60);
-  int smoothEnd = std::min(f0Size, rangeEnd + 60);
+  int smoothStart = std::max(0, dirtyStart - 60);
+  int smoothEnd = std::min(f0Size, dirtyEnd + 60);
   project->setF0DirtyRange(smoothStart, smoothEnd);
+
+  // For shared-boundary ripple stretches, set a synthesis ceiling so that
+  // computeSynthesisRange() doesn't expand into the shifted notes.  Their
+  // waveform (and originalWaveform) was already moved in place above, and
+  // re-synthesizing them would overwrite the shifted audio, causing
+  // duplicate fragments and discontinuities.
+  if (isRipple && stretchDrag.boundary.left && stretchDrag.boundary.right)
+    project->setSynthesisCeiling(stretchDrag.boundary.right->getStartFrame());
 
   if (owner_.onPitchEditFinished)
     owner_.onPitchEditFinished();
@@ -922,6 +1470,11 @@ void StretchHandler::cancelStretchDrag() {
     if (!stretchDrag.originalRightClip.empty())
       stretchDrag.boundary.right->setClipWaveform(
           stretchDrag.originalRightClip);
+  }
+
+  // Restore ripple notes
+  if (stretchDrag.mode == StretchMode::Ripple) {
+    restoreRippleNotes();
   }
 
   PitchCurveProcessor::rebuildBaseFromNotes(*project);

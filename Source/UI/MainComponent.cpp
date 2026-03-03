@@ -120,6 +120,9 @@ MainComponent::MainComponent(bool enableAudioDevice)
   };
   toolbar.onZoomChanged = [this](float pps) { onZoomChanged(pps); };
   toolbar.onEditModeChanged = [this](EditMode mode) { setEditMode(mode); };
+  toolbar.onRippleModeToggled = [this](bool isRipple) {
+    pianoRoll.setStretchMode(isRipple ? StretchMode::Ripple : StretchMode::Absorb);
+  };
   toolbar.onLoopToggled = [this](bool enabled) {
     auto *project = getProject();
     if (!project)
@@ -346,7 +349,7 @@ void MainComponent::resized() {
 #endif
 
   // Toolbar
-  toolbar.setBounds(bounds.removeFromTop(52));
+  toolbar.setBounds(bounds.removeFromTop(60));
 
   // Workspace takes remaining space (includes piano roll, panels, and sidebar)
   workspace.setBounds(bounds);
@@ -1098,6 +1101,7 @@ void MainComponent::resynthesizeIncremental() {
           return;
         }
 
+        safeThis->pianoRoll.invalidateWaveformCache();
         safeThis->pianoRoll.repaint();
         if (safeThis->isPluginMode())
           safeThis->notifyProjectDataChanged();

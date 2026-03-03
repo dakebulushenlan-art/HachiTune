@@ -39,6 +39,14 @@ enum class EditMode {
 };
 
 /**
+ * Stretch sub-mode: determines behavior when stretching notes.
+ */
+enum class StretchMode {
+  Absorb, // Adjacent note absorbs the length change (zero-sum, total timeline unchanged)
+  Ripple  // Subsequent notes shift to accommodate the length change (timeline grows/shrinks)
+};
+
+/**
  * Piano roll component for displaying and editing notes.
  * Supports DPI-aware scaling for multi-monitor setups.
  */
@@ -126,6 +134,17 @@ public:
   void setEditMode(EditMode mode);
   EditMode getEditMode() const { return editMode; }
 
+  // Stretch sub-mode (Absorb vs Ripple)
+  void setStretchMode(StretchMode mode) { stretchMode = mode; repaint(); }
+  StretchMode getStretchMode() const { return stretchMode; }
+
+  // Get effective stretch mode (accounts for Alt modifier override)
+  StretchMode getEffectiveStretchMode(const juce::ModifierKeys &mods) const {
+    if (mods.isAltDown())
+      return stretchMode == StretchMode::Absorb ? StretchMode::Ripple : StretchMode::Absorb;
+    return stretchMode;
+  }
+
   // Cancel current drawing operation (used when undo is triggered during
   // drawing)
   void cancelDrawing();
@@ -166,6 +185,7 @@ public:
   std::function<void(float)> onZoomChanged;
   std::function<void(double)> onScrollChanged;
   std::function<void(const LoopRange &)> onLoopRangeChanged;
+  std::function<void(StretchMode)> onStretchModeChanged;
   std::function<void(int, int)>
       onReinterpolateUV; // Called to re-infer UV regions (startFrame, endFrame)
 
@@ -235,6 +255,7 @@ private:
 
   // Edit mode
   EditMode editMode = EditMode::Select;
+  StretchMode stretchMode = StretchMode::Absorb;
 
   // View settings
   bool showDeltaPitch = true;
@@ -285,6 +306,10 @@ private:
   bool cacheInvalidated = true; // Start invalidated, force first calculation
 
 public:
+  void invalidateWaveformCache() {
+    cachedScrollX = -1.0;
+  }
+
   void invalidateBasePitchCache() {
     cacheInvalidated = true;
     cachedNoteCount = 0;

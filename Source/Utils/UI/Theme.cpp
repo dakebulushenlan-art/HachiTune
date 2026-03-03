@@ -1,39 +1,65 @@
 #include "Theme.h"
 
-// Dark neon synth theme palette
-const juce::Colour APP_COLOR_BACKGROUND = juce::Colour(0xFF161A24u);
-const juce::Colour APP_COLOR_SURFACE = juce::Colour(0xFF1E2330u);
-const juce::Colour APP_COLOR_SURFACE_ALT = juce::Colour(0xFF1A1F2Bu);
-const juce::Colour APP_COLOR_SURFACE_RAISED = juce::Colour(0xFF242B3Bu);
-const juce::Colour APP_COLOR_BORDER = juce::Colour(0xFF2A3244u);
-const juce::Colour APP_COLOR_BORDER_SUBTLE = juce::Colour(0xFF202735u);
-const juce::Colour APP_COLOR_BORDER_HIGHLIGHT = juce::Colour(0xFF3A4460u);
-const juce::Colour APP_COLOR_GRID = juce::Colour(0xFF252C3Du);
-const juce::Colour APP_COLOR_GRID_BAR = juce::Colour(0xFF323B50u);
-const juce::Colour APP_COLOR_TIMELINE = juce::Colour(0xFF1A202Cu);
-const juce::Colour APP_COLOR_PIANO_WHITE = juce::Colour(0xFF2A3245u);
-const juce::Colour APP_COLOR_PIANO_BLACK = juce::Colour(0xFF1C2231u);
-const juce::Colour APP_COLOR_PIANO_TEXT = juce::Colour(0xFFCAD3E6u);
-const juce::Colour APP_COLOR_PIANO_TEXT_DIM = juce::Colour(0xFF9CA6BDu);
-const juce::Colour APP_COLOR_TEXT_PRIMARY = juce::Colour(0xFFE6E9F2u);
-const juce::Colour APP_COLOR_TEXT_MUTED = juce::Colour(0xFF9AA4B8u);
-const juce::Colour APP_COLOR_PITCH_CURVE = juce::Colour(0xFFEAEAF2u);
-const juce::Colour APP_COLOR_NOTE_NORMAL = juce::Colour(0xFF7B6CFFu);
-const juce::Colour APP_COLOR_NOTE_SELECTED = juce::Colour(0xFF9C8CFFu);
-const juce::Colour APP_COLOR_NOTE_HOVER = juce::Colour(0xFF8A7BFFu);
-const juce::Colour APP_COLOR_PRIMARY = juce::Colour(0xFF7B6CFFu);
-const juce::Colour APP_COLOR_PRIMARY_GLOW = juce::Colour(0xFFB3A8FFu);
-const juce::Colour APP_COLOR_SECONDARY = juce::Colour(0xFF4FC3F7u);
-const juce::Colour APP_COLOR_WAVEFORM = juce::Colour(0xFF2B3446u);
-const juce::Colour APP_COLOR_KNOB_SHADOW = juce::Colour(0xFF0D0F16u);
-const juce::Colour APP_COLOR_ALERT_WARNING = juce::Colour(0xFFFFAA00u);
-const juce::Colour APP_COLOR_ALERT_ERROR = juce::Colour(0xFFFF4444u);
-const juce::Colour APP_COLOR_OVERLAY_DIM = juce::Colour(0xB0000000u);
-const juce::Colour APP_COLOR_OVERLAY_SHADOW = juce::Colour(0x90000000u);
-const juce::Colour APP_COLOR_SELECTION_OVERLAY = juce::Colour(0x18000000u);
-const juce::Colour APP_COLOR_SELECTION_HIGHLIGHT = juce::Colour(0x403080FFu);
-const juce::Colour APP_COLOR_SELECTION_HIGHLIGHT_STRONG = juce::Colour(0xC03080FFu);
-const juce::Colour APP_COLOR_TITLEBAR_CLOSE_MAC = juce::Colour(0xFFFF5F57u);
+// Premium dark theme palette — refined depth with warm accent highlights
+// Background hierarchy: BACKGROUND < SURFACE < SURFACE_ALT < SURFACE_RAISED
+// Each layer is subtly brighter, creating natural elevation perception.
+
+// ── Core backgrounds ──────────────────────────────────────────────
+const juce::Colour APP_COLOR_BACKGROUND          = juce::Colour(0xFF0F1117u);  // Deep charcoal base
+const juce::Colour APP_COLOR_SURFACE             = juce::Colour(0xFF161922u);  // Primary surface
+const juce::Colour APP_COLOR_SURFACE_ALT         = juce::Colour(0xFF181C27u);  // Recessed/inset surface (controls, inputs)
+const juce::Colour APP_COLOR_SURFACE_RAISED      = juce::Colour(0xFF222737u);  // Elevated cards/popups
+
+// ── Borders ───────────────────────────────────────────────────────
+const juce::Colour APP_COLOR_BORDER              = juce::Colour(0xFF282E40u);  // Standard border
+const juce::Colour APP_COLOR_BORDER_SUBTLE       = juce::Colour(0xFF1E2333u);  // Barely visible divider
+const juce::Colour APP_COLOR_BORDER_HIGHLIGHT    = juce::Colour(0xFF3D4562u);  // Focus / active border
+
+// ── Piano roll grid & timeline ────────────────────────────────────
+const juce::Colour APP_COLOR_GRID                = juce::Colour(0xFF1E2333u);  // Subdivision lines
+const juce::Colour APP_COLOR_GRID_BAR            = juce::Colour(0xFF2C3348u);  // Bar / beat lines
+const juce::Colour APP_COLOR_TIMELINE            = juce::Colour(0xFF131620u);  // Timeline ruler background
+
+// ── Piano keys ────────────────────────────────────────────────────
+const juce::Colour APP_COLOR_PIANO_WHITE         = juce::Colour(0xFF272D40u);  // White key face
+const juce::Colour APP_COLOR_PIANO_BLACK         = juce::Colour(0xFF171B28u);  // Black key face
+const juce::Colour APP_COLOR_PIANO_TEXT          = juce::Colour(0xFFD0D6E8u);  // Active note label
+const juce::Colour APP_COLOR_PIANO_TEXT_DIM      = juce::Colour(0xFF7E8899u);  // Inactive note label
+
+// ── Text ──────────────────────────────────────────────────────────
+const juce::Colour APP_COLOR_TEXT_PRIMARY         = juce::Colour(0xFFECEFF5u);  // High-contrast primary text
+const juce::Colour APP_COLOR_TEXT_MUTED           = juce::Colour(0xFF8891A6u);  // Secondary / caption text
+
+// ── Pitch & notes ─────────────────────────────────────────────────
+const juce::Colour APP_COLOR_PITCH_CURVE          = juce::Colour(0xFFF0F0F8u);  // Pitch contour line
+const juce::Colour APP_COLOR_NOTE_NORMAL          = juce::Colour(0xFF7C6AFFu);  // Default note block
+const juce::Colour APP_COLOR_NOTE_SELECTED        = juce::Colour(0xFFA594FFu);  // Selected note (brighter)
+const juce::Colour APP_COLOR_NOTE_HOVER           = juce::Colour(0xFF8E7EFFu);  // Hovered note
+
+// ── Accent colours ────────────────────────────────────────────────
+const juce::Colour APP_COLOR_PRIMARY              = juce::Colour(0xFF7C6AFFu);  // Brand purple
+const juce::Colour APP_COLOR_PRIMARY_GLOW         = juce::Colour(0xFFBAAEFFu);  // Glow / highlight ring
+const juce::Colour APP_COLOR_SECONDARY            = juce::Colour(0xFF44D1DBu);  // Teal-cyan complement
+
+// ── Waveform ──────────────────────────────────────────────────────
+const juce::Colour APP_COLOR_WAVEFORM             = juce::Colour(0xFF232940u);  // Waveform background tint
+
+// ── Knobs & shadows ───────────────────────────────────────────────
+const juce::Colour APP_COLOR_KNOB_SHADOW          = juce::Colour(0xFF08090Du);  // Deep knob drop-shadow
+
+// ── Alerts ────────────────────────────────────────────────────────
+const juce::Colour APP_COLOR_ALERT_WARNING        = juce::Colour(0xFFFFB626u);  // Warm amber warning
+const juce::Colour APP_COLOR_ALERT_ERROR          = juce::Colour(0xFFFF4D5Au);  // Softer red error
+
+// ── Overlays & selections ─────────────────────────────────────────
+const juce::Colour APP_COLOR_OVERLAY_DIM          = juce::Colour(0xC0000008u);  // Modal backdrop (slightly blue-black)
+const juce::Colour APP_COLOR_OVERLAY_SHADOW       = juce::Colour(0xA0000008u);  // Drop-shadow fill
+const juce::Colour APP_COLOR_SELECTION_OVERLAY    = juce::Colour(0x18000000u);  // Rubber-band fill
+const juce::Colour APP_COLOR_SELECTION_HIGHLIGHT  = juce::Colour(0x406C5AFFu);  // Selection tint (matches primary)
+const juce::Colour APP_COLOR_SELECTION_HIGHLIGHT_STRONG = juce::Colour(0xC06C5AFFu); // Strong selection
+
+// ── Title bar (macOS traffic lights & Windows close hover) ────────
+const juce::Colour APP_COLOR_TITLEBAR_CLOSE_MAC    = juce::Colour(0xFFFF5F57u);
 const juce::Colour APP_COLOR_TITLEBAR_MINIMIZE_MAC = juce::Colour(0xFFFEBC2Eu);
 const juce::Colour APP_COLOR_TITLEBAR_MAXIMIZE_MAC = juce::Colour(0xFF28C840u);
-const juce::Colour APP_COLOR_TITLEBAR_CLOSE_HOVER = juce::Colour(0xFFE81123u);
+const juce::Colour APP_COLOR_TITLEBAR_CLOSE_HOVER  = juce::Colour(0xFFE81123u);

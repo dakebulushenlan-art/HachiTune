@@ -3,24 +3,32 @@
 #include "../JuceHeader.h"
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
+#include "Components/AppFont.h"
 
 class CustomMenuBarLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     CustomMenuBarLookAndFeel()
     {
-        setColour(juce::PopupMenu::backgroundColourId, APP_COLOR_SURFACE);
+        setColour(juce::PopupMenu::backgroundColourId, juce::Colours::transparentBlack);
         setColour(juce::PopupMenu::textColourId, APP_COLOR_TEXT_PRIMARY);
         setColour(juce::PopupMenu::headerTextColourId, APP_COLOR_TEXT_PRIMARY);
-        setColour(juce::PopupMenu::highlightedBackgroundColourId, APP_COLOR_PRIMARY);
-        setColour(juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId, APP_COLOR_PRIMARY.withAlpha(0.25f));
+        setColour(juce::PopupMenu::highlightedTextColourId, APP_COLOR_TEXT_PRIMARY);
     }
 
     void drawPopupMenuBackground(juce::Graphics& g, int width, int height) override
     {
-        g.fillAll(APP_COLOR_SURFACE);
-        g.setColour(APP_COLOR_BORDER);
-        g.drawRect(0, 0, width, height, 1);
+        const auto bounds = juce::Rectangle<float>(
+            0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height));
+        const auto area = bounds.reduced(0.5f);
+        juce::Path shape;
+        shape.addRoundedRectangle(area, 8.0f);
+
+        g.setColour(APP_COLOR_SURFACE_ALT.withMultipliedBrightness(0.92f));
+        g.fillPath(shape);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.6f));
+        g.strokePath(shape, juce::PathStrokeType(0.75f));
     }
 
     void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,
@@ -33,9 +41,9 @@ public:
     {
         if (isSeparator)
         {
-            auto r = area.reduced(5, 0);
+            auto r = area.reduced(10, 0);
             r.removeFromTop(r.getHeight() / 2 - 1);
-            g.setColour(APP_COLOR_GRID_BAR);
+            g.setColour(APP_COLOR_BORDER_SUBTLE);
             g.fillRect(r.removeFromTop(1));
         }
         else
@@ -45,13 +53,14 @@ public:
 
             if (isHighlighted && isActive)
             {
-                g.setColour(APP_COLOR_PRIMARY);
-                g.fillRect(area);
-                textColourToUse = juce::Colours::white;
+                // Pill-shaped highlight
+                g.setColour(APP_COLOR_PRIMARY.withAlpha(0.22f));
+                g.fillRoundedRectangle(area.toFloat().reduced(4.0f, 1.0f), 6.0f);
+                textColourToUse = APP_COLOR_TEXT_PRIMARY;
             }
 
             if (!isActive)
-                textColourToUse = textColourToUse.withAlpha(0.5f);
+                textColourToUse = textColourToUse.withAlpha(0.4f);
 
             auto r = area.reduced(1);
             g.setColour(textColourToUse);
@@ -86,12 +95,17 @@ public:
 
             if (shortcutKeyText.isNotEmpty())
             {
-                auto f2 = getPopupMenuFont();
-                f2.setHeight(f2.getHeight() * 0.75f);
-                g.setFont(f2);
+                g.setFont(AppFont::getFont(12.0f));
+                g.setColour(textColourToUse.withAlpha(0.6f));
                 g.drawText(shortcutKeyText, r, juce::Justification::centredRight, true);
             }
         }
+    }
+
+    void drawResizableFrame(juce::Graphics&, int, int,
+                            const juce::BorderSize<int>&) override
+    {
+        // Suppress square frame around rounded popup
     }
 
     void drawMenuBarBackground(juce::Graphics& g, int width, int height,
@@ -99,7 +113,8 @@ public:
     {
         g.fillAll(APP_COLOR_SURFACE_ALT);
         g.setColour(APP_COLOR_BORDER_SUBTLE);
-        g.drawLine(0, height - 1, width, height - 1);
+        g.drawLine(0.0f, static_cast<float>(height) - 0.5f,
+                   static_cast<float>(width), static_cast<float>(height) - 0.5f, 1.0f);
     }
 
     void drawMenuBarItem(juce::Graphics& g, int width, int height,
@@ -109,22 +124,19 @@ public:
     {
         if (isMenuOpen || isMouseOverItem)
         {
-            g.setColour(APP_COLOR_PRIMARY);
-            g.fillRect(0, 0, width, height);
+            // Subtle rounded highlight instead of solid primary block
+            g.setColour(APP_COLOR_PRIMARY.withAlpha(0.18f));
+            g.fillRoundedRectangle(juce::Rectangle<float>(1.0f, 2.0f,
+                static_cast<float>(width) - 2.0f, static_cast<float>(height) - 4.0f), 5.0f);
         }
 
         g.setColour(APP_COLOR_TEXT_PRIMARY);
-        // Use larger DPI-aware font size
-        float scaleFactor = juce::Desktop::getInstance().getGlobalScaleFactor();
-        g.setFont(
-            juce::Font(juce::FontOptions(height * 0.75f * scaleFactor)));
+        g.setFont(AppFont::getFont(static_cast<float>(height) * 0.6f));
         g.drawFittedText(itemText, 0, 0, width, height, juce::Justification::centred, 1);
     }
 
     juce::Font getPopupMenuFont() override
     {
-        // Use larger DPI-aware font size
-        float scaleFactor = juce::Desktop::getInstance().getGlobalScaleFactor();
-        return juce::Font(juce::FontOptions(16.0f * scaleFactor));
+        return AppFont::getFont(14.0f);
     }
 };

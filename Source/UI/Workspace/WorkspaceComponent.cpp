@@ -5,7 +5,7 @@ WorkspaceComponent::WorkspaceComponent()
     setOpaque(true);
 
     mainCard.setPadding(0);
-    mainCard.setCornerRadius(10.0f);
+    mainCard.setCornerRadius(8.0f);
     mainCard.setBorderColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.35f));
     addAndMakeVisible(mainCard);
     addAndMakeVisible(panelContainer);
@@ -16,19 +16,16 @@ WorkspaceComponent::WorkspaceComponent()
 
 void WorkspaceComponent::paint(juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat();
-    juce::ColourGradient bgGradient(
-        APP_COLOR_BACKGROUND, bounds.getX(), bounds.getY(),
-        APP_COLOR_SURFACE_ALT, bounds.getX(), bounds.getBottom(), false);
-    g.setGradientFill(bgGradient);
-    g.fillAll();
+    // Clean flat background
+    g.fillAll(APP_COLOR_BACKGROUND);
 }
 
 void WorkspaceComponent::resized()
 {
     auto bounds = getLocalBounds();
-    const int margin = 10;
-    const int topMargin = 6; // Slight spacing from toolbar
+    const int margin = 8;
+    const int topMargin = 4; // Tight spacing from toolbar
+    const int panelGap = 8; // Gap between piano roll and panel
 
     // Apply top margin first so sidebar aligns with content
     bounds.removeFromTop(topMargin);
@@ -55,7 +52,7 @@ void WorkspaceComponent::resized()
     {
         // Panel on right, consistent margin between sidebar and panel
         auto panelBounds = bounds.removeFromRight(panelContainerWidth);
-        bounds.removeFromRight(margin); // Gap between piano roll and panel
+        bounds.removeFromRight(panelGap); // Gap between piano roll and panel
         panelContainer.setBounds(panelBounds);
     }
 

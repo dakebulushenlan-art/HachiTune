@@ -125,6 +125,8 @@ void Project::clearAllDirty()
     // Also clear F0 dirty range
     f0DirtyStart = -1;
     f0DirtyEnd = -1;
+    // Clear synthesis ceiling (set by ripple stretch)
+    synthesisCeiling_ = -1;
 }
 
 bool Project::hasDirtyNotes() const

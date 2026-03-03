@@ -2,6 +2,7 @@
 
 #include "../../JuceHeader.h"
 #include "../../Utils/UI/Theme.h"
+#include "AppFont.h"
 #include <functional>
 #include <memory>
 
@@ -22,50 +23,56 @@ public:
     StyledMessageBox(const juce::String& title, const juce::String& message, IconType iconTypeValue = NoIcon)
         : titleText(title), messageText(message), iconType(iconTypeValue)
     {
-        setOpaque(true);
-        
+        setOpaque(false);
+
         // Add OK button
         okButton = std::make_unique<juce::TextButton>("OK");
-        okButton->setSize(80, 32);
-        okButton->onClick = [this] { 
+        okButton->setSize(90, 34);
+        okButton->onClick = [this] {
             if (onClose != nullptr)
                 onClose();
         };
         addAndMakeVisible(okButton.get());
-        
+
         // Style the button
         okButton->setColour(juce::TextButton::buttonColourId, APP_COLOR_PRIMARY);
         okButton->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        okButton->setColour(juce::TextButton::buttonOnColourId, APP_COLOR_PRIMARY.brighter(0.2f));
-        
+        okButton->setColour(juce::TextButton::buttonOnColourId, APP_COLOR_PRIMARY.brighter(0.15f));
+
         setSize(400, 200);
     }
-    
+
     void resized() override
     {
         if (okButton != nullptr)
         {
-            okButton->setCentrePosition(getWidth() / 2, getHeight() - 30);
+            okButton->setCentrePosition(getWidth() / 2, getHeight() - 32);
         }
     }
-    
+
     std::function<void()> onClose;
 
     void paint(juce::Graphics& g) override
     {
-        // Background
-        g.fillAll(APP_COLOR_BACKGROUND);
+        const auto bounds = getLocalBounds().toFloat();
+        constexpr float radius = 10.0f;
+
+        // Rounded card background
+        g.setColour(APP_COLOR_SURFACE_ALT);
+        g.fillRoundedRectangle(bounds, radius);
+        g.setColour(APP_COLOR_BORDER.withAlpha(0.55f));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), radius, 0.75f);
 
         // Title
-        g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
-        g.drawText(titleText, 20, 20, getWidth() - 40, 30, juce::Justification::left);
+        g.setColour(APP_COLOR_TEXT_PRIMARY);
+        g.setFont(AppFont::getBoldFont(18.0f));
+        g.drawText(titleText, 20, 18, getWidth() - 40, 28, juce::Justification::left);
 
         // Icon (if any)
         int iconX = 20;
-        int iconY = 60;
-        int iconSize = 32;
-        
+        int iconY = 58;
+        int iconSize = 30;
+
         if (iconType != NoIcon)
         {
             juce::Colour iconColour;
@@ -76,12 +83,16 @@ public:
             else if (iconType == ErrorIcon)
                 iconColour = APP_COLOR_ALERT_ERROR;
 
+            // Softer icon circle
+            g.setColour(iconColour.withAlpha(0.15f));
+            g.fillEllipse(static_cast<float>(iconX), static_cast<float>(iconY),
+                          static_cast<float>(iconSize), static_cast<float>(iconSize));
             g.setColour(iconColour);
-            g.fillEllipse(iconX, iconY, iconSize, iconSize);
-            g.setColour(APP_COLOR_BACKGROUND);
-            g.setFont(juce::Font(
-                juce::FontOptions(iconSize * 0.6f, juce::Font::bold)));
-            
+            g.drawEllipse(static_cast<float>(iconX) + 0.5f, static_cast<float>(iconY) + 0.5f,
+                          static_cast<float>(iconSize) - 1.0f, static_cast<float>(iconSize) - 1.0f, 1.2f);
+
+            g.setFont(AppFont::getBoldFont(static_cast<float>(iconSize) * 0.52f));
+
             juce::String iconChar;
             if (iconType == InfoIcon)
                 iconChar = "i";
@@ -91,12 +102,12 @@ public:
                 iconChar = "X";
 
             g.drawText(iconChar, iconX, iconY, iconSize, iconSize, juce::Justification::centred);
-            iconX += iconSize + 15;
+            iconX += iconSize + 14;
         }
 
         // Message text
-        g.setColour(juce::Colours::lightgrey);
-        g.setFont(juce::Font(juce::FontOptions(15.0f)));
+        g.setColour(APP_COLOR_TEXT_MUTED);
+        g.setFont(AppFont::getFont(14.0f));
         g.drawMultiLineText(messageText, iconX, iconY + 5, getWidth() - iconX - 20, juce::Justification::topLeft);
     }
 
@@ -121,18 +132,18 @@ private:
             setOpaque(true);
             setUsingNativeTitleBar(false);
             setResizable(false, false);
-            
+
             // Remove close button from title bar
             setTitleBarButtonsRequired(0, false);
-            
+
             messageBox = std::make_unique<StyledMessageBox>(title, message, iconTypeValue);
             messageBox->onClose = [this] { closeDialog(); };
             setContentOwned(messageBox.get(), false);
-            
+
             int dialogWidth = 420;
             int dialogHeight = 220;
             setSize(dialogWidth, dialogHeight);
-            
+
             if (parent != nullptr)
                 centreAroundComponent(parent, dialogWidth, dialogHeight);
             else
@@ -141,7 +152,6 @@ private:
 
         void closeButtonPressed() override
         {
-            // This should not be called since we removed the close button
             closeDialog();
         }
 

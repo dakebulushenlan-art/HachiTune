@@ -574,6 +574,7 @@ void AudioAnalyzer::extendNoteBoundariesWithVad(Project &project) {
 
     if (newStart < note.getStartFrame()) {
       note.setStartFrame(newStart);
+      note.setSrcStartFrame(newStart);
     }
 
     // Forward extension for note tails (release consonants/noise), bounded by
@@ -587,14 +588,18 @@ void AudioAnalyzer::extendNoteBoundariesWithVad(Project &project) {
       else
         break;
     }
-    if (newEnd > note.getEndFrame())
+    if (newEnd > note.getEndFrame()) {
       note.setEndFrame(newEnd);
+      note.setSrcEndFrame(newEnd);
+    }
 
     // Keep note/f0 slice consistent after boundary change.
     int clampedStart = std::max(0, std::min(note.getStartFrame(), f0Size - 1));
     int clampedEnd = std::max(clampedStart + 1, std::min(note.getEndFrame(), f0Size));
     note.setStartFrame(clampedStart);
     note.setEndFrame(clampedEnd);
+    note.setSrcStartFrame(clampedStart);
+    note.setSrcEndFrame(clampedEnd);
 
     std::vector<float> f0Values(audioData.f0.begin() + clampedStart,
                                 audioData.f0.begin() + clampedEnd);

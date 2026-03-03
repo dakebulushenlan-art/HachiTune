@@ -29,7 +29,7 @@ public:
     void updateFromNote();
     void updateGlobalSliders();
 
-    int getPreferredHeight() const { return 520; }
+    int getPreferredHeight() const { return 470; }
 
     std::function<void()> onParameterChanged;
     std::function<void()> onParameterEditFinished;
