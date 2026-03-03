@@ -302,6 +302,15 @@ namespace PitchCurveProcessor
                 note.getSmoothRightFrames(),
                 adjacentContext
             );
+
+            // Apply per-note delta scale/offset (from delta control handles)
+            const float dScale = note.getDeltaScale();
+            const float dOffset = note.getDeltaOffset();
+            if (std::abs(dScale - 1.0f) > 0.0001f || std::abs(dOffset) > 0.0001f)
+            {
+                for (auto& v : transformedDelta)
+                    v = v * dScale + dOffset;
+            }
                 
             const int startFrame = note.getStartFrame();
             const int endFrame = note.getEndFrame();
@@ -321,6 +330,120 @@ namespace PitchCurveProcessor
             audioData.baseF0[static_cast<size_t>(i)] = safeMidiToFreq(audioData.basePitch[static_cast<size_t>(i)]);
 
         composeF0InPlace(project, /*applyUvMask=*/false);
+    }
+
+    void rebuildDeltaForNotes(Project& project, const std::vector<Note*>& affectedNotes)
+    {
+        auto& audioData = project.getAudioData();
+        const int totalFrames = audioData.getNumFrames();
+        if (totalFrames <= 0 || affectedNotes.empty())
+            return;
+
+        const auto& allNotes = project.getNotes();
+        int minAffectedFrame = totalFrames;
+        int maxAffectedFrame = 0;
+
+        for (auto* note : affectedNotes)
+        {
+            if (!note || note->isRest())
+                continue;
+
+            const auto& sourceData = note->hasOriginalDeltaPitch()
+                ? note->getOriginalDeltaPitch() : note->getDeltaPitch();
+            if (sourceData.empty())
+                continue;
+
+            // Build adjacent note context
+            PitchToolOperations::AdjacentNoteContext adjacentContext;
+
+            const Note* prevNote = nullptr;
+            int prevNoteEndFrame = -1;
+            for (const auto& candidate : allNotes) {
+                if (&candidate == note || candidate.isRest())
+                    continue;
+                const int candidateEnd = candidate.getEndFrame();
+                if (candidateEnd <= note->getStartFrame() && candidateEnd > prevNoteEndFrame) {
+                    prevNote = &candidate;
+                    prevNoteEndFrame = candidateEnd;
+                }
+            }
+
+            const Note* nextNote = nullptr;
+            int nextNoteStartFrame = std::numeric_limits<int>::max();
+            for (const auto& candidate : allNotes) {
+                if (&candidate == note || candidate.isRest())
+                    continue;
+                const int candidateStart = candidate.getStartFrame();
+                if (candidateStart >= note->getEndFrame() && candidateStart < nextNoteStartFrame) {
+                    nextNote = &candidate;
+                    nextNoteStartFrame = candidateStart;
+                }
+            }
+
+            if (prevNote) {
+                const auto& prevDelta = prevNote->hasOriginalDeltaPitch()
+                    ? prevNote->getOriginalDeltaPitch()
+                    : prevNote->getDeltaPitch();
+                if (!prevDelta.empty()) {
+                    adjacentContext.hasLeft = true;
+                    adjacentContext.leftBoundaryDelta = prevDelta.back();
+                }
+            }
+            if (nextNote) {
+                const auto& nextDelta = nextNote->hasOriginalDeltaPitch()
+                    ? nextNote->getOriginalDeltaPitch()
+                    : nextNote->getDeltaPitch();
+                if (!nextDelta.empty()) {
+                    adjacentContext.hasRight = true;
+                    adjacentContext.rightBoundaryDelta = nextDelta.front();
+                }
+            }
+
+            std::vector<float> transformedDelta = PitchToolOperations::applyAllTransformations(
+                sourceData,
+                note->getTiltLeft(),
+                note->getTiltRight(),
+                note->getVarianceScale(),
+                note->getSmoothLeftFrames(),
+                note->getSmoothRightFrames(),
+                adjacentContext
+            );
+
+            // Apply per-note delta scale/offset
+            const float dScale = note->getDeltaScale();
+            const float dOffset = note->getDeltaOffset();
+            if (std::abs(dScale - 1.0f) > 0.0001f || std::abs(dOffset) > 0.0001f)
+            {
+                for (auto& v : transformedDelta)
+                    v = v * dScale + dOffset;
+            }
+
+            const int startFrame = note->getStartFrame();
+            const int endFrame = note->getEndFrame();
+            const int numFrames = endFrame - startFrame;
+            minAffectedFrame = std::min(minAffectedFrame, startFrame);
+            maxAffectedFrame = std::max(maxAffectedFrame, endFrame);
+
+            for (int i = 0; i < numFrames && i < static_cast<int>(transformedDelta.size()); ++i)
+            {
+                const int globalIdx = startFrame + i;
+                if (globalIdx >= 0 && globalIdx < totalFrames)
+                    audioData.deltaPitch[static_cast<size_t>(globalIdx)] = transformedDelta[static_cast<size_t>(i)];
+            }
+        }
+
+        // Recompose f0 only for affected range
+        if (minAffectedFrame < maxAffectedFrame)
+        {
+            const int rangeStart = std::max(0, minAffectedFrame);
+            const int rangeEnd = std::min(totalFrames, maxAffectedFrame);
+            for (int i = rangeStart; i < rangeEnd; ++i)
+            {
+                const float base = audioData.basePitch[static_cast<size_t>(i)];
+                const float delta = audioData.deltaPitch[static_cast<size_t>(i)];
+                audioData.f0[static_cast<size_t>(i)] = safeMidiToFreq(base + delta);
+            }
+        }
     }
 
     std::vector<float> composeF0(const Project& project,

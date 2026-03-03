@@ -1,0 +1,173 @@
+#pragma once
+
+#include "UndoableAction.h"
+#include "F0FrameEdit.h"
+#include "../Models/Note.h"
+#include <vector>
+#include <functional>
+
+/**
+ * Action for dragging a note to change pitch (MIDI note + F0 values).
+ */
+class NotePitchDragAction : public UndoableAction
+{
+public:
+    NotePitchDragAction(Note* note, std::vector<float>* f0Array,
+                        float oldMidi, float newMidi,
+                        std::vector<F0FrameEdit> f0Edits,
+                        std::function<void(Note*)> onNoteChanged = nullptr)
+        : note(note), f0Array(f0Array), oldMidi(oldMidi), newMidi(newMidi),
+          f0Edits(std::move(f0Edits)), onNoteChanged(onNoteChanged) {}
+
+    void undo() override
+    {
+        if (note) {
+            note->setMidiNote(oldMidi);
+            note->markDirty();
+        }
+        if (f0Array) {
+            for (const auto& e : f0Edits) {
+                if (e.idx >= 0 && e.idx < static_cast<int>(f0Array->size()))
+                    (*f0Array)[e.idx] = e.oldF0;
+            }
+        }
+        if (onNoteChanged && note) {
+            onNoteChanged(note);
+        }
+    }
+
+    void redo() override
+    {
+        if (note) {
+            note->setMidiNote(newMidi);
+            note->markDirty();
+        }
+        if (f0Array) {
+            for (const auto& e : f0Edits) {
+                if (e.idx >= 0 && e.idx < static_cast<int>(f0Array->size()))
+                    (*f0Array)[e.idx] = e.newF0;
+            }
+        }
+        if (onNoteChanged && note) {
+            onNoteChanged(note);
+        }
+    }
+
+    juce::String getName() const override { return "Drag Note Pitch"; }
+
+private:
+    Note* note;
+    std::vector<float>* f0Array;
+    float oldMidi;
+    float newMidi;
+    std::vector<F0FrameEdit> f0Edits;
+    std::function<void(Note*)> onNoteChanged;
+};
+
+/**
+ * Action for dragging multiple notes to change pitch.
+ */
+class MultiNotePitchDragAction : public UndoableAction
+{
+public:
+    MultiNotePitchDragAction(std::vector<Note*> notes, std::vector<float>* f0Array,
+                             std::vector<float> oldMidis, float pitchDelta,
+                             std::vector<F0FrameEdit> f0Edits,
+                             std::function<void(const std::vector<Note*>&)> onNotesChanged = nullptr)
+        : notes(std::move(notes)), f0Array(f0Array), oldMidis(std::move(oldMidis)),
+          pitchDelta(pitchDelta), f0Edits(std::move(f0Edits)), onNotesChanged(onNotesChanged) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldMidis.size(); ++i) {
+            if (notes[i]) {
+                notes[i]->setMidiNote(oldMidis[i]);
+                notes[i]->markDirty();
+            }
+        }
+        if (f0Array) {
+            for (const auto& e : f0Edits) {
+                if (e.idx >= 0 && e.idx < static_cast<int>(f0Array->size()))
+                    (*f0Array)[e.idx] = e.oldF0;
+            }
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldMidis.size(); ++i) {
+            if (notes[i]) {
+                notes[i]->setMidiNote(oldMidis[i] + pitchDelta);
+                notes[i]->markDirty();
+            }
+        }
+        if (f0Array) {
+            for (const auto& e : f0Edits) {
+                if (e.idx >= 0 && e.idx < static_cast<int>(f0Array->size()))
+                    (*f0Array)[e.idx] = e.newF0;
+            }
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    juce::String getName() const override { return "Drag Multiple Notes"; }
+
+private:
+    std::vector<Note*> notes;
+    std::vector<float>* f0Array;
+    std::vector<float> oldMidis;
+    float pitchDelta;
+    std::vector<F0FrameEdit> f0Edits;
+    std::function<void(const std::vector<Note*>&)> onNotesChanged;
+};
+
+/**
+ * Action for nudging selected notes by keyboard (up/down, octave).
+ */
+class MultiNoteMidiNudgeAction : public UndoableAction
+{
+public:
+    MultiNoteMidiNudgeAction(std::vector<Note*> notes,
+                             std::vector<float> oldMidis,
+                             std::vector<float> newMidis,
+                             std::function<void(const std::vector<Note*>&)> onNotesChanged = nullptr)
+        : notes(std::move(notes)),
+          oldMidis(std::move(oldMidis)),
+          newMidis(std::move(newMidis)),
+          onNotesChanged(std::move(onNotesChanged)) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldMidis.size(); ++i) {
+            if (!notes[i])
+                continue;
+            notes[i]->setMidiNote(oldMidis[i]);
+            notes[i]->markDirty();
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < newMidis.size(); ++i) {
+            if (!notes[i])
+                continue;
+            notes[i]->setMidiNote(newMidis[i]);
+            notes[i]->markDirty();
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    juce::String getName() const override { return "Nudge Note Pitch"; }
+
+private:
+    std::vector<Note*> notes;
+    std::vector<float> oldMidis;
+    std::vector<float> newMidis;
+    std::function<void(const std::vector<Note*>&)> onNotesChanged;
+};

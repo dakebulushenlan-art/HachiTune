@@ -2,7 +2,7 @@
 
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
-#include "../../Utils/UndoManager.h"
+#include "../../Undo/UndoActions.h"
 #include "CoordinateMapper.h"
 #include <functional>
 

@@ -47,6 +47,8 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
       params.varianceScale = note->getVarianceScale();
       params.smoothLeftFrames = note->getSmoothLeftFrames();
       params.smoothRightFrames = note->getSmoothRightFrames();
+      params.deltaScale = note->getDeltaScale();
+      params.deltaOffset = note->getDeltaOffset();
       
       // Store baseline midiNote (without tilt mean shift)
       // This ensures tilt adjustments are absolute, not cumulative
@@ -104,6 +106,8 @@ bool PitchToolController::mouseUp(const juce::MouseEvent& e,
        params.varianceScale = note->getVarianceScale();
        params.smoothLeftFrames = note->getSmoothLeftFrames();
        params.smoothRightFrames = note->getSmoothRightFrames();
+       params.deltaScale = note->getDeltaScale();
+       params.deltaOffset = note->getDeltaOffset();
        params.midiNote = note->getMidiNote();
        newParams.push_back(params);
     }
@@ -176,6 +180,8 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     note->setVarianceScale(origParams.varianceScale);
     note->setSmoothLeftFrames(origParams.smoothLeftFrames);
     note->setSmoothRightFrames(origParams.smoothRightFrames);
+    note->setDeltaScale(origParams.deltaScale);
+    note->setDeltaOffset(origParams.deltaOffset);
 
     // Apply new transformation by updating the appropriate parameter
     switch (type)
@@ -252,10 +258,9 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     note->markDirty();
   }
 
-  // NON-DESTRUCTIVE: Recompose audioData from Note properties
-  // This reads originalDeltaPitch and applies all transformation parameters
-  PitchCurveProcessor::rebuildBaseFromNotes(*project);
-  PitchCurveProcessor::composeF0InPlace(*project, /*applyUvMask=*/false);
+  // NON-DESTRUCTIVE: Recompose only the affected notes' delta + f0
+  // This is much faster than rebuildBaseFromNotes() which rebuilds everything
+  PitchCurveProcessor::rebuildDeltaForNotes(*project, notes);
   
   // Mark dirty range for synthesis
   if (!notes.empty())
@@ -291,6 +296,8 @@ void PitchToolController::cancel()
       affectedNotes[i]->setVarianceScale(params.varianceScale);
       affectedNotes[i]->setSmoothLeftFrames(params.smoothLeftFrames);
       affectedNotes[i]->setSmoothRightFrames(params.smoothRightFrames);
+      affectedNotes[i]->setDeltaScale(params.deltaScale);
+      affectedNotes[i]->setDeltaOffset(params.deltaOffset);
       
       // Restore midiNote with tilt mean (params.midiNote is baseline without tilt)
       const float tiltMean = (params.tiltLeft + params.tiltRight) / 2.0f;

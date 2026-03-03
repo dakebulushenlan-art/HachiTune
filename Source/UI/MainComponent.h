@@ -5,7 +5,7 @@
 #include "../Audio/IO/AudioFileManager.h"
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
-#include "../Utils/UndoManager.h"
+#include "../Undo/UndoActions.h"
 #include "CustomMenuBarLookAndFeel.h"
 #include "CustomTitleBar.h"
 #include "Commands.h"
@@ -14,7 +14,7 @@
 #include "ParameterPanel.h"
 #include "PianoRollComponent.h"
 #include "PianoRollWorkspaceView.h"
-#include "SettingsComponent.h"
+#include "SettingsOverlay.h"
 #include "ToolbarComponent.h"
 #include "Workspace/WorkspaceComponent.h"
 

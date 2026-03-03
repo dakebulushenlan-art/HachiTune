@@ -2,7 +2,7 @@
 
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
-#include "../../Utils/UndoManager.h"
+#include "../../Undo/UndoActions.h"
 #include "../../Utils/UI/DrawCurve.h"
 #include "../../Utils/BasePitchPreview.h"
 #include "../../Utils/PitchCurveProcessor.h"

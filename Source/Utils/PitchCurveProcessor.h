@@ -20,6 +20,14 @@ namespace PitchCurveProcessor
     void rebuildBaseFromNotes(Project& project);
 
     /**
+     * Rebuild delta pitch and f0 only for specific notes (partial rebuild).
+     * Skips basePitch regeneration (assumes positions unchanged).
+     * Much faster than rebuildBaseFromNotes() when only transformation
+     * parameters change on a few notes.
+     */
+    void rebuildDeltaForNotes(Project& project, const std::vector<Note*>& affectedNotes);
+
+    /**
      * Rebuild base and delta from a source pitch (Hz). This is used after
      * detection/segmentation or when we need to recompute delta from edited
      * curves. The uv mask is kept as-is; the composed f0 omits uv masking.

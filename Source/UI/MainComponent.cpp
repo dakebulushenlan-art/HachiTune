@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "Main/ExportHelper.h"
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/IO/MidiExporter.h"
 #include "../Models/ProjectSerializer.h"
@@ -7,311 +8,13 @@
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
 #include "../Utils/PlatformPaths.h"
-#include "../Utils/MelSpectrogram.h"
-#include "../Utils/PitchCurveProcessor.h"
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/UI/WindowSizing.h"
 #include <atomic>
-#include <climits>
 #include <cmath>
 #include <iostream>
 #include <optional>
 #include <thread>
-
-namespace {
-enum class ExportFormat { wav, flac, aiff, ogg };
-
-struct ExportSettings {
-  ExportFormat format = ExportFormat::wav;
-  int sampleRate = SAMPLE_RATE;
-  int channels = 1;
-  int bitsPerSample = 16;
-  int bitrateKbps = 192; // Used for compressed formats where available
-};
-
-static juce::String getFormatDisplayName(ExportFormat format) {
-  switch (format) {
-  case ExportFormat::wav:
-    return "WAV";
-  case ExportFormat::flac:
-    return "FLAC";
-  case ExportFormat::aiff:
-    return "AIFF";
-  case ExportFormat::ogg:
-    return "OGG";
-  }
-  return "WAV";
-}
-
-static juce::String getFormatExtension(ExportFormat format) {
-  switch (format) {
-  case ExportFormat::wav:
-    return "wav";
-  case ExportFormat::flac:
-    return "flac";
-  case ExportFormat::aiff:
-    return "aiff";
-  case ExportFormat::ogg:
-    return "ogg";
-  }
-  return "wav";
-}
-
-static juce::String getFormatWildcard(ExportFormat format) {
-  return "*." + getFormatExtension(format);
-}
-
-static juce::AudioBuffer<float> convertChannels(const juce::AudioBuffer<float> &input,
-                                                int outChannels) {
-  outChannels = juce::jlimit(1, 2, outChannels);
-  const int inChannels = juce::jmax(1, input.getNumChannels());
-  const int numSamples = input.getNumSamples();
-
-  juce::AudioBuffer<float> output(outChannels, numSamples);
-  output.clear();
-
-  if (outChannels == 1) {
-    float *dst = output.getWritePointer(0);
-    for (int i = 0; i < numSamples; ++i) {
-      float sum = 0.0f;
-      for (int ch = 0; ch < inChannels; ++ch)
-        sum += input.getSample(ch, i);
-      dst[i] = sum / static_cast<float>(inChannels);
-    }
-    return output;
-  }
-
-  // Stereo output
-  if (inChannels == 1) {
-    output.copyFrom(0, 0, input, 0, 0, numSamples);
-    output.copyFrom(1, 0, input, 0, 0, numSamples);
-  } else {
-    output.copyFrom(0, 0, input, 0, 0, numSamples);
-    output.copyFrom(1, 0, input, 1, 0, numSamples);
-  }
-  return output;
-}
-
-static juce::AudioBuffer<float> resampleAudio(const juce::AudioBuffer<float> &input,
-                                              int sourceRate, int targetRate) {
-  if (sourceRate <= 0 || targetRate <= 0 || sourceRate == targetRate)
-    return input;
-
-  const int channels = juce::jmax(1, input.getNumChannels());
-  const int inSamples = input.getNumSamples();
-  const double ratio = static_cast<double>(sourceRate) / targetRate;
-  const int outSamples = juce::jmax(1, static_cast<int>(std::llround(inSamples / ratio)));
-
-  juce::AudioBuffer<float> output(channels, outSamples);
-  output.clear();
-
-  for (int ch = 0; ch < channels; ++ch) {
-    juce::LagrangeInterpolator interpolator;
-    interpolator.reset();
-    interpolator.process(ratio, input.getReadPointer(ch), output.getWritePointer(ch),
-                         outSamples);
-  }
-  return output;
-}
-
-static std::optional<int> parseFirstInt(const juce::String &s) {
-  juce::String digits;
-  bool started = false;
-  for (auto c : s) {
-    if (juce::CharacterFunctions::isDigit(c)) {
-      digits += juce::String::charToString(c);
-      started = true;
-    } else if (started) {
-      break;
-    }
-  }
-  if (digits.isEmpty())
-    return std::nullopt;
-  return digits.getIntValue();
-}
-
-static int chooseQualityIndex(const juce::StringArray &options, int targetKbps) {
-  if (options.isEmpty())
-    return 0;
-
-  int bestIdx = 0;
-  int bestDist = INT_MAX;
-  for (int i = 0; i < options.size(); ++i) {
-    auto parsed = parseFirstInt(options[i]);
-    if (!parsed.has_value())
-      continue;
-    const int dist = std::abs(parsed.value() - targetKbps);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestIdx = i;
-    }
-  }
-  return bestIdx;
-}
-
-static juce::AudioFormat *findFormatForExtension(juce::AudioFormatManager &manager,
-                                                 const juce::String &extension) {
-  for (int i = 0; i < manager.getNumKnownFormats(); ++i) {
-    auto *fmt = manager.getKnownFormat(i);
-    if (!fmt)
-      continue;
-    auto exts = fmt->getFileExtensions();
-    for (const auto &ext : exts) {
-      if (ext.equalsIgnoreCase(extension))
-        return fmt;
-    }
-  }
-  return nullptr;
-}
-
-class ExportSettingsContent final : public juce::Component, private juce::Button::Listener {
-public:
-  ExportSettingsContent(int inputSampleRate,
-                        std::function<void(std::optional<ExportSettings>)> done)
-      : onDone(std::move(done)) {
-    addAndMakeVisible(title);
-    title.setText("Export Settings", juce::dontSendNotification);
-    title.setJustificationType(juce::Justification::centredLeft);
-    title.setColour(juce::Label::textColourId, APP_COLOR_TEXT_PRIMARY);
-    title.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
-
-    setupCombo(formatBox, formatLabel, "Format", {"WAV", "FLAC", "AIFF", "OGG"}, 1);
-
-    int srId = 3;
-    if (inputSampleRate >= 47000)
-      srId = 4;
-    else if (inputSampleRate >= 43000)
-      srId = 3;
-    else if (inputSampleRate >= 30000)
-      srId = 2;
-    else
-      srId = 1;
-    setupCombo(sampleRateBox, sampleRateLabel, "Sample Rate",
-               {"22050", "32000", "44100", "48000"}, srId);
-    setupCombo(bitDepthBox, bitDepthLabel, "Bit Depth", {"16", "24", "32"}, 1);
-    setupCombo(bitrateBox, bitrateLabel, "Bitrate (kbps)",
-               {"64", "96", "128", "160", "192", "256", "320"}, 5);
-    setupCombo(channelsBox, channelsLabel, "Channels", {"Mono", "Stereo"}, 1);
-
-    addAndMakeVisible(cancelButton);
-    addAndMakeVisible(exportButton);
-    cancelButton.setButtonText("Cancel");
-    exportButton.setButtonText("Export");
-    cancelButton.addListener(this);
-    exportButton.addListener(this);
-  }
-
-  ~ExportSettingsContent() override {
-    cancelButton.removeListener(this);
-    exportButton.removeListener(this);
-  }
-
-  void paint(juce::Graphics &g) override {
-    g.fillAll(APP_COLOR_SURFACE);
-  }
-
-  void resized() override {
-    auto area = getLocalBounds().reduced(12);
-    title.setBounds(area.removeFromTop(28));
-    area.removeFromTop(6);
-
-    const int rowH = 28;
-    layoutRow(area.removeFromTop(rowH), formatLabel, formatBox);
-    area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), sampleRateLabel, sampleRateBox);
-    area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), bitDepthLabel, bitDepthBox);
-    area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), bitrateLabel, bitrateBox);
-    area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), channelsLabel, channelsBox);
-
-    area.removeFromTop(12);
-    auto btnRow = area.removeFromTop(30);
-    auto right = btnRow.removeFromRight(190);
-    cancelButton.setBounds(right.removeFromLeft(90));
-    right.removeFromLeft(10);
-    exportButton.setBounds(right.removeFromLeft(90));
-  }
-
-private:
-  void setupCombo(juce::ComboBox &box, juce::Label &label, const juce::String &labelText,
-                  const juce::StringArray &items, int selectedId) {
-    addAndMakeVisible(label);
-    addAndMakeVisible(box);
-    label.setText(labelText, juce::dontSendNotification);
-    label.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
-    box.addItemList(items, 1);
-    box.setSelectedId(selectedId, juce::dontSendNotification);
-  }
-
-  static void layoutRow(juce::Rectangle<int> row, juce::Label &label, juce::ComboBox &box) {
-    label.setBounds(row.removeFromLeft(120));
-    box.setBounds(row);
-  }
-
-  ExportSettings getSettings() const {
-    ExportSettings settings;
-    switch (formatBox.getSelectedId()) {
-    case 2:
-      settings.format = ExportFormat::flac;
-      break;
-    case 3:
-      settings.format = ExportFormat::aiff;
-      break;
-    case 4:
-      settings.format = ExportFormat::ogg;
-      break;
-    default:
-      settings.format = ExportFormat::wav;
-      break;
-    }
-    settings.sampleRate = sampleRateBox.getText().getIntValue();
-    settings.bitsPerSample = bitDepthBox.getText().getIntValue();
-    settings.bitrateKbps = bitrateBox.getText().getIntValue();
-    settings.channels = channelsBox.getSelectedId() == 2 ? 2 : 1;
-    return settings;
-  }
-
-  void buttonClicked(juce::Button *button) override {
-    auto closeWith = [this](std::optional<ExportSettings> result) {
-      if (onDone)
-        onDone(std::move(result));
-      if (auto *dw = findParentComponentOfClass<juce::DialogWindow>())
-        dw->exitModalState(0);
-    };
-
-    if (button == &exportButton)
-      closeWith(getSettings());
-    else if (button == &cancelButton)
-      closeWith(std::nullopt);
-  }
-
-  std::function<void(std::optional<ExportSettings>)> onDone;
-  juce::Label title;
-  juce::Label formatLabel, sampleRateLabel, bitDepthLabel, bitrateLabel, channelsLabel;
-  juce::ComboBox formatBox, sampleRateBox, bitDepthBox, bitrateBox, channelsBox;
-  juce::TextButton cancelButton, exportButton;
-};
-
-static void showExportSettingsDialogAsync(
-    juce::Component *parent, int inputSampleRate,
-    std::function<void(std::optional<ExportSettings>)> onDone) {
-  auto *content = new ExportSettingsContent(inputSampleRate, std::move(onDone));
-  content->setSize(420, 270);
-
-  juce::DialogWindow::LaunchOptions opts;
-  opts.content.setOwned(content);
-  opts.dialogTitle = "Export Settings";
-  opts.componentToCentreAround = parent;
-  opts.dialogBackgroundColour = APP_COLOR_SURFACE;
-  opts.escapeKeyTriggersCloseButton = true;
-  opts.useNativeTitleBar = false;
-  opts.resizable = false;
-  opts.useBottomRightCornerResizer = false;
-  opts.launchAsync();
-}
-} // namespace
 
 MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll) {
@@ -925,395 +628,7 @@ void MainComponent::openRecentFile(const juce::File &file) {
     loadAudioFile(file);
 }
 
-void MainComponent::openProjectFile(const juce::File &file) {
-  if (isLoadingAudio.load())
-    return;
-  addRecentFile(file);
-
-  auto loadedProject = std::make_shared<Project>();
-  if (!ProjectSerializer::loadFromFile(*loadedProject, file)) {
-    StyledMessageBox::show(this, "Open failed",
-                           "Failed to load project:\n" + file.getFullPathName(),
-                           StyledMessageBox::WarningIcon);
-    return;
-  }
-  loadedProject->setProjectFilePath(file);
-
-  auto continueOpenWithAudio = [this, loadedProject](const juce::File &audioFile) {
-    if (!audioFile.existsAsFile()) {
-      StyledMessageBox::show(this, "Open failed",
-                             "Project audio file not found:\n" +
-                                 audioFile.getFullPathName(),
-                             StyledMessageBox::WarningIcon);
-      return;
-    }
-
-    loadedProject->setFilePath(audioFile);
-
-    const juce::String currentAudioSha = SHA256Utils::fileSHA256(audioFile);
-    const juce::String savedAudioSha = loadedProject->getAudioSha256();
-    const bool shaMatched = savedAudioSha.isNotEmpty() &&
-                            savedAudioSha.equalsIgnoreCase(currentAudioSha);
-
-    auto proceedWithProject =
-        [this, loadedProject, audioFile, currentAudioSha](bool reanalyze) {
-          if (reanalyze) {
-            loadAudioFile(audioFile);
-            return;
-          }
-
-          isLoadingAudio = true;
-          loadingProgress = 0.0;
-          {
-            const juce::ScopedLock sl(loadingMessageLock);
-            loadingMessage = TR("progress.loading_audio");
-          }
-          toolbar.showProgress(TR("progress.loading_audio"));
-          toolbar.setProgress(0.0f);
-
-          juce::Component::SafePointer<MainComponent> safeThis(this);
-          fileManager->loadAudioFileAsync(
-              audioFile,
-              [safeThis](double p, const juce::String &msg) {
-                if (safeThis == nullptr)
-                  return;
-                safeThis->loadingProgress = juce::jlimit(0.0, 1.0, p);
-                const juce::ScopedLock sl(safeThis->loadingMessageLock);
-                safeThis->loadingMessage = msg;
-              },
-              [safeThis, loadedProject, currentAudioSha](
-                  juce::AudioBuffer<float> &&buffer, int sampleRate,
-                  const juce::File &loadedFile) mutable {
-                if (safeThis == nullptr)
-                  return;
-
-                auto projectToUse = std::make_unique<Project>(*loadedProject);
-                projectToUse->setFilePath(loadedFile);
-                projectToUse->setAudioSha256(currentAudioSha);
-
-                auto &audioData = projectToUse->getAudioData();
-                audioData.waveform = std::move(buffer);
-                audioData.sampleRate = sampleRate;
-                audioData.originalWaveform.makeCopyOf(audioData.waveform);
-
-                // Recompute mel only; keep pitch/note edits from project file.
-                if (audioData.waveform.getNumSamples() > 0) {
-                  const float *samples = audioData.waveform.getReadPointer(0);
-                  const int numSamples = audioData.waveform.getNumSamples();
-                  MelSpectrogram melComputer(audioData.sampleRate, N_FFT,
-                                             HOP_SIZE, NUM_MELS, FMIN, FMAX);
-                  audioData.melSpectrogram =
-                      melComputer.compute(samples, numSamples);
-                }
-
-                if (audioData.voicedMask.empty() && !audioData.f0.empty()) {
-                  audioData.voicedMask.resize(audioData.f0.size(), false);
-                  for (size_t i = 0; i < audioData.f0.size(); ++i)
-                    audioData.voicedMask[i] = audioData.f0[i] > 0.0f;
-                }
-
-                if (audioData.basePitch.empty() || audioData.deltaPitch.empty()) {
-                  if (!audioData.f0.empty()) {
-                    PitchCurveProcessor::rebuildCurvesFromSource(*projectToUse,
-                                                                 audioData.f0);
-                  } else if (!audioData.melSpectrogram.empty()) {
-                    // Legacy project fallback: rebuild base from notes and use
-                    // zero delta so reopening can still synthesize edited notes.
-                    PitchCurveProcessor::rebuildBaseFromNotes(*projectToUse);
-                  }
-                } else {
-                  PitchCurveProcessor::composeF0InPlace(*projectToUse,
-                                                        /*applyUvMask=*/false);
-                }
-
-                if (safeThis->undoManager)
-                  safeThis->undoManager->clear();
-
-                if (safeThis->editorController)
-                  safeThis->editorController->setProject(std::move(projectToUse));
-
-                auto *project = safeThis->getProject();
-                if (!project) {
-                  safeThis->isLoadingAudio = false;
-                  return;
-                }
-
-                safeThis->pianoRoll.setProject(project);
-                safeThis->pianoRollView.setProject(project);
-                safeThis->parameterPanel.setProject(project);
-                safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
-                safeThis->toolbar.setLoopEnabled(project->getLoopRange().enabled);
-
-                auto &activeAudioData = project->getAudioData();
-                if (safeThis->isPluginMode()) {
-                  // plugin mode: no audio engine
-                } else if (auto *engine = safeThis->editorController
-                                               ? safeThis->editorController->getAudioEngine()
-                                               : nullptr) {
-                  try {
-                    engine->loadWaveform(activeAudioData.waveform,
-                                         activeAudioData.sampleRate);
-                    const auto &loopRange = project->getLoopRange();
-                    if (loopRange.enabled)
-                      engine->setLoopRange(loopRange.startSeconds,
-                                           loopRange.endSeconds);
-                    engine->setLoopEnabled(loopRange.enabled);
-                    engine->setVolumeDb(project->getVolume());
-                  } catch (...) {
-                    DBG("MainComponent::openProjectFile - EXCEPTION in loadWaveform!");
-                  }
-                }
-
-                if (auto *vocoder = safeThis->editorController
-                                        ? safeThis->editorController->getVocoder()
-                                        : nullptr;
-                    vocoder && !vocoder->isLoaded()) {
-                  auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
-                  if (modelPath.existsAsFile()) {
-                    if (!vocoder->loadModel(modelPath)) {
-                      juce::AlertWindow::showMessageBoxAsync(
-                          juce::AlertWindow::WarningIcon, "Inference failed",
-                          "Failed to load vocoder model at:\n" +
-                              modelPath.getFullPathName() +
-                              "\n\nPlease check your model installation and try again.");
-                      safeThis->isLoadingAudio = false;
-                      return;
-                    }
-                  } else {
-                    juce::AlertWindow::showMessageBoxAsync(
-                        juce::AlertWindow::WarningIcon, "Missing model file",
-                        "pc_nsf_hifigan.onnx was not found at:\n" +
-                            modelPath.getFullPathName() +
-                            "\n\nPlease install the required model files and try again.");
-                    safeThis->isLoadingAudio = false;
-                    return;
-                  }
-                }
-
-                // Skip full re-analysis; run vocoder from loaded edits.
-                const int totalFrames = std::max(
-                    static_cast<int>(activeAudioData.melSpectrogram.size()),
-                    std::max(static_cast<int>(activeAudioData.f0.size()),
-                             static_cast<int>(activeAudioData.basePitch.size())));
-                if (totalFrames > 0) {
-                  project->setF0DirtyRange(0, totalFrames);
-
-                  safeThis->toolbar.showProgress(TR("progress.synthesizing"));
-                  safeThis->toolbar.setProgress(-1.0f);
-                  safeThis->toolbar.setEnabled(false);
-
-                  safeThis->editorController->resynthesizeIncrementalAsync(
-                      *project,
-                      [safeThis](const juce::String &message) {
-                        if (safeThis == nullptr)
-                          return;
-                        safeThis->toolbar.showProgress(message);
-                      },
-                      [safeThis](bool success) {
-                        if (safeThis == nullptr)
-                          return;
-
-                        safeThis->toolbar.setEnabled(true);
-                        safeThis->toolbar.hideProgress();
-                        safeThis->isLoadingAudio = false;
-                        safeThis->repaint();
-
-                        if (!success) {
-                          StyledMessageBox::show(
-                              safeThis.getComponent(), "Open warning",
-                              "Project opened, but applying saved pitch edits failed.\n"
-                              "You can click Re-analyze to rebuild pitch data.",
-                              StyledMessageBox::WarningIcon);
-                          return;
-                        }
-
-                        if (safeThis->isPluginMode())
-                          safeThis->notifyProjectDataChanged();
-                      },
-                      safeThis->pendingIncrementalResynth,
-                      safeThis->isPluginMode());
-                  return;
-                }
-
-                safeThis->repaint();
-                safeThis->isLoadingAudio = false;
-                if (safeThis->isPluginMode())
-                  safeThis->notifyProjectDataChanged();
-              });
-        };
-
-    if (!shaMatched) {
-      juce::AlertWindow::showOkCancelBox(
-          juce::AlertWindow::WarningIcon, "Audio file changed",
-          "The saved audio hash does not match current file:\n" +
-              audioFile.getFullPathName() +
-              "\n\nDo you want to re-analyze this audio?",
-          "Re-analyze", "Use Saved Edits", this,
-          juce::ModalCallbackFunction::create([proceedWithProject](int result) {
-            proceedWithProject(result != 0);
-          }));
-      return;
-    }
-
-    proceedWithProject(false);
-  };
-
-  const juce::File audioFile = loadedProject->getFilePath();
-  if (!audioFile.existsAsFile()) {
-    juce::AlertWindow::showOkCancelBox(
-        juce::AlertWindow::WarningIcon, "Audio file missing",
-        "Project audio file was not found:\n" + audioFile.getFullPathName() +
-            "\n\nDo you want to locate a replacement audio file?",
-        "Locate Audio", "Cancel", this,
-        juce::ModalCallbackFunction::create(
-            [this, continueOpenWithAudio](int result) {
-              if (result == 0)
-                return;
-              if (fileChooser != nullptr)
-                return;
-              fileChooser = std::make_unique<juce::FileChooser>(
-                  TR("dialog.select_audio"), juce::File{},
-                  "*.wav;*.mp3;*.flac;*.aiff;*.ogg;*.m4a");
-              auto chooserFlags = juce::FileBrowserComponent::openMode |
-                                  juce::FileBrowserComponent::canSelectFiles;
-              juce::Component::SafePointer<MainComponent> safeThis(this);
-              fileChooser->launchAsync(
-                  chooserFlags, [safeThis, continueOpenWithAudio](
-                                    const juce::FileChooser &fc) {
-                    if (safeThis == nullptr)
-                      return;
-                    auto selected = fc.getResult();
-                    safeThis->fileChooser.reset();
-                    if (selected.existsAsFile())
-                      continueOpenWithAudio(selected);
-                  });
-            }));
-    return;
-  }
-
-  continueOpenWithAudio(audioFile);
-}
-
-void MainComponent::loadAudioFile(const juce::File &file) {
-  if (isLoadingAudio.load())
-    return;
-  addRecentFile(file);
-
-  isLoadingAudio = true;
-  loadingProgress = 0.0;
-  {
-    const juce::ScopedLock sl(loadingMessageLock);
-    loadingMessage = TR("progress.loading_audio");
-  }
-  toolbar.showProgress(TR("progress.loading_audio"));
-  toolbar.setProgress(0.0f);
-
-  juce::Component::SafePointer<MainComponent> safeThis(this);
-  if (!editorController) {
-    isLoadingAudio = false;
-    return;
-  }
-
-  editorController->loadAudioFileAsync(
-      file,
-      [safeThis](double p, const juce::String &msg) {
-        if (safeThis == nullptr)
-          return;
-        safeThis->loadingProgress = juce::jlimit(0.0, 1.0, p);
-        const juce::ScopedLock sl(safeThis->loadingMessageLock);
-        safeThis->loadingMessage = msg;
-      },
-      [safeThis](const juce::AudioBuffer<float> &original) {
-        if (safeThis == nullptr)
-          return;
-
-        // Clear undo history before replacing project to avoid dangling pointers
-        if (safeThis->undoManager)
-          safeThis->undoManager->clear();
-
-        auto *project = safeThis->getProject();
-        if (!project)
-          return;
-
-        // Update UI
-        safeThis->pianoRoll.setProject(project);
-        safeThis->pianoRollView.setProject(project);
-        safeThis->parameterPanel.setProject(project);
-        safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());
-        safeThis->toolbar.setLoopEnabled(project->getLoopRange().enabled);
-
-        auto &audioData = project->getAudioData();
-
-        if (safeThis->isPluginMode()) {
-          // plugin mode: no audio engine
-        } else if (auto *engine = safeThis->editorController
-                                       ? safeThis->editorController->getAudioEngine()
-                                       : nullptr) {
-          try {
-            engine->loadWaveform(audioData.waveform, audioData.sampleRate);
-            const auto &loopRange = project->getLoopRange();
-            if (loopRange.enabled)
-              engine->setLoopRange(loopRange.startSeconds,
-                                   loopRange.endSeconds);
-            engine->setLoopEnabled(loopRange.enabled);
-            engine->setVolumeDb(project->getVolume());
-          } catch (...) {
-            DBG("MainComponent::loadAudioFile - EXCEPTION in loadWaveform!");
-          }
-        }
-
-        const auto &f0 = audioData.f0;
-        if (!f0.empty()) {
-          float minF0 = 10000.0f, maxF0 = 0.0f;
-          for (float freq : f0) {
-            if (freq > 50.0f) {
-              minF0 = std::min(minF0, freq);
-              maxF0 = std::max(maxF0, freq);
-            }
-          }
-          if (maxF0 > minF0) {
-            float minMidi = freqToMidi(minF0) - 2.0f;
-            float maxMidi = freqToMidi(maxF0) + 2.0f;
-            safeThis->pianoRoll.centerOnPitchRange(minMidi, maxMidi);
-          }
-        }
-
-        if (auto *vocoder = safeThis->editorController
-                                ? safeThis->editorController->getVocoder()
-                                : nullptr;
-            vocoder && !vocoder->isLoaded()) {
-          auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
-          if (modelPath.existsAsFile()) {
-            if (!vocoder->loadModel(modelPath)) {
-              juce::AlertWindow::showMessageBoxAsync(
-                  juce::AlertWindow::WarningIcon, "Inference failed",
-                  "Failed to load vocoder model at:\n" +
-                      modelPath.getFullPathName() +
-                      "\n\nPlease check your model installation and try again.");
-              return;
-            }
-          } else {
-            juce::AlertWindow::showMessageBoxAsync(
-                juce::AlertWindow::WarningIcon, "Missing model file",
-                "pc_nsf_hifigan.onnx was not found at:\n" +
-                    modelPath.getFullPathName() +
-                    "\n\nPlease install the required model files and try again.");
-            return;
-          }
-        }
-
-        safeThis->repaint();
-        safeThis->isLoadingAudio = false;
-
-        if (safeThis->isPluginMode())
-          safeThis->notifyProjectDataChanged();
-      },
-      [safeThis]() {
-        if (safeThis == nullptr)
-          return;
-        safeThis->isLoadingAudio = false;
-      });
-}
+// openProjectFile and loadAudioFile implementations are in Main/MainComponent_ProjectIO.cpp
 
 void MainComponent::analyzeAudio() {
   auto *project = getProject();
@@ -1365,9 +680,9 @@ void MainComponent::exportFile() {
 
   const int inputSampleRate = project->getAudioData().sampleRate;
   juce::Component::SafePointer<MainComponent> safeThis(this);
-  showExportSettingsDialogAsync(
+  ExportHelper::showExportSettingsDialogAsync(
       this, inputSampleRate,
-      [safeThis](std::optional<ExportSettings> exportSettings) {
+      [safeThis](std::optional<ExportHelper::ExportSettings> exportSettings) {
         if (safeThis == nullptr || !exportSettings.has_value())
           return;
 
@@ -1380,7 +695,7 @@ void MainComponent::exportFile() {
       return;
 
           auto file = targetFile;
-          const auto extension = getFormatExtension(exportSettings->format);
+          const auto extension = ExportHelper::getFormatExtension(exportSettings->format);
           if (file.getFileExtension().isEmpty())
             file = file.withFileExtension(extension);
 
@@ -1400,8 +715,8 @@ void MainComponent::exportFile() {
 
             do {
               juce::AudioBuffer<float> exportBuffer =
-                  convertChannels(sourceBuffer, settings.channels);
-              exportBuffer = resampleAudio(exportBuffer, sourceRate, settings.sampleRate);
+                  ExportHelper::convertChannels(sourceBuffer, settings.channels);
+              exportBuffer = ExportHelper::resampleAudio(exportBuffer, sourceRate, settings.sampleRate);
 
               if (file.existsAsFile() && !file.deleteFile()) {
                 error = TR("dialog.failed_delete") + "\n" + file.getFullPathName();
@@ -1417,11 +732,11 @@ void MainComponent::exportFile() {
 
               juce::AudioFormatManager formatManager;
               formatManager.registerBasicFormats();
-              auto *format = findFormatForExtension(
-                  formatManager, getFormatExtension(settings.format));
+              auto *format = ExportHelper::findFormatForExtension(
+                  formatManager, ExportHelper::getFormatExtension(settings.format));
               if (!format) {
                 error = "No exporter is available for format: " +
-                        getFormatDisplayName(settings.format);
+                        ExportHelper::getFormatDisplayName(settings.format);
                 break;
               }
 
@@ -1431,7 +746,7 @@ void MainComponent::exportFile() {
                                        .withBitsPerSample(settings.bitsPerSample);
               if (format->isCompressed()) {
                 writerOptions = writerOptions.withQualityOptionIndex(
-                    chooseQualityIndex(format->getQualityOptions(),
+                    ExportHelper::chooseQualityIndex(format->getQualityOptions(),
                                        settings.bitrateKbps));
               }
 
@@ -1476,7 +791,7 @@ void MainComponent::exportFile() {
 
         safeThis->fileChooser = std::make_unique<juce::FileChooser>(
             TR("dialog.save_audio"), juce::File{},
-            getFormatWildcard(exportSettings->format));
+            ExportHelper::getFormatWildcard(exportSettings->format));
 
         auto chooserFlags = juce::FileBrowserComponent::saveMode |
                             juce::FileBrowserComponent::canSelectFiles |

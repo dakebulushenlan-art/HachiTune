@@ -193,6 +193,7 @@ endif()
 file(GLOB_RECURSE HACHITUNE_CORE_SOURCES
     "Source/Audio/*.cpp" "Source/Audio/*.h"
     "Source/Models/*.cpp" "Source/Models/*.h"
+    "Source/Undo/*.cpp" "Source/Undo/*.h"
     "Source/Utils/*.cpp" "Source/Utils/*.h" "Source/Utils/*.mm"
     "Source/JuceHeader.h")
 

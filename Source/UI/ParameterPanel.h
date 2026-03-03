@@ -3,7 +3,7 @@
 #include "../JuceHeader.h"
 #include "../Models/Note.h"
 #include "../Models/Project.h"
-#include "../Utils/UndoManager.h"
+#include "../Undo/UndoActions.h"
 #include "../Utils/UI/Theme.h"
 #include "StyledComponents.h"
 #include <optional>

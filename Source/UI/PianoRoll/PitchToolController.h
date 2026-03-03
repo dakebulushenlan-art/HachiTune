@@ -3,7 +3,7 @@
 #include "../../JuceHeader.h"
 #include "../../Models/Note.h"
 #include "../../Models/Project.h"
-#include "../../Utils/UndoManager.h"
+#include "../../Undo/UndoActions.h"
 #include "../../Utils/PitchToolOperations.h"
 #include "../../Utils/TransformParams.h"
 #include "CoordinateMapper.h"

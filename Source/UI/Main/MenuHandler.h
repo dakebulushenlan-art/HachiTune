@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../JuceHeader.h"
-#include "../../Utils/UndoManager.h"
+#include "../../Undo/UndoActions.h"
 #include "../../Utils/Localization.h"
 #include "../Commands.h"
 #include <functional>

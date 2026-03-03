@@ -3,11 +3,9 @@
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
 #include "../Utils/Constants.h"
-#include "../Utils/UI/DrawCurve.h"
 #include "../Utils/BasePitchPreview.h"
-#include "../Utils/UndoManager.h"
+#include "../Undo/UndoActions.h"
 #include "Commands.h"
-#include "../Utils/CenteredMelSpectrogram.h"
 #include "PianoRoll/BoxSelector.h"
 #include "PianoRoll/CoordinateMapper.h"
 #include "PianoRoll/NoteSplitter.h"
@@ -17,13 +15,18 @@
 #include "PianoRoll/PitchToolHandles.h"
 #include "PianoRoll/ScrollZoomController.h"
 
-#include <deque>
-#include <limits>
 #include <memory>
 #include <optional>
-#include <unordered_map>
 
 class PitchUndoManager;
+
+// Interaction handler forward declarations
+class InteractionHandler;
+class LoopDragHandler;
+class SelectHandler;
+class DrawHandler;
+class StretchHandler;
+class SplitHandler;
 
 /**
  * Edit mode for the piano roll.
@@ -42,6 +45,13 @@ enum class EditMode {
 class PianoRollComponent : public juce::Component,
                            public juce::ScrollBar::Listener,
                            public juce::KeyListener {
+  // Interaction handlers need access to private members
+  friend class LoopDragHandler;
+  friend class SelectHandler;
+  friend class DrawHandler;
+  friend class StretchHandler;
+  friend class SplitHandler;
+
 public:
   using juce::Component::keyPressed;
   PianoRollComponent();
@@ -171,7 +181,6 @@ private:
   void drawPitchCurves(juce::Graphics &g);
   void drawCursor(juce::Graphics &g);
   void drawPianoKeys(juce::Graphics &g);
-  void drawDrawingCursor(juce::Graphics &g); // Draw mode indicator
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   void drawLoopOverlay(juce::Graphics &g);
   void drawSomeSegmentDebugOverlay(juce::Graphics &g);
@@ -196,54 +205,6 @@ private:
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
   void reapplyBasePitchForNote(
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
-  void prepareDragBasePreview();
-  void applyDragBasePreview(float pitchOffsetSemitones);
-  void restoreDragBasePreview();
-  struct StretchBoundary {
-    Note *left = nullptr;
-    Note *right = nullptr;
-    int frame = 0;
-  };
-
-  struct StretchDragState {
-    bool active = false;
-    bool changed = false;
-    StretchBoundary boundary;
-    int originalBoundary = 0;
-    int originalLeftStart = 0;
-    int originalLeftEnd = 0;
-    int originalRightStart = 0;
-    int originalRightEnd = 0;
-    int rangeStartFull = 0;
-    int rangeEndFull = 0;
-    int rangeStart = 0;
-    int rangeEnd = 0;
-    int minFrame = 0;
-    int maxFrame = 0;
-    int currentBoundary = 0;
-    std::vector<float> leftDelta;
-    std::vector<float> rightDelta;
-    std::vector<bool> leftVoiced;
-    std::vector<bool> rightVoiced;
-    std::vector<float> originalLeftClip;
-    std::vector<float> originalRightClip;
-    std::vector<std::vector<float>> originalMelRangeFull;
-    std::vector<float> originalDeltaRangeFull;
-    std::vector<bool> originalVoicedRangeFull;
-  };
-
-  std::vector<StretchBoundary> collectStretchBoundaries() const;
-  int findStretchBoundaryIndex(float worldX, float tolerancePx) const;
-  void startStretchDrag(const StretchBoundary &boundary);
-  void updateStretchDrag(int targetFrame);
-  void finishStretchDrag();
-  void cancelStretchDrag();
-
-  // Pitch drawing helpers
-  void applyPitchDrawing(float x, float y);
-  void commitPitchDrawing();
-  void applyPitchPoint(int frameIndex, int midiCents);
-  void startNewPitchCurve(int frameIndex, int midiCents);
 
   Project *project = nullptr;
   PitchUndoManager *undoManager = nullptr;
@@ -297,78 +258,13 @@ private:
   std::optional<int> previewScaleRootNote;
   std::optional<ScaleMode> previewScaleMode;
 
-  // Dragging state
-  bool isDragging = false;
-  Note *draggedNote = nullptr;
-  float dragStartY = 0.0f;
-  float originalPitchOffset = 0.0f;
-  float originalMidiNote = 60.0f; // Original MIDI note before drag
-  float boundaryF0Start =
-      0.0f; // F0 value before note start (for smooth transition)
-  float boundaryF0End = 0.0f; // F0 value after note end (for smooth transition)
-  std::vector<float> originalF0Values; // F0 values before drag for undo
-  float lastDragPitchOffset = 0.0f;
-  int dragPreviewStartFrame = -1;
-  int dragPreviewEndFrame = -1;
-  std::vector<float> dragPreviewWeights;
-  std::vector<float> dragBasePitchSnapshot;
-  std::vector<float> dragF0Snapshot;
-
-  // Delta pitch scale drag state (handle below selected note outline)
-  bool isDeltaScaleDragging = false;
-  float deltaScaleDragStartY = 0.0f;
-  float deltaScaleFactor = 1.0f;
-  int deltaScaleMinFrame = std::numeric_limits<int>::max();
-  int deltaScaleMaxFrame = std::numeric_limits<int>::min();
-  std::vector<Note *> deltaScaleTargetNotes;
-  std::vector<F0FrameEdit> deltaScaleEdits;
-
-  // Delta pitch offset drag state (vertical shift of delta curve)
-  bool isDeltaOffsetDragging = false;
-  float deltaOffsetDragStartY = 0.0f;
-  float deltaOffsetSemitones = 0.0f;
-  int deltaOffsetMinFrame = std::numeric_limits<int>::max();
-  int deltaOffsetMaxFrame = std::numeric_limits<int>::min();
-  std::vector<Note *> deltaOffsetTargetNotes;
-  std::vector<F0FrameEdit> deltaOffsetEdits;
-
-  // Pitch drawing state
-  bool isDrawing = false;
-  std::vector<F0FrameEdit> drawingEdits; // unique edits per frame
-  std::unordered_map<int, size_t> drawingEditIndexByFrame;
-  int lastDrawFrame = -1;
-  int lastDrawValueCents = 0;
-  DrawCurve *activeDrawCurve = nullptr;
-  std::deque<std::unique_ptr<DrawCurve>> drawCurves;
-
-  // Split mode guide line
-  float splitGuideX =
-      -1.0f; // World X coordinate for split guide line (-1 = hidden)
-  Note *splitGuideNote = nullptr; // Note being hovered for split
-
-  // Stretch mode state
-  StretchDragState stretchDrag;
-  int hoveredStretchBoundaryIndex = -1;
-  static constexpr float stretchHandleHitPadding = 6.0f;
-  static constexpr int minStretchNoteFrames = 3;
-  std::unique_ptr<CenteredMelSpectrogram> centeredMelComputer;
-
-  // Loop range drag state
-  enum class LoopDragMode {
-    None,
-    Create,
-    ResizeStart,
-    ResizeEnd,
-    Move
-  };
-  LoopDragMode loopDragMode = LoopDragMode::None;
-  float loopDragStartX = 0.0f;
-  double loopDragStartSeconds = 0.0;
-  double loopDragEndSeconds = 0.0;
-  double loopDragAnchorSeconds = 0.0;
-  double loopDragOriginalStart = 0.0;
-  double loopDragOriginalEnd = 0.0;
-  static constexpr float loopHandleHitPadding = 6.0f;
+  // Interaction handlers (state machine pattern)
+  std::unique_ptr<LoopDragHandler> loopDragHandler_;
+  std::unique_ptr<SelectHandler> selectHandler_;
+  std::unique_ptr<DrawHandler> drawHandler_;
+  std::unique_ptr<StretchHandler> stretchHandler_;
+  std::unique_ptr<SplitHandler> splitHandler_;
+  InteractionHandler *currentHandler_ = nullptr;
 
   // Scrollbars
   juce::ScrollBar horizontalScrollBar{false};

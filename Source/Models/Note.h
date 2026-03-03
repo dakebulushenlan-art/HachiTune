@@ -89,6 +89,12 @@ public:
     int getSmoothRightFrames() const { return smoothRightFrames; }
     void setSmoothRightFrames(int frames) { smoothRightFrames = frames; }
 
+    // Delta scale/offset (post-transformation, from delta control handles)
+    float getDeltaScale() const { return deltaScale; }
+    void setDeltaScale(float scale) { deltaScale = scale; }
+    float getDeltaOffset() const { return deltaOffset; }
+    void setDeltaOffset(float offset) { deltaOffset = offset; }
+
     // Vibrato
     bool isVibratoEnabled() const { return vibratoEnabled; }
     void setVibratoEnabled(bool enabled) { vibratoEnabled = enabled; }
@@ -166,6 +172,10 @@ private:
     float varianceScale = 1.0f;      // Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
     int smoothRightFrames = 0;       // Smoothing transition length at right boundary
+
+    // Post-transformation scale/offset from delta control handles
+    float deltaScale = 1.0f;        // Applied after all other transformations (1.0=unchanged)
+    float deltaOffset = 0.0f;       // Added after scale (0.0=unchanged)
 
     bool vibratoEnabled = false;
     float vibratoRateHz = 5.0f;

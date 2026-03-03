@@ -1,0 +1,350 @@
+#pragma once
+
+#include "UndoableAction.h"
+#include "../Models/Note.h"
+#include "../Models/Project.h"
+#include <vector>
+#include <functional>
+
+/**
+ * Action for changing a note's pitch offset.
+ */
+class PitchOffsetAction : public UndoableAction
+{
+public:
+    PitchOffsetAction(Note* note, float oldOffset, float newOffset,
+                      std::function<void(Note*)> onNoteChanged = nullptr)
+        : note(note), oldOffset(oldOffset), newOffset(newOffset),
+          onNoteChanged(onNoteChanged) {}
+    
+    void undo() override
+    {
+        if (!note) return;
+        note->setPitchOffset(oldOffset);
+        note->markDirty();
+        if (onNoteChanged)
+            onNoteChanged(note);
+    }
+    void redo() override
+    {
+        if (!note) return;
+        note->setPitchOffset(newOffset);
+        note->markDirty();
+        if (onNoteChanged)
+            onNoteChanged(note);
+    }
+    juce::String getName() const override { return "Change Pitch Offset"; }
+    
+private:
+    Note* note;
+    float oldOffset;
+    float newOffset;
+    std::function<void(Note*)> onNoteChanged;
+};
+
+/**
+ * Action for changing a note's volume (dB).
+ */
+class NoteVolumeAction : public UndoableAction
+{
+public:
+    NoteVolumeAction(Note* note, float oldVolumeDb, float newVolumeDb,
+                     std::function<void(Note*)> onNoteChanged = nullptr)
+        : note(note), oldVolumeDb(oldVolumeDb), newVolumeDb(newVolumeDb),
+          onNoteChanged(onNoteChanged) {}
+
+    void undo() override
+    {
+        if (!note) return;
+        note->setVolumeDb(oldVolumeDb);
+        note->markDirty();
+        if (onNoteChanged)
+            onNoteChanged(note);
+    }
+
+    void redo() override
+    {
+        if (!note) return;
+        note->setVolumeDb(newVolumeDb);
+        note->markDirty();
+        if (onNoteChanged)
+            onNoteChanged(note);
+    }
+
+    juce::String getName() const override { return "Change Note Volume"; }
+
+private:
+    Note* note;
+    float oldVolumeDb;
+    float newVolumeDb;
+    std::function<void(Note*)> onNoteChanged;
+};
+
+/**
+ * Action for changing variance scale on multiple notes.
+ * Used for double-click toggle on smooth handles (flatten/restore).
+ */
+class VarianceScaleAction : public UndoableAction
+{
+public:
+    VarianceScaleAction(const std::vector<Note*>& notes,
+                        const std::vector<float>& oldScales,
+                        const std::vector<float>& newScales,
+                        std::function<void()> onChanged = nullptr)
+        : notes(notes), oldScales(oldScales), newScales(newScales),
+          onChanged(onChanged) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldScales.size(); ++i) {
+            if (notes[i]) {
+                notes[i]->setVarianceScale(oldScales[i]);
+                notes[i]->markDirty();
+            }
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < newScales.size(); ++i) {
+            if (notes[i]) {
+                notes[i]->setVarianceScale(newScales[i]);
+                notes[i]->markDirty();
+            }
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    juce::String getName() const override { return "Toggle Variance Scale"; }
+
+private:
+    std::vector<Note*> notes;
+    std::vector<float> oldScales;
+    std::vector<float> newScales;
+    std::function<void()> onChanged;
+};
+
+/**
+ * Action for resetting tilt values on multiple notes.
+ * Used for double-click on TiltLeft/TiltRight handles to reset to 0.
+ */
+class TiltResetAction : public UndoableAction
+{
+public:
+    enum class TiltSide { Left, Right };
+    
+    TiltResetAction(const std::vector<Note*>& notes,
+                    TiltSide side,
+                    const std::vector<float>& oldTilts,
+                    const std::vector<float>& oldMidiNotes,
+                    std::function<void()> onChanged = nullptr)
+        : notes(notes), side(side), oldTilts(oldTilts), 
+          oldMidiNotes(oldMidiNotes), onChanged(onChanged) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size() && i < oldTilts.size(); ++i) {
+            if (notes[i]) {
+                if (side == TiltSide::Left)
+                    notes[i]->setTiltLeft(oldTilts[i]);
+                else
+                    notes[i]->setTiltRight(oldTilts[i]);
+                
+                if (i < oldMidiNotes.size())
+                    notes[i]->setMidiNote(oldMidiNotes[i]);
+                
+                notes[i]->markDirty();
+            }
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size(); ++i) {
+            if (notes[i]) {
+                if (side == TiltSide::Left)
+                    notes[i]->setTiltLeft(0.0f);
+                else
+                    notes[i]->setTiltRight(0.0f);
+                
+                const float newTiltMean = (notes[i]->getTiltLeft() + notes[i]->getTiltRight()) / 2.0f;
+                if (i < oldMidiNotes.size()) {
+                    const float oldTiltLeft = (side == TiltSide::Left) ? oldTilts[i] : notes[i]->getTiltLeft();
+                    const float oldTiltRight = (side == TiltSide::Right) ? oldTilts[i] : notes[i]->getTiltRight();
+                    const float oldTiltMean = (oldTiltLeft + oldTiltRight) / 2.0f;
+                    const float baseline = oldMidiNotes[i] - oldTiltMean;
+                    notes[i]->setMidiNote(baseline + newTiltMean);
+                }
+                
+                notes[i]->markDirty();
+            }
+        }
+        if (onChanged)
+            onChanged();
+    }
+
+    juce::String getName() const override 
+    { 
+        return side == TiltSide::Left ? "Reset Tilt Left" : "Reset Tilt Right"; 
+    }
+
+private:
+    std::vector<Note*> notes;
+    TiltSide side;
+    std::vector<float> oldTilts;
+    std::vector<float> oldMidiNotes;
+    std::function<void()> onChanged;
+};
+
+/**
+ * Action for snapping a note to the nearest semitone (double-click).
+ * Combines midiNote and pitchOffset into a rounded integer MIDI value.
+ */
+class NoteSnapToSemitoneAction : public UndoableAction
+{
+public:
+    NoteSnapToSemitoneAction(Note* note,
+                             float oldMidi, float oldOffset,
+                             float newMidi,
+                             std::function<void(Note*)> onNoteChanged = nullptr)
+        : note(note), oldMidi(oldMidi), oldOffset(oldOffset),
+          newMidi(newMidi), onNoteChanged(onNoteChanged) {}
+
+    void undo() override
+    {
+        if (note) {
+            note->setMidiNote(oldMidi);
+            note->setPitchOffset(oldOffset);
+            note->markDirty();
+        }
+        if (onNoteChanged && note)
+            onNoteChanged(note);
+    }
+
+    void redo() override
+    {
+        if (note) {
+            note->setMidiNote(newMidi);
+            note->setPitchOffset(0.0f);
+            note->markDirty();
+        }
+        if (onNoteChanged && note)
+            onNoteChanged(note);
+    }
+
+    juce::String getName() const override { return "Snap to Semitone"; }
+
+private:
+    Note* note;
+    float oldMidi;
+    float oldOffset;
+    float newMidi;
+    std::function<void(Note*)> onNoteChanged;
+};
+
+/**
+ * Action for snapping multiple notes to the nearest semitone.
+ */
+class MultiNoteSnapToSemitoneAction : public UndoableAction
+{
+public:
+    MultiNoteSnapToSemitoneAction(const std::vector<Note*>& notes,
+                                  std::vector<float> oldMidis,
+                                  std::vector<float> oldOffsets,
+                                  std::vector<float> newMidis,
+                                  std::function<void(const std::vector<Note*>&)> onNotesChanged = nullptr)
+        : notes(notes),
+          oldMidis(std::move(oldMidis)),
+          oldOffsets(std::move(oldOffsets)),
+          newMidis(std::move(newMidis)),
+          onNotesChanged(onNotesChanged) {}
+
+    void undo() override
+    {
+        for (size_t i = 0; i < notes.size(); ++i) {
+            auto* note = notes[i];
+            if (!note)
+                continue;
+            note->setMidiNote(oldMidis[i]);
+            note->setPitchOffset(oldOffsets[i]);
+            note->markDirty();
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    void redo() override
+    {
+        for (size_t i = 0; i < notes.size(); ++i) {
+            auto* note = notes[i];
+            if (!note)
+                continue;
+            note->setMidiNote(newMidis[i]);
+            note->setPitchOffset(0.0f);
+            note->markDirty();
+        }
+        if (onNotesChanged)
+            onNotesChanged(notes);
+    }
+
+    juce::String getName() const override { return "Snap Notes to Semitone"; }
+
+private:
+    std::vector<Note*> notes;
+    std::vector<float> oldMidis;
+    std::vector<float> oldOffsets;
+    std::vector<float> newMidis;
+    std::function<void(const std::vector<Note*>&)> onNotesChanged;
+};
+
+/**
+ * Action for splitting a note into two.
+ */
+class NoteSplitAction : public UndoableAction
+{
+public:
+    NoteSplitAction(Project* proj, const Note& original, const Note& firstPart, const Note& secondPart,
+                    std::function<void()> onChanged = nullptr)
+        : project(proj), originalNote(original), firstNote(firstPart), secondNote(secondPart),
+          onChanged(onChanged) {}
+
+    void undo() override
+    {
+        if (!project) return;
+        project->removeNoteByStartFrame(secondNote.getStartFrame());
+        for (auto& note : project->getNotes()) {
+            if (note.getStartFrame() == firstNote.getStartFrame()) {
+                note = originalNote;
+                break;
+            }
+        }
+        if (onChanged) onChanged();
+    }
+
+    void redo() override
+    {
+        if (!project) return;
+        for (auto& note : project->getNotes()) {
+            if (note.getStartFrame() == originalNote.getStartFrame()) {
+                note = firstNote;
+                break;
+            }
+        }
+        project->addNote(secondNote);
+        if (onChanged) onChanged();
+    }
+
+    juce::String getName() const override { return "Split Note"; }
+
+private:
+    Project* project;
+    Note originalNote;
+    Note firstNote;
+    Note secondNote;
+    std::function<void()> onChanged;
+};
