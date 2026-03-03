@@ -91,8 +91,14 @@ void EditorController::reloadInferenceModels(bool async) {
     if (!self)
       return;
 
-    if (self->fcpePitchDetector) {
-      if (fcpePath.existsAsFile()) {
+    // Load all 3 models in parallel — each operates on an independent object
+    // with its own Ort::Env, so no shared state.
+    std::thread fcpeThread;
+    std::thread rmvpeThread;
+    std::thread someThread;
+
+    if (self->fcpePitchDetector && fcpePath.existsAsFile()) {
+      fcpeThread = std::thread([&]() {
         LOG("EditorController: loading FCPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->fcpePitchDetector->loadModel(fcpePath, melPath, centPath,
@@ -101,13 +107,13 @@ void EditorController::reloadInferenceModels(bool async) {
         } else {
           LOG("Failed to load FCPE model");
         }
-      } else {
-        LOG("FCPE model not found at: " + fcpePath.getFullPathName());
-      }
+      });
+    } else if (self->fcpePitchDetector) {
+      LOG("FCPE model not found at: " + fcpePath.getFullPathName());
     }
 
-    if (self->rmvpePitchDetector) {
-      if (rmvpePath.existsAsFile()) {
+    if (self->rmvpePitchDetector && rmvpePath.existsAsFile()) {
+      rmvpeThread = std::thread([&]() {
         LOG("EditorController: loading RMVPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->rmvpePitchDetector->loadModel(rmvpePath, provider,
@@ -116,13 +122,13 @@ void EditorController::reloadInferenceModels(bool async) {
         } else {
           LOG("Failed to load RMVPE model");
         }
-      } else {
-        LOG("RMVPE model not found at: " + rmvpePath.getFullPathName());
-      }
+      });
+    } else if (self->rmvpePitchDetector) {
+      LOG("RMVPE model not found at: " + rmvpePath.getFullPathName());
     }
 
-    if (self->someDetector) {
-      if (somePath.existsAsFile()) {
+    if (self->someDetector && somePath.existsAsFile()) {
+      someThread = std::thread([&]() {
         LOG("EditorController: loading SOME model (device " + device + ", id " +
             juce::String(resolvedDeviceId) + ")...");
         if (self->someDetector->loadModel(somePath, provider,
@@ -131,10 +137,18 @@ void EditorController::reloadInferenceModels(bool async) {
         } else {
           LOG("Failed to load SOME model");
         }
-      } else {
-        LOG("SOME model not found at: " + somePath.getFullPathName());
-      }
+      });
+    } else if (self->someDetector) {
+      LOG("SOME model not found at: " + somePath.getFullPathName());
     }
+
+    // Wait for all parallel loads to complete
+    if (fcpeThread.joinable())
+      fcpeThread.join();
+    if (rmvpeThread.joinable())
+      rmvpeThread.join();
+    if (someThread.joinable())
+      someThread.join();
   };
 
   if (!async) {

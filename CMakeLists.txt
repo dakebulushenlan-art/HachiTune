@@ -242,7 +242,9 @@ target_link_libraries(hachitune_core PUBLIC
     juce::juce_audio_devices
     juce::juce_audio_formats
     juce::juce_audio_utils
-    juce::juce_dsp)
+    juce::juce_dsp
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags)
 
 target_link_libraries(hachitune_ui PUBLIC
     hachitune_core
@@ -252,7 +254,15 @@ target_link_libraries(hachitune_ui PUBLIC
     juce::juce_audio_basics
     juce::juce_audio_formats
     juce::juce_audio_utils
-    juce::juce_dsp)
+    juce::juce_dsp
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags)
+
+# Enable fast-math for release builds on non-MSVC compilers
+if(NOT MSVC)
+    target_compile_options(hachitune_core PRIVATE $<$<CONFIG:Release>:-ffast-math>)
+    target_compile_options(hachitune_ui PRIVATE $<$<CONFIG:Release>:-ffast-math>)
+endif()
 
 # Link JUCE modules
 target_link_libraries(HachiTune PRIVATE

@@ -108,8 +108,15 @@ public:
 private:
     bool loaded = false;
     
-    // Mel filterbank matrix [N_MELS x (N_FFT/2+1)]
-    std::vector<std::vector<float>> melFilterbank;
+    /** Sparse representation of one mel filter band. */
+    struct MelBand {
+        int startBin = 0;          // first non-zero FFT bin (inclusive)
+        int endBin   = 0;          // last non-zero FFT bin (exclusive)
+        std::vector<float> weights; // weights[k - startBin]
+    };
+
+    // Mel filterbank (sparse per-band representation)
+    std::vector<MelBand> melFilterbank;
     
     // Hann window [WIN_SIZE]
     std::vector<float> hannWindow;

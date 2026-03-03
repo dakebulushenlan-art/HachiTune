@@ -638,6 +638,10 @@ Ort::SessionOptions Vocoder::createSessionOptions() {
   if (executionDevice != "CPU") {
     sessionOptions.SetIntraOpNumThreads(1);
     sessionOptions.SetInterOpNumThreads(1);
+  } else {
+    const int numThreads =
+        std::max(1u, std::thread::hardware_concurrency()) / 2;
+    sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
   }
 
   log("Creating session with device: " + executionDevice.toStdString());
@@ -680,7 +684,8 @@ Ort::SessionOptions Vocoder::createSessionOptions() {
 #endif
       if (executionDevice == "CoreML") {
     try {
-      sessionOptions.AppendExecutionProvider("CoreML");
+      sessionOptions.AppendExecutionProvider("CoreML",
+          {{"MLComputeUnits", "ALL"}});
       log("CoreML execution provider added");
     } catch (const Ort::Exception &e) {
       log("Failed to add CoreML provider: " + std::string(e.what()));

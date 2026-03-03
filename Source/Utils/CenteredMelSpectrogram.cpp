@@ -67,8 +67,6 @@ void CenteredMelSpectrogram::createMelFilterbank()
     melFilterbank.resize(numMels);
     for (int m = 0; m < numMels; ++m)
     {
-        melFilterbank[m].resize(numBins, 0.0f);
-
         float fLow = hzPoints[m];
         float fCenter = hzPoints[m + 1];
         float fHigh = hzPoints[m + 2];
@@ -76,17 +74,43 @@ void CenteredMelSpectrogram::createMelFilterbank()
         // Slaney normalization
         float enorm = 2.0f / (fHigh - fLow);
 
+        // Find the range of bins that fall within [fLow, fHigh]
+        int firstBin = numBins;  // will be narrowed
+        int lastBin = -1;        // will be narrowed
+
         for (int k = 0; k < numBins; ++k)
+        {
+            float freq = static_cast<float>(k) * sampleRate / nFft;
+            if (freq >= fLow && freq <= fHigh)
+            {
+                if (k < firstBin) firstBin = k;
+                if (k > lastBin)  lastBin = k;
+            }
+        }
+
+        MelBand& band = melFilterbank[m];
+        if (lastBin < firstBin)
+        {
+            band.startBin = 0;
+            band.endBin = 0;
+            continue;
+        }
+
+        band.startBin = firstBin;
+        band.endBin = lastBin + 1;  // exclusive
+        band.weights.resize(band.endBin - band.startBin, 0.0f);
+
+        for (int k = firstBin; k <= lastBin; ++k)
         {
             float freq = static_cast<float>(k) * sampleRate / nFft;
 
             if (freq >= fLow && freq < fCenter)
             {
-                melFilterbank[m][k] = enorm * (freq - fLow) / (fCenter - fLow);
+                band.weights[k - firstBin] = enorm * (freq - fLow) / (fCenter - fLow);
             }
             else if (freq >= fCenter && freq <= fHigh)
             {
-                melFilterbank[m][k] = enorm * (fHigh - freq) / (fHigh - fCenter);
+                band.weights[k - firstBin] = enorm * (fHigh - freq) / (fHigh - fCenter);
             }
         }
     }
@@ -148,14 +172,14 @@ std::vector<float> CenteredMelSpectrogram::computeFrameAtCenter(
 std::vector<float> CenteredMelSpectrogram::applyMelFilterbank(const std::vector<float>& magnitude)
 {
     std::vector<float> mel(numMels);
-    int numBins = nFft / 2 + 1;
 
     for (int m = 0; m < numMels; ++m)
     {
+        const auto& band = melFilterbank[m];
         float sum = 0.0f;
-        for (int k = 0; k < numBins; ++k)
+        for (int k = band.startBin; k < band.endBin; ++k)
         {
-            sum += magnitude[k] * melFilterbank[m][k];
+            sum += magnitude[k] * band.weights[k - band.startBin];
         }
         // Log scale (natural log for vocoder compatibility)
         // Use clamp value matching Python: 1e-9

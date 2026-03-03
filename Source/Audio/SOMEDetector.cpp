@@ -71,7 +71,8 @@ bool SOMEDetector::loadModel(const juce::File &modelPath, GPUProvider provider,
 #endif
         if (provider == GPUProvider::CoreML) {
       try {
-        sessionOptions.AppendExecutionProvider("CoreML");
+        sessionOptions.AppendExecutionProvider("CoreML",
+            {{"MLComputeUnits", "ALL"}});
       } catch (const Ort::Exception &e) {
       }
     } else {

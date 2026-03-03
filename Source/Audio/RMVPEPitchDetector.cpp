@@ -1,6 +1,7 @@
 #include "RMVPEPitchDetector.h"
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 RMVPEPitchDetector::RMVPEPitchDetector() = default;
 
@@ -15,7 +16,13 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
                                          "RMVPEPitchDetector");
 
     Ort::SessionOptions sessionOptions;
-    sessionOptions.SetIntraOpNumThreads(1);
+    if (provider == GPUProvider::CPU) {
+      const int numThreads = std::max(1u, std::thread::hardware_concurrency()) / 2;
+      sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+    } else {
+      sessionOptions.SetIntraOpNumThreads(1);
+      sessionOptions.SetInterOpNumThreads(1);
+    }
     sessionOptions.SetGraphOptimizationLevel(
         GraphOptimizationLevel::ORT_ENABLE_ALL);
 
@@ -50,7 +57,8 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
 #endif
         if (provider == GPUProvider::CoreML) {
       try {
-        sessionOptions.AppendExecutionProvider("CoreML");
+        sessionOptions.AppendExecutionProvider("CoreML",
+            {{"MLComputeUnits", "ALL"}});
       } catch (const Ort::Exception &e) {
       }
     } else {

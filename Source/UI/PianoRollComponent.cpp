@@ -1023,6 +1023,12 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
   const bool drawBodies = pass == NoteRenderPass::Body;
   const bool drawOverlays = pass == NoteRenderPass::Overlay;
 
+  // Pre-allocated scratch buffers to avoid per-note heap allocations
+  std::vector<float> waveValues;
+  std::vector<float> smoothed;
+  waveValues.reserve(2048);
+  smoothed.reserve(2048);
+
   const bool isMultiDragging = pitchEditor && pitchEditor->isDraggingMultiNotes();
   const std::vector<Note *> *draggedNotes =
       isMultiDragging ? &pitchEditor->getDraggedNotes() : nullptr;
@@ -1137,7 +1143,7 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
         float waveHeight = h * 3.0f;
 
         // Build waveform data with increased resolution for smoother curves
-        std::vector<float> waveValues;
+        waveValues.clear();
         // Increase point density for smoother curves (up to 800 points)
         float step = std::max(0.5f, w / 1024.0f);
 
@@ -1155,7 +1161,7 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
 
         // Apply smoothing filter to reduce aliasing artifacts
         if (waveValues.size() > 2) {
-          std::vector<float> smoothed(waveValues.size());
+          smoothed.resize(waveValues.size());
           smoothed[0] = waveValues[0];
           for (size_t i = 1; i + 1 < waveValues.size(); ++i) {
             // Simple 3-point moving average for gentle smoothing
@@ -1259,74 +1265,9 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
           waveformPath.closeSubPath();
           g.fillPath(waveformPath);
 
-          // Draw smooth outline with anti-aliasing
-          juce::Path outline;
-          outline.startNewSubPath(
-              x, centerY - waveValues[0] * waveHeight * 0.5f);
-
-          // Top curve
-          for (size_t i = 0; i + 1 < numPoints; ++i) {
-            float px1 = (static_cast<float>(i) /
-                         static_cast<float>(numPoints - 1)) *
-                        w;
-            float px2 = (static_cast<float>(i + 1) /
-                         static_cast<float>(numPoints - 1)) *
-                        w;
-
-            size_t idx0 = (i > 0) ? i - 1 : i;
-            size_t idx1 = i;
-            size_t idx2 = i + 1;
-            size_t idx3 = (i + 2 < numPoints) ? i + 2 : i + 1;
-
-            float val0 = waveValues[idx0];
-            float val1 = waveValues[idx1];
-            float val2 = waveValues[idx2];
-            float val3 = waveValues[idx3];
-
-            for (int seg = 1; seg <= curveSegments; ++seg) {
-              float t =
-                  static_cast<float>(seg) / static_cast<float>(curveSegments);
-              float px = px1 + (px2 - px1) * t;
-              float val = catmullRom(t, val0, val1, val2, val3);
-              float yPos = centerY - val * waveHeight * 0.5f;
-              outline.lineTo(x + px, yPos);
-            }
-          }
-
-          // Bottom curve
-          for (int i = static_cast<int>(numPoints) - 2; i >= 0; --i) {
-            float px1 = (static_cast<float>(i + 1) /
-                         static_cast<float>(numPoints - 1)) *
-                        w;
-            float px2 =
-                (static_cast<float>(i) / static_cast<float>(numPoints - 1)) *
-                w;
-
-            size_t idx0 = (i + 2 < numPoints) ? i + 2 : i + 1;
-            size_t idx1 = i + 1;
-            size_t idx2 = i;
-            size_t idx3 = (i > 0) ? i - 1 : i;
-
-            float val0 = waveValues[idx0];
-            float val1 = waveValues[idx1];
-            float val2 = waveValues[idx2];
-            float val3 = waveValues[idx3];
-
-            for (int seg = 1; seg <= curveSegments; ++seg) {
-              float t =
-                  static_cast<float>(seg) / static_cast<float>(curveSegments);
-              float px = px1 + (px2 - px1) * t;
-              float val = catmullRom(t, val0, val1, val2, val3);
-              float yPos = centerY + val * waveHeight * 0.5f;
-              outline.lineTo(x + px, yPos);
-            }
-          }
-
-          outline.closeSubPath();
+          // Reuse the same closed path for the outline stroke
           g.setColour(noteColor.brighter(0.2f));
-          // Use slightly thicker stroke with anti-aliasing for smoother
-          // appearance
-          g.strokePath(outline,
+          g.strokePath(waveformPath,
                        juce::PathStrokeType(1.2f,
                                             juce::PathStrokeType::curved,
                                             juce::PathStrokeType::rounded));

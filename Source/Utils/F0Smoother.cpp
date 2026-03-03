@@ -14,14 +14,17 @@ std::vector<float> F0Smoother::medianFilter(const std::vector<float>& f0, int wi
     int halfWindow = windowSize / 2;
     std::vector<float> smoothed(f0.size());
     
+    // Reuse buffer across frames to avoid per-frame allocation
+    std::vector<float> windowValues;
+    windowValues.reserve(windowSize);
+    
     for (size_t i = 0; i < f0.size(); ++i)
     {
         int start = static_cast<int>(i) - halfWindow;
         int end = static_cast<int>(i) + halfWindow;
         
         // Collect valid F0 values in window (only voiced)
-        std::vector<float> windowValues;
-        windowValues.reserve(windowSize);
+        windowValues.clear();
         
         for (int j = start; j <= end; ++j)
         {
@@ -33,15 +36,18 @@ std::vector<float> F0Smoother::medianFilter(const std::vector<float>& f0, int wi
         
         if (!windowValues.empty())
         {
-            // Sort and get median
-            std::sort(windowValues.begin(), windowValues.end());
+            // Use nth_element for O(n) median instead of O(n log n) sort
             size_t mid = windowValues.size() / 2;
             if (windowValues.size() % 2 == 0)
             {
-                smoothed[i] = (windowValues[mid - 1] + windowValues[mid]) / 2.0f;
+                std::nth_element(windowValues.begin(), windowValues.begin() + mid, windowValues.end());
+                float upper = windowValues[mid];
+                std::nth_element(windowValues.begin(), windowValues.begin() + mid - 1, windowValues.begin() + mid);
+                smoothed[i] = (windowValues[mid - 1] + upper) / 2.0f;
             }
             else
             {
+                std::nth_element(windowValues.begin(), windowValues.begin() + mid, windowValues.end());
                 smoothed[i] = windowValues[mid];
             }
         }
@@ -216,19 +222,22 @@ std::vector<float> F0Smoother::smoothF0(const std::vector<float>& f0,
     if (f0.empty())
         return f0;
     
+    // Chain operations, reusing buffers to avoid 4 separate full copies.
     // Step 1: Remove outliers
-    std::vector<float> step1 = removeOutliers(f0, 1.5f);
+    std::vector<float> result = removeOutliers(f0, 1.5f);
     
-    // Step 2: Median filter
-    std::vector<float> step2 = medianFilter(step1, 5);
+    // Step 2: Median filter (returns new vector, swap into result)
+    std::vector<float> temp = medianFilter(result, 5);
+    std::swap(result, temp);
     
     // Step 3: Smooth transitions
-    std::vector<float> step3 = smoothTransitions(step2, voicedMask, 3);
+    temp = smoothTransitions(result, voicedMask, 3);
+    std::swap(result, temp);
     
     // Step 4: Interpolate small unvoiced gaps
-    std::vector<float> step4 = interpolateUnvoiced(step3, voicedMask, 5);
+    temp = interpolateUnvoiced(result, voicedMask, 5);
     
-    return step4;
+    return temp;
 }
 
 float F0Smoother::getMedian(const std::vector<float>& values, int start, int end)
@@ -251,14 +260,17 @@ float F0Smoother::getMedian(const std::vector<float>& values, int start, int end
     if (window.empty())
         return 0.0f;
     
-    std::sort(window.begin(), window.end());
     size_t mid = window.size() / 2;
     if (window.size() % 2 == 0)
     {
-        return (window[mid - 1] + window[mid]) / 2.0f;
+        std::nth_element(window.begin(), window.begin() + mid, window.end());
+        float upper = window[mid];
+        std::nth_element(window.begin(), window.begin() + mid - 1, window.begin() + mid);
+        return (window[mid - 1] + upper) / 2.0f;
     }
     else
     {
+        std::nth_element(window.begin(), window.begin() + mid, window.end());
         return window[mid];
     }
 }

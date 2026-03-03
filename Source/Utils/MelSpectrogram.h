@@ -22,6 +22,13 @@ public:
     std::vector<std::vector<float>> compute(const float* audio, int numSamples);
     
 private:
+    /** Sparse representation of one mel filter band. */
+    struct MelBand {
+        int startBin = 0;          // first non-zero FFT bin (inclusive)
+        int endBin   = 0;          // last non-zero FFT bin (exclusive)
+        std::vector<float> weights; // weights[k - startBin]
+    };
+
     void createMelFilterbank();
     void applyWindow(std::vector<float>& frame);
     std::vector<float> computeFFT(const std::vector<float>& frame);
@@ -34,7 +41,7 @@ private:
     float fMax;
     
     std::vector<float> window;  // Hann window
-    std::vector<std::vector<float>> melFilterbank;
+    std::vector<MelBand> melFilterbank;  // sparse filterbank
     
     juce::dsp::FFT fft;
 };

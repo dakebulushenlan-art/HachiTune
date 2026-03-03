@@ -75,6 +75,13 @@ public:
     int getWinSize() const { return winSize; }
 
 private:
+    /** Sparse representation of one mel filter band. */
+    struct MelBand {
+        int startBin = 0;          // first non-zero FFT bin (inclusive)
+        int endBin   = 0;          // last non-zero FFT bin (exclusive)
+        std::vector<float> weights; // weights[k - startBin]
+    };
+
     void createMelFilterbank();
     void createWindow();
 
@@ -97,7 +104,7 @@ private:
     float fMax;
 
     std::vector<float> window;  // Hann window
-    std::vector<std::vector<float>> melFilterbank;
+    std::vector<MelBand> melFilterbank;  // sparse filterbank
 
     juce::dsp::FFT fft;
 };

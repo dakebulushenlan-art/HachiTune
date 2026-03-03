@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <thread>
 
 FCPEPitchDetector::FCPEPitchDetector() {
   initMelFilterbank();
@@ -42,11 +43,9 @@ void FCPEPitchDetector::initMelFilterbank() {
     hzPoints[i] = melToHz(melPoints[i]);
   }
 
-  // Create filterbank with Slaney normalization
+  // Create filterbank with Slaney normalization (sparse representation)
   melFilterbank.resize(N_MELS);
   for (int m = 0; m < N_MELS; ++m) {
-    melFilterbank[m].resize(numBins, 0.0f);
-
     float fLow = hzPoints[m];
     float fCenter = hzPoints[m + 1];
     float fHigh = hzPoints[m + 2];
@@ -54,13 +53,36 @@ void FCPEPitchDetector::initMelFilterbank() {
     // Slaney normalization: 2 / (fHigh - fLow)
     float enorm = 2.0f / (fHigh - fLow);
 
+    // Find the range of bins that fall within [fLow, fHigh]
+    int firstBin = numBins;
+    int lastBin = -1;
+
     for (int k = 0; k < numBins; ++k) {
+      float freq = static_cast<float>(k) * FCPE_SAMPLE_RATE / N_FFT;
+      if (freq >= fLow && freq <= fHigh) {
+        if (k < firstBin) firstBin = k;
+        if (k > lastBin)  lastBin = k;
+      }
+    }
+
+    MelBand& band = melFilterbank[m];
+    if (lastBin < firstBin) {
+      band.startBin = 0;
+      band.endBin = 0;
+      continue;
+    }
+
+    band.startBin = firstBin;
+    band.endBin = lastBin + 1;  // exclusive
+    band.weights.resize(band.endBin - band.startBin, 0.0f);
+
+    for (int k = firstBin; k <= lastBin; ++k) {
       float freq = static_cast<float>(k) * FCPE_SAMPLE_RATE / N_FFT;
 
       if (freq >= fLow && freq < fCenter) {
-        melFilterbank[m][k] = enorm * (freq - fLow) / (fCenter - fLow);
+        band.weights[k - firstBin] = enorm * (freq - fLow) / (fCenter - fLow);
       } else if (freq >= fCenter && freq <= fHigh) {
-        melFilterbank[m][k] = enorm * (fHigh - freq) / (fHigh - fCenter);
+        band.weights[k - firstBin] = enorm * (fHigh - freq) / (fHigh - fCenter);
       }
     }
   }
@@ -93,7 +115,7 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
                                   GPUProvider provider, int deviceId) {
 #ifdef HAVE_ONNXRUNTIME
   try {
-    // Load mel filterbank from file if provided
+    // Load mel filterbank from file if provided (dense binary → sparse)
     if (melFilterbankPath.existsAsFile()) {
       juce::FileInputStream stream(melFilterbankPath);
       if (stream.openedOk()) {
@@ -103,9 +125,28 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
 
         melFilterbank.resize(N_MELS);
         for (int m = 0; m < N_MELS; ++m) {
-          melFilterbank[m].resize(numBins);
+          // Find non-zero bounds
+          int firstBin = numBins;
+          int lastBin = -1;
           for (int k = 0; k < numBins; ++k) {
-            melFilterbank[m][k] = data[m * numBins + k];
+            if (data[m * numBins + k] != 0.0f) {
+              if (k < firstBin) firstBin = k;
+              lastBin = k;
+            }
+          }
+
+          MelBand& band = melFilterbank[m];
+          if (lastBin < firstBin) {
+            band.startBin = 0;
+            band.endBin = 0;
+            continue;
+          }
+
+          band.startBin = firstBin;
+          band.endBin = lastBin + 1;
+          band.weights.resize(band.endBin - band.startBin);
+          for (int k = firstBin; k <= lastBin; ++k) {
+            band.weights[k - firstBin] = data[m * numBins + k];
           }
         }
       }
@@ -125,7 +166,14 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
                                          "FCPEPitchDetector");
 
     Ort::SessionOptions sessionOptions;
-    sessionOptions.SetIntraOpNumThreads(1);
+    if (provider == GPUProvider::CPU) {
+      const int numThreads =
+          std::max(1u, std::thread::hardware_concurrency()) / 2;
+      sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+    } else {
+      sessionOptions.SetIntraOpNumThreads(1);
+      sessionOptions.SetInterOpNumThreads(1);
+    }
     sessionOptions.SetGraphOptimizationLevel(
         GraphOptimizationLevel::ORT_ENABLE_ALL);
 
@@ -160,7 +208,8 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
 #endif
         if (provider == GPUProvider::CoreML) {
       try {
-        sessionOptions.AppendExecutionProvider("CoreML");
+        sessionOptions.AppendExecutionProvider("CoreML",
+            {{"MLComputeUnits", "ALL"}});
       } catch (const Ort::Exception &e) {
       }
     } else {
@@ -325,11 +374,12 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
       mag[k] = std::sqrt(real * real + imag * imag + 1e-9f);
     }
 
-    // Apply mel filterbank
+    // Apply sparse mel filterbank
     for (int m = 0; m < N_MELS; ++m) {
+      const auto& band = melFilterbank[m];
       float sum = 0.0f;
-      for (int k = 0; k < numBins; ++k) {
-        sum += mag[k] * melFilterbank[m][k];
+      for (int k = band.startBin; k < band.endBin; ++k) {
+        sum += mag[k] * band.weights[k - band.startBin];
       }
 
       // Dynamic range compression (log)

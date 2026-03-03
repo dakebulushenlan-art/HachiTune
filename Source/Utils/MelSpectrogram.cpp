@@ -71,11 +71,10 @@ void MelSpectrogram::createMelFilterbank()
     }
     
     // Create filterbank with Slaney normalization (area normalization)
+    // Store in sparse representation: only non-zero bins per mel band
     melFilterbank.resize(numMels);
     for (int m = 0; m < numMels; ++m)
     {
-        melFilterbank[m].resize(numBins, 0.0f);
-        
         float fLow = hzPoints[m];
         float fCenter = hzPoints[m + 1];
         float fHigh = hzPoints[m + 2];
@@ -83,19 +82,46 @@ void MelSpectrogram::createMelFilterbank()
         // Slaney normalization: divide by the width of the mel band
         float enorm = 2.0f / (fHigh - fLow);
         
+        // Find the range of bins that fall within [fLow, fHigh]
+        int firstBin = numBins;  // will be narrowed
+        int lastBin = -1;        // will be narrowed
+        
         for (int k = 0; k < numBins; ++k)
+        {
+            float freq = static_cast<float>(k) * sampleRate / nFft;
+            if (freq >= fLow && freq <= fHigh)
+            {
+                if (k < firstBin) firstBin = k;
+                if (k > lastBin)  lastBin = k;
+            }
+        }
+        
+        MelBand& band = melFilterbank[m];
+        if (lastBin < firstBin)
+        {
+            // Empty band (shouldn't happen in practice)
+            band.startBin = 0;
+            band.endBin = 0;
+            continue;
+        }
+        
+        band.startBin = firstBin;
+        band.endBin = lastBin + 1;  // exclusive
+        band.weights.resize(band.endBin - band.startBin, 0.0f);
+        
+        for (int k = firstBin; k <= lastBin; ++k)
         {
             float freq = static_cast<float>(k) * sampleRate / nFft;
             
             if (freq >= fLow && freq < fCenter)
             {
                 // Rising edge
-                melFilterbank[m][k] = enorm * (freq - fLow) / (fCenter - fLow);
+                band.weights[k - firstBin] = enorm * (freq - fLow) / (fCenter - fLow);
             }
             else if (freq >= fCenter && freq <= fHigh)
             {
                 // Falling edge
-                melFilterbank[m][k] = enorm * (fHigh - freq) / (fHigh - fCenter);
+                band.weights[k - firstBin] = enorm * (fHigh - freq) / (fHigh - fCenter);
             }
         }
     }
@@ -120,6 +146,7 @@ std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int 
     int numBins = nFft / 2 + 1;
     
     std::vector<float> frame(nFft * 2, 0.0f);  // Complex FFT buffer
+    std::vector<float> mag(numBins);            // Reused across frames
     
     for (int i = 0; i < numFrames; ++i)
     {
@@ -155,7 +182,6 @@ std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int 
         fft.performRealOnlyForwardTransform(frame.data());
         
         // Compute magnitude spectrum with small epsilon to avoid log(0)
-        std::vector<float> mag(numBins);
         for (int k = 0; k < numBins; ++k)
         {
             float real = frame[k * 2];
@@ -163,14 +189,15 @@ std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int 
             mag[k] = std::sqrt(real * real + imag * imag + 1e-9f);
         }
         
-        // Apply mel filterbank
+        // Apply sparse mel filterbank
         mel[i].resize(numMels);
         for (int m = 0; m < numMels; ++m)
         {
+            const auto& band = melFilterbank[m];
             float sum = 0.0f;
-            for (int k = 0; k < numBins; ++k)
+            for (int k = band.startBin; k < band.endBin; ++k)
             {
-                sum += mag[k] * melFilterbank[m][k];
+                sum += mag[k] * band.weights[k - band.startBin];
             }
             
             // Log scale (natural log for vocoder compatibility)
