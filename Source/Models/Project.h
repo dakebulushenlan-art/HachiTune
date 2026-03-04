@@ -177,18 +177,16 @@ public:
     // Check if any notes are dirty
     bool hasDirtyNotes() const;
     
+    // Compose the global waveform from originalWaveform + per-note synthWaveforms.
+    // Fills audioData.waveform with originalWaveform as base, then overlays each
+    // note's synthWaveform at its output position with edge crossfades.
+    void composeGlobalWaveform();
+    
     // F0 direct edit dirty tracking (for Draw mode)
     void setF0DirtyRange(int startFrame, int endFrame);
     void clearF0DirtyRange();
     bool hasF0DirtyRange() const;
     std::pair<int, int> getF0DirtyRange() const;
-    
-    // Synthesis range ceiling (for ripple mode stretch).
-    // When set (>= 0), IncrementalSynthesizer clamps the synthesis end frame
-    // so it does not expand into shifted notes whose waveform was moved in place.
-    void setSynthesisCeiling(int frame) { synthesisCeiling_ = frame; }
-    int getSynthesisCeiling() const { return synthesisCeiling_; }
-    void clearSynthesisCeiling() { synthesisCeiling_ = -1; }
     
     // Modified state
     bool isModified() const { return modified; }
@@ -244,8 +242,6 @@ private:
     int f0DirtyStart = -1;
     int f0DirtyEnd = -1;
     
-    // Synthesis range ceiling (ripple mode)
-    int synthesisCeiling_ = -1;
     
     bool modified = false;
 

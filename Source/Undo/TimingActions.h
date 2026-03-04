@@ -22,10 +22,6 @@ public:
                             int oldRightStart, int oldRightEnd,
                             int newLeftStart, int newLeftEnd,
                             int newRightStart, int newRightEnd,
-                            std::vector<float> oldLeftClip,
-                            std::vector<float> newLeftClip,
-                            std::vector<float> oldRightClip,
-                            std::vector<float> newRightClip,
                             std::vector<float> oldDelta,
                             std::vector<float> newDelta,
                             std::vector<bool> oldVoiced,
@@ -41,10 +37,6 @@ public:
           oldRightStart(oldRightStart), oldRightEnd(oldRightEnd),
           newLeftStart(newLeftStart), newLeftEnd(newLeftEnd),
           newRightStart(newRightStart), newRightEnd(newRightEnd),
-          oldLeftClip(std::move(oldLeftClip)),
-          newLeftClip(std::move(newLeftClip)),
-          oldRightClip(std::move(oldRightClip)),
-          newRightClip(std::move(newRightClip)),
           oldDelta(std::move(oldDelta)), newDelta(std::move(newDelta)),
           oldVoiced(std::move(oldVoiced)), newVoiced(std::move(newVoiced)),
           oldMel(std::move(oldMel)), newMel(std::move(newMel)),
@@ -53,13 +45,13 @@ public:
     void undo() override
     {
         applyState(oldLeftStart, oldLeftEnd, oldRightStart, oldRightEnd,
-                   oldLeftClip, oldRightClip, oldDelta, oldVoiced, oldMel);
+                   oldDelta, oldVoiced, oldMel);
     }
 
     void redo() override
     {
         applyState(newLeftStart, newLeftEnd, newRightStart, newRightEnd,
-                   newLeftClip, newRightClip, newDelta, newVoiced, newMel);
+                   newDelta, newVoiced, newMel);
     }
 
     juce::String getName() const override { return "Stretch Note Timing"; }
@@ -67,8 +59,6 @@ public:
 private:
     void applyState(int leftStart, int leftEnd,
                     int rightStart, int rightEnd,
-                    const std::vector<float>& leftClip,
-                    const std::vector<float>& rightClip,
                     const std::vector<float>& delta,
                     const std::vector<bool>& voiced,
                     const std::vector<std::vector<float>>& mel)
@@ -77,13 +67,13 @@ private:
             left->setStartFrame(leftStart);
             left->setEndFrame(leftEnd);
             left->markDirty();
-            left->setClipWaveform(leftClip);
+            left->markSynthDirty();
         }
         if (right) {
             right->setStartFrame(rightStart);
             right->setEndFrame(rightEnd);
             right->markDirty();
-            right->setClipWaveform(rightClip);
+            right->markSynthDirty();
         }
 
         if (deltaPitchArray && rangeEnd > rangeStart &&
@@ -132,10 +122,6 @@ private:
     int newLeftEnd = 0;
     int newRightStart = 0;
     int newRightEnd = 0;
-    std::vector<float> oldLeftClip;
-    std::vector<float> newLeftClip;
-    std::vector<float> oldRightClip;
-    std::vector<float> newRightClip;
     std::vector<float> oldDelta;
     std::vector<float> newDelta;
     std::vector<bool> oldVoiced;
@@ -165,10 +151,6 @@ public:
                            std::vector<int> oldNoteEnds,
                            std::vector<int> newNoteStarts,
                            std::vector<int> newNoteEnds,
-                           std::vector<float> oldLeftClip,
-                           std::vector<float> newLeftClip,
-                           std::vector<float> oldRightClip,
-                           std::vector<float> newRightClip,
                            std::vector<float> oldDelta,
                            std::vector<float> newDelta,
                            std::vector<bool> oldVoiced,
@@ -186,10 +168,6 @@ public:
           oldNoteEnds(std::move(oldNoteEnds)),
           newNoteStarts(std::move(newNoteStarts)),
           newNoteEnds(std::move(newNoteEnds)),
-          oldLeftClip(std::move(oldLeftClip)),
-          newLeftClip(std::move(newLeftClip)),
-          oldRightClip(std::move(oldRightClip)),
-          newRightClip(std::move(newRightClip)),
           oldDelta(std::move(oldDelta)), newDelta(std::move(newDelta)),
           oldVoiced(std::move(oldVoiced)), newVoiced(std::move(newVoiced)),
           oldMel(std::move(oldMel)), newMel(std::move(newMel)),
@@ -197,11 +175,11 @@ public:
 
     void undo() override {
         applyState(oldLeftStart, oldLeftEnd, oldNoteStarts, oldNoteEnds,
-                   oldLeftClip, oldRightClip, oldDelta, oldVoiced, oldMel);
+                   oldDelta, oldVoiced, oldMel);
     }
     void redo() override {
         applyState(newLeftStart, newLeftEnd, newNoteStarts, newNoteEnds,
-                   newLeftClip, newRightClip, newDelta, newVoiced, newMel);
+                   newDelta, newVoiced, newMel);
     }
 
     juce::String getName() const override { return "Ripple Stretch Timing"; }
@@ -210,8 +188,6 @@ private:
     void applyState(int leftStart, int leftEnd,
                     const std::vector<int>& noteStarts,
                     const std::vector<int>& noteEnds,
-                    const std::vector<float>& leftClip,
-                    const std::vector<float>& rightClip,
                     const std::vector<float>& delta,
                     const std::vector<bool>& voiced,
                     const std::vector<std::vector<float>>& mel)
@@ -220,16 +196,19 @@ private:
             left->setStartFrame(leftStart);
             left->setEndFrame(leftEnd);
             left->markDirty();
-            left->setClipWaveform(leftClip);
+            left->markSynthDirty();
         }
-        if (right)
-            right->setClipWaveform(rightClip);
+        if (right) {
+            right->markDirty();
+            right->markSynthDirty();
+        }
 
         for (size_t i = 0; i < rippleNotes.size() && i < noteStarts.size() && i < noteEnds.size(); ++i) {
             if (rippleNotes[i]) {
                 rippleNotes[i]->setStartFrame(noteStarts[i]);
                 rippleNotes[i]->setEndFrame(noteEnds[i]);
                 rippleNotes[i]->markDirty();
+                rippleNotes[i]->markSynthDirty();
             }
         }
 
@@ -280,10 +259,6 @@ private:
     std::vector<int> oldNoteEnds;
     std::vector<int> newNoteStarts;
     std::vector<int> newNoteEnds;
-    std::vector<float> oldLeftClip;
-    std::vector<float> newLeftClip;
-    std::vector<float> oldRightClip;
-    std::vector<float> newRightClip;
     std::vector<float> oldDelta;
     std::vector<float> newDelta;
     std::vector<bool> oldVoiced;

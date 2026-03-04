@@ -203,13 +203,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   endFrame =
       std::min(static_cast<int>(audioData.melSpectrogram.size()), endFrame);
 
-  // Apply synthesis ceiling if set (ripple mode stretch).
-  // Prevents the synthesis range from expanding into shifted notes whose
-  // waveform was already moved in place by finishStretchDrag().
-  int ceiling = project->getSynthesisCeiling();
-  if (ceiling >= 0)
-    endFrame = std::min(endFrame, ceiling);
-
   if (startFrame >= endFrame) {
     if (onComplete)
       onComplete(false);
@@ -315,7 +308,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
           auto &audioData = capturedProject->getAudioData();
           int totalSamples = audioData.waveform.getNumSamples();
-          int numChannels = audioData.waveform.getNumChannels();
           int startSample = capturedStartFrame * hopSize;
           int expectedSamples =
               (capturedEndFrame - capturedStartFrame) * hopSize;
@@ -341,15 +333,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             return;
           }
 
-          constexpr int kMinBoundaryBlendSamples = 128;
-          constexpr int kMaxBoundaryBlendSamples = 1024;
-          const int preferredBlend =
-              std::max(kMinBoundaryBlendSamples, hopSize);
-          const int boundaryBlendLen = std::min(
-              std::min(kMaxBoundaryBlendSamples, preferredBlend),
-              std::max(1, samplesToWrite / 8));
-
-          // Build target from model/original blend once.
+          // Build blended target from model/original.
           std::vector<float> targetSegment(samplesToWrite, 0.0f);
           for (int i = 0; i < samplesToWrite; ++i) {
             const float b =
@@ -361,7 +345,6 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           }
 
           // Apply per-note gain on top of the blended target.
-          // Gain is piecewise-constant per note region.
           std::vector<float> sampleGain(static_cast<size_t>(samplesToWrite),
                                         1.0f);
           for (const auto &note : capturedProject->getNotes()) {
@@ -395,32 +378,86 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 sampleGain[static_cast<size_t>(i)];
           }
 
-          // Stitch target using original segment as reference:
-          // final = original + edgeEnv * (target - original)
-          // This avoids cumulative old/new layering across repeated edits.
-          for (int ch = 0; ch < numChannels; ++ch) {
-            float *dst = audioData.waveform.getWritePointer(ch);
-            for (int i = 0; i < samplesToWrite; ++i) {
-              float edgeEnv = 1.0f;
-              if (boundaryBlendLen > 1) {
-                if (i < boundaryBlendLen) {
-                  const float t = static_cast<float>(i) /
-                                  static_cast<float>(boundaryBlendLen - 1);
-                  edgeEnv = t * t * (3.0f - 2.0f * t);
-                } else if (i >= samplesToWrite - boundaryBlendLen) {
-                  const int fromEnd = samplesToWrite - 1 - i;
-                  const float t = static_cast<float>(fromEnd) /
-                                  static_cast<float>(boundaryBlendLen - 1);
-                  edgeEnv = t * t * (3.0f - 2.0f * t);
-                }
-              }
+          // Distribute synthesized audio into per-note synthWaveforms.
+          // Each note gets the slice of targetSegment corresponding to its
+          // output frame range [startFrame, endFrame).
+          for (auto &note : capturedProject->getNotes()) {
+            if (note.isRest())
+              continue;
 
-              const float cur = originalSegment[static_cast<size_t>(i)];
-              const float target = targetSegment[static_cast<size_t>(i)];
-              dst[startSample + i] = cur + edgeEnv * (target - cur);
+            const int noteStart = note.getStartFrame();
+            const int noteEnd = note.getEndFrame();
+            const int overlapStart = std::max(capturedStartFrame, noteStart);
+            const int overlapEnd = std::min(capturedEndFrame, noteEnd);
+            if (overlapEnd <= overlapStart)
+              continue;
+
+            // Only update notes that overlap the synthesis range and are dirty
+            // (or have no synthWaveform yet)
+            if (!note.isDirty() && !note.isSynthDirty() && note.hasSynthWaveform())
+              continue;
+
+            // Full note range in samples
+            const int noteStartSample = noteStart * hopSize;
+            const int noteEndSample = noteEnd * hopSize;
+            const int noteSamples = noteEndSample - noteStartSample;
+            if (noteSamples <= 0)
+              continue;
+
+            std::vector<float> noteSynth(static_cast<size_t>(noteSamples), 0.0f);
+
+            // Copy the overlapping portion from targetSegment
+            const int overlapStartSample = overlapStart * hopSize;
+            const int overlapEndSample = overlapEnd * hopSize;
+            const int localSrcStart = (overlapStart - capturedStartFrame) * hopSize;
+            const int localDstStart = (overlapStart - noteStart) * hopSize;
+
+            for (int i = 0; i < overlapEndSample - overlapStartSample; ++i) {
+              const int srcIdx = localSrcStart + i;
+              const int dstIdx = localDstStart + i;
+              if (srcIdx >= 0 && srcIdx < samplesToWrite &&
+                  dstIdx >= 0 && dstIdx < noteSamples) {
+                noteSynth[static_cast<size_t>(dstIdx)] =
+                    targetSegment[static_cast<size_t>(srcIdx)];
+              }
             }
+
+            // For parts of the note outside the synthesis range, use srcClipWaveform
+            if (note.hasSrcClipWaveform()) {
+              const auto &srcClip = note.getSrcClipWaveform();
+              // srcClipWaveform corresponds to srcStartFrame..srcEndFrame in original
+              // We need to resample if note is stretched, but for non-overlapping parts
+              // just fill with original audio
+              const int srcFrames = note.getSrcEndFrame() - note.getSrcStartFrame();
+              const int dstFrames = note.getEndFrame() - note.getStartFrame();
+              const int srcSamples = static_cast<int>(srcClip.size());
+
+              for (int i = 0; i < noteSamples; ++i) {
+                const int globalSample = noteStartSample + i;
+                const int globalFrame = (globalSample / hopSize);
+                // Skip samples already covered by synthesis
+                if (globalFrame >= overlapStart && globalFrame < overlapEnd)
+                  continue;
+
+                // Map destination sample to source sample (handle stretch)
+                float srcPos;
+                if (dstFrames > 0 && srcFrames > 0) {
+                  srcPos = static_cast<float>(i) * static_cast<float>(srcSamples) /
+                           static_cast<float>(noteSamples);
+                } else {
+                  srcPos = static_cast<float>(i);
+                }
+                int srcIdx = static_cast<int>(srcPos);
+                if (srcIdx >= 0 && srcIdx < srcSamples)
+                  noteSynth[static_cast<size_t>(i)] = srcClip[static_cast<size_t>(srcIdx)];
+              }
+            }
+
+            note.setSynthWaveform(std::move(noteSynth));
           }
 
+          // Compose the global waveform from per-note synthWaveforms
+          capturedProject->composeGlobalWaveform();
 
           isBusy = false;
           juce::MessageManager::callAsync(

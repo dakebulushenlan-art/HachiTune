@@ -354,6 +354,24 @@ void AudioAnalyzer::segmentWithSOME(Project &project) {
             note.setClipWaveform(std::move(clip));
           }
 
+          // Extract source clip waveform from originalWaveform (immutable original audio)
+          if (audioData.originalWaveform.getNumSamples() > 0) {
+            int startSample = f0Start * HOP_SIZE;
+            int endSample = f0End * HOP_SIZE;
+            startSample =
+                std::max(0, std::min(startSample,
+                                     audioData.originalWaveform.getNumSamples()));
+            endSample = std::max(startSample,
+                                 std::min(endSample,
+                                          audioData.originalWaveform.getNumSamples()));
+            std::vector<float> srcClip;
+            srcClip.reserve(static_cast<size_t>(endSample - startSample));
+            const float *origSrc = audioData.originalWaveform.getReadPointer(0);
+            for (int i = startSample; i < endSample; ++i)
+              srcClip.push_back(origSrc[i]);
+            note.setSrcClipWaveform(std::move(srcClip));
+          }
+
           // Extract mel spectrogram clip for this note
           if (!audioData.melSpectrogram.empty() && f0Start < melSize) {
             int melStart = std::max(0, f0Start);
@@ -421,6 +439,23 @@ void AudioAnalyzer::segmentFallback(Project &project) {
       for (int i = startSample; i < endSample; ++i)
         clip.push_back(src[i]);
       note.setClipWaveform(std::move(clip));
+    }
+
+    // Extract source clip waveform from originalWaveform (immutable original audio)
+    if (audioData.originalWaveform.getNumSamples() > 0) {
+      int startSample = start * HOP_SIZE;
+      int endSample = end * HOP_SIZE;
+      startSample = std::max(0, std::min(startSample,
+                                         audioData.originalWaveform.getNumSamples()));
+      endSample = std::max(startSample,
+                           std::min(endSample,
+                                    audioData.originalWaveform.getNumSamples()));
+      std::vector<float> srcClip;
+      srcClip.reserve(static_cast<size_t>(endSample - startSample));
+      const float *origSrc = audioData.originalWaveform.getReadPointer(0);
+      for (int i = startSample; i < endSample; ++i)
+        srcClip.push_back(origSrc[i]);
+      note.setSrcClipWaveform(std::move(srcClip));
     }
 
     // Extract mel spectrogram clip

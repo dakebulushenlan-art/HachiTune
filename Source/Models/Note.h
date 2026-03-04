@@ -118,6 +118,22 @@ public:
     void setClipWaveform(std::vector<float> samples) { clipWaveform = std::move(samples); }
     bool hasClipWaveform() const { return !clipWaveform.empty(); }
 
+    // Source clip waveform (immutable original audio from originalWaveform, set once during segmentation)
+    const std::vector<float>& getSrcClipWaveform() const { return srcClipWaveform; }
+    void setSrcClipWaveform(std::vector<float> samples) { srcClipWaveform = std::move(samples); }
+    bool hasSrcClipWaveform() const { return !srcClipWaveform.empty(); }
+
+    // Synthesized waveform (vocoder output for this note, regenerated when synthDirty)
+    const std::vector<float>& getSynthWaveform() const { return synthWaveform; }
+    void setSynthWaveform(std::vector<float> samples) { synthWaveform = std::move(samples); synthDirty = false; }
+    bool hasSynthWaveform() const { return !synthWaveform.empty(); }
+    void clearSynthWaveform() { synthWaveform.clear(); synthDirty = true; }
+
+    // Synth dirty flag (needs re-synthesis; separate from display dirty flag)
+    bool isSynthDirty() const { return synthDirty; }
+    void setSynthDirty(bool d) { synthDirty = d; }
+    void markSynthDirty() { synthDirty = true; synthWaveform.clear(); }
+
     // Mel spectrogram clip (original mel frames for this note)
     const std::vector<std::vector<float>>& getClipMel() const { return clipMel; }
     void setClipMel(std::vector<std::vector<float>> mel) { clipMel = std::move(mel); }
@@ -184,10 +200,13 @@ private:
 
     std::vector<float> f0Values;
     std::vector<float> clipWaveform;
+    std::vector<float> srcClipWaveform;  // Immutable original audio (from originalWaveform)
+    std::vector<float> synthWaveform;    // Vocoder output (regenerated when synthDirty)
     std::vector<std::vector<float>> clipMel;  // Mel spectrogram clip [T, numMels]
     bool selected = false;
-    bool dirty = false;  // For incremental synthesis
-    bool rest = false;   // Rest note (silence placeholder)
+    bool dirty = false;       // For incremental synthesis (display/trigger)
+    bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)
+    bool rest = false;        // Rest note (silence placeholder)
 
     juce::String lyric;   // Lyric text (e.g., "a", "SP" for silence)
     juce::String phoneme; // Phoneme (e.g., "a", "sp", for pronunciation)

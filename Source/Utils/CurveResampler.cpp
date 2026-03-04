@@ -128,4 +128,38 @@ namespace CurveResampler {
     }
     return out;
   }
+
+  std::vector<std::vector<float>> resampleNearest2DRange(
+      const std::vector<std::vector<float>>& points,
+      int srcOffset, int srcCount,
+      int targetLength) {
+    if (targetLength <= 0 || srcCount <= 0)
+      return {};
+    if (srcOffset < 0 || srcOffset + srcCount > static_cast<int>(points.size()))
+      return {};
+
+    if (srcCount == 1) {
+      return std::vector<std::vector<float>>(
+          static_cast<size_t>(targetLength), points[static_cast<size_t>(srcOffset)]);
+    }
+    if (targetLength == 1)
+      return {points[static_cast<size_t>(srcOffset)]};
+
+    const size_t numChannels = points[static_cast<size_t>(srcOffset)].size();
+    const float tMax = static_cast<float>(srcCount - 1);
+    std::vector<std::vector<float>> out(
+        static_cast<size_t>(targetLength),
+        std::vector<float>(numChannels, 0.0f));
+    for (int i = 0; i < targetLength; ++i) {
+      const float t = tMax * static_cast<float>(i) /
+                      static_cast<float>(targetLength - 1);
+      const int localIdx =
+          std::clamp(static_cast<int>(std::round(t)), 0, srcCount - 1);
+      const auto &src = points[static_cast<size_t>(srcOffset + localIdx)];
+      for (size_t ch = 0; ch < numChannels; ++ch)
+        out[static_cast<size_t>(i)][ch] =
+            ch < src.size() ? src[ch] : 0.0f;
+    }
+    return out;
+  }
 } // namespace CurveResampler

@@ -57,6 +57,23 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
         }
     }
 
+    // Ensure source clip waveform exists before splitting
+    if (!note->hasSrcClipWaveform()) {
+        auto& audioData = project->getAudioData();
+        if (audioData.originalWaveform.getNumSamples() > 0) {
+            int srcStart = note->getSrcStartFrame() * HOP_SIZE;
+            int srcEnd = note->getSrcEndFrame() * HOP_SIZE;
+            srcStart = std::max(0, std::min(srcStart, audioData.originalWaveform.getNumSamples()));
+            srcEnd = std::max(srcStart, std::min(srcEnd, audioData.originalWaveform.getNumSamples()));
+            std::vector<float> srcClip;
+            srcClip.reserve(static_cast<size_t>(srcEnd - srcStart));
+            const float* origSrc = audioData.originalWaveform.getReadPointer(0);
+            for (int i = srcStart; i < srcEnd; ++i)
+                srcClip.push_back(origSrc[i]);
+            note->setSrcClipWaveform(std::move(srcClip));
+        }
+    }
+
     // Ensure clip mel exists before splitting
     if (!note->hasClipMel()) {
         auto& audioData = project->getAudioData();
@@ -94,6 +111,17 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
         secondNote.setClipWaveform(std::move(rightClip));
     }
 
+    // Split source clip waveform if available
+    if (note->hasSrcClipWaveform()) {
+        const auto& srcClip = note->getSrcClipWaveform();
+        int splitOffset = (splitFrame - startFrame) * HOP_SIZE;
+        splitOffset = std::max(0, std::min(splitOffset, static_cast<int>(srcClip.size())));
+        std::vector<float> leftSrcClip(srcClip.begin(), srcClip.begin() + splitOffset);
+        std::vector<float> rightSrcClip(srcClip.begin() + splitOffset, srcClip.end());
+        note->setSrcClipWaveform(std::move(leftSrcClip));
+        secondNote.setSrcClipWaveform(std::move(rightSrcClip));
+    }
+
     // Split clip mel if available
     if (note->hasClipMel()) {
         const auto& mel = note->getClipMel();
@@ -103,6 +131,43 @@ bool NoteSplitter::splitNoteAtFrame(Note* note, int splitFrame) {
         std::vector<std::vector<float>> rightMel(mel.begin() + splitOffset, mel.end());
         note->setClipMel(std::move(leftMel));
         secondNote.setClipMel(std::move(rightMel));
+    }
+
+    // Split originalDeltaPitch if available (pristine curve for non-destructive stretch)
+    if (note->hasOriginalDeltaPitch()) {
+        const auto& origDelta = note->getOriginalDeltaPitch();
+        int splitOffset = splitFrame - startFrame;
+        splitOffset = std::max(0, std::min(splitOffset, static_cast<int>(origDelta.size())));
+        std::vector<float> leftDelta(origDelta.begin(), origDelta.begin() + splitOffset);
+        std::vector<float> rightDelta(origDelta.begin() + splitOffset, origDelta.end());
+        note->setOriginalDeltaPitch(std::move(leftDelta));
+        secondNote.setOriginalDeltaPitch(std::move(rightDelta));
+    } else {
+        // Fallback: extract from global deltaPitch if originalDeltaPitch is missing
+        auto& audioData = project->getAudioData();
+        const int totalFrames = static_cast<int>(audioData.deltaPitch.size());
+        if (totalFrames > 0) {
+            int leftLen = splitFrame - startFrame;
+            int rightLen = endFrame - splitFrame;
+            if (leftLen > 0) {
+                std::vector<float> leftDelta(static_cast<size_t>(leftLen));
+                for (int i = 0; i < leftLen; ++i) {
+                    int gIdx = startFrame + i;
+                    if (gIdx >= 0 && gIdx < totalFrames)
+                        leftDelta[static_cast<size_t>(i)] = audioData.deltaPitch[static_cast<size_t>(gIdx)];
+                }
+                note->setOriginalDeltaPitch(std::move(leftDelta));
+            }
+            if (rightLen > 0) {
+                std::vector<float> rightDelta(static_cast<size_t>(rightLen));
+                for (int i = 0; i < rightLen; ++i) {
+                    int gIdx = splitFrame + i;
+                    if (gIdx >= 0 && gIdx < totalFrames)
+                        rightDelta[static_cast<size_t>(i)] = audioData.deltaPitch[static_cast<size_t>(gIdx)];
+                }
+                secondNote.setOriginalDeltaPitch(std::move(rightDelta));
+            }
+        }
     }
 
     // Modify the first note (left part)

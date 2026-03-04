@@ -28,6 +28,15 @@ namespace PitchCurveProcessor
     void rebuildDeltaForNotes(Project& project, const std::vector<Note*>& affectedNotes);
 
     /**
+     * Lightweight rebuild for interactive stretch drag.
+     * Regenerates basePitch from ALL notes (needed for correct pitch display),
+     * but only processes deltaPitch for the specified affected notes instead
+     * of iterating every note.  Recomposes f0 only for the affected range.
+     * Much faster than rebuildBaseFromNotes() during interactive drag.
+     */
+    void rebuildBaseFromNotesForDrag(Project& project, const std::vector<Note*>& affectedNotes);
+
+    /**
      * Rebuild base and delta from a source pitch (Hz). This is used after
      * detection/segmentation or when we need to recompute delta from edited
      * curves. The uv mask is kept as-is; the composed f0 omits uv masking.

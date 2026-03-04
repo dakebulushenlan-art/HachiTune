@@ -125,8 +125,6 @@ void Project::clearAllDirty()
     // Also clear F0 dirty range
     f0DirtyStart = -1;
     f0DirtyEnd = -1;
-    // Clear synthesis ceiling (set by ripple stretch)
-    synthesisCeiling_ = -1;
 }
 
 bool Project::hasDirtyNotes() const
@@ -422,4 +420,178 @@ void Project::setTimelineSnapCycle(bool enabled)
 
     timelineSnapCycle = enabled;
     modified = true;
+}
+
+// ---------------------------------------------------------------------------
+// composeGlobalWaveform: rebuild audioData.waveform from originalWaveform +
+// per-note synthWaveforms, mapping each segment (gap/note) from its source
+// position in originalWaveform to its output position in the timeline.
+//
+// This ensures that non-note regions (breaths, consonants, silence) shift
+// along with notes during ripple stretch, and the buffer grows as needed.
+// ---------------------------------------------------------------------------
+void Project::composeGlobalWaveform()
+{
+    auto &waveform = audioData.waveform;
+    const auto &origWaveform = audioData.originalWaveform;
+
+    const int numChannels = waveform.getNumChannels();
+    const int origSamples = origWaveform.getNumSamples();
+    if (numChannels == 0 || origSamples == 0)
+        return;
+
+    // --- Step 1: Collect non-rest notes sorted by output position ----------
+    std::vector<const Note*> sortedNotes;
+    sortedNotes.reserve(notes.size());
+    for (const auto &note : notes) {
+        if (!note.isRest())
+            sortedNotes.push_back(&note);
+    }
+    std::sort(sortedNotes.begin(), sortedNotes.end(),
+              [](const Note *a, const Note *b) {
+                  return a->getStartFrame() < b->getStartFrame();
+              });
+
+    // --- Step 2: Compute required output buffer length --------------------
+    // Output must hold all shifted notes + trailing gap after the last note.
+    int requiredSamples = origSamples;
+    if (!sortedNotes.empty()) {
+        const auto *last = sortedNotes.back();
+        // Last note end (account for synthWaveform that may differ from frame range)
+        int lastEnd = last->getEndFrame() * HOP_SIZE;
+        if (last->hasSynthWaveform()) {
+            int synthEnd = last->getStartFrame() * HOP_SIZE
+                         + static_cast<int>(last->getSynthWaveform().size());
+            lastEnd = std::max(lastEnd, synthEnd);
+        }
+        requiredSamples = std::max(requiredSamples, lastEnd);
+        // Trailing gap: original audio after last note's source end, placed
+        // after last note's output end.
+        int srcTrailLen = std::max(0,
+            origSamples - last->getSrcEndFrame() * HOP_SIZE);
+        requiredSamples = std::max(requiredSamples,
+            last->getEndFrame() * HOP_SIZE + srcTrailLen);
+    }
+
+    // Resize waveform buffer if needed (grow only — shrinking left to caller)
+    if (waveform.getNumSamples() < requiredSamples)
+        waveform.setSize(numChannels, requiredSamples, false, true, false);
+    const int totalSamples = waveform.getNumSamples();
+
+    // --- Step 3: Zero the output ------------------------------------------
+    waveform.clear();
+
+    // Helper: copy from origWaveform[srcOff .. srcOff+len) to
+    //         waveform[dstOff .. dstOff+len) with bounds clamping.
+    auto copyFromOrig = [&](int srcOff, int dstOff, int len) {
+        if (len <= 0) return;
+        if (srcOff < 0) { len += srcOff; dstOff -= srcOff; srcOff = 0; }
+        if (dstOff < 0) { len += dstOff; srcOff -= dstOff; dstOff = 0; }
+        if (len <= 0) return;
+        len = std::min(len, origSamples - srcOff);
+        len = std::min(len, totalSamples - dstOff);
+        if (len <= 0) return;
+        for (int ch = 0; ch < numChannels; ++ch) {
+            const float *src = origWaveform.getReadPointer(
+                std::min(ch, std::max(0, origWaveform.getNumChannels() - 1)));
+            float *dst = waveform.getWritePointer(ch);
+            std::copy(src + srcOff, src + srcOff + len, dst + dstOff);
+        }
+    };
+
+    // --- Step 4: Place segments via src→dst coordinate mapping -------------
+    // Timeline = [leading gap][note0][gap01][note1]...[trailing gap]
+    // Each segment is mapped from its source position (originalWaveform) to
+    // its output position, so gaps shift together with notes.
+
+    if (sortedNotes.empty()) {
+        // No notes — copy entire original
+        copyFromOrig(0, 0, origSamples);
+    } else {
+        // Leading gap: orig[0..firstNote.srcStart) → out[0..firstNote.start)
+        {
+            int srcLen = sortedNotes[0]->getSrcStartFrame() * HOP_SIZE;
+            int dstLen = sortedNotes[0]->getStartFrame() * HOP_SIZE;
+            copyFromOrig(0, 0, std::min(srcLen, dstLen));
+        }
+
+        for (size_t i = 0; i < sortedNotes.size(); ++i) {
+            const auto *note = sortedNotes[i];
+
+            // Note region without synthWaveform: place original audio
+            if (!note->hasSynthWaveform()) {
+                int srcStart = note->getSrcStartFrame() * HOP_SIZE;
+                int srcLen = (note->getSrcEndFrame() - note->getSrcStartFrame()) * HOP_SIZE;
+                int dstStart = note->getStartFrame() * HOP_SIZE;
+                int dstLen = (note->getEndFrame() - note->getStartFrame()) * HOP_SIZE;
+                copyFromOrig(srcStart, dstStart, std::min(srcLen, dstLen));
+            }
+
+            // Gap after this note → before next note (or trailing gap)
+            int gapSrcStart = note->getSrcEndFrame() * HOP_SIZE;
+            int gapDstStart = note->getEndFrame() * HOP_SIZE;
+            int gapSrcEnd, gapDstEnd;
+            if (i + 1 < sortedNotes.size()) {
+                gapSrcEnd = sortedNotes[i + 1]->getSrcStartFrame() * HOP_SIZE;
+                gapDstEnd = sortedNotes[i + 1]->getStartFrame() * HOP_SIZE;
+            } else {
+                // Trailing gap
+                gapSrcEnd = origSamples;
+                gapDstEnd = totalSamples;
+            }
+            int gapSrcLen = gapSrcEnd - gapSrcStart;
+            int gapDstLen = gapDstEnd - gapDstStart;
+            if (gapSrcLen > 0 && gapDstLen > 0)
+                copyFromOrig(gapSrcStart, gapDstStart,
+                             std::min(gapSrcLen, gapDstLen));
+        }
+    }
+
+    // --- Step 5: Overlay synthWaveforms with edge crossfade ---------------
+    constexpr int kEdgeFadeSamples = 512; // ~11.6ms at 44100Hz
+
+    for (const auto *note : sortedNotes) {
+        if (!note->hasSynthWaveform())
+            continue;
+
+        const auto &synthWave = note->getSynthWaveform();
+        const int noteStartSample = note->getStartFrame() * HOP_SIZE;
+        const int noteSamples = static_cast<int>(synthWave.size());
+
+        if (noteSamples <= 0)
+            continue;
+
+        const int maxFade = std::max(1, noteSamples / 4);
+        const int fadeLen = std::min(kEdgeFadeSamples, maxFade);
+
+        for (int ch = 0; ch < numChannels; ++ch) {
+            float *dst = waveform.getWritePointer(ch);
+
+            for (int i = 0; i < noteSamples; ++i) {
+                const int globalIdx = noteStartSample + i;
+                if (globalIdx < 0 || globalIdx >= totalSamples)
+                    continue;
+
+                // Edge crossfade envelope: smoothstep ramp at boundaries
+                float env = 1.0f;
+                if (fadeLen > 1) {
+                    if (i < fadeLen) {
+                        const float t = static_cast<float>(i) /
+                                        static_cast<float>(fadeLen);
+                        env = t * t * (3.0f - 2.0f * t); // smoothstep
+                    } else if (i >= noteSamples - fadeLen) {
+                        const int fromEnd = noteSamples - 1 - i;
+                        const float t = static_cast<float>(fromEnd) /
+                                        static_cast<float>(fadeLen);
+                        env = t * t * (3.0f - 2.0f * t);
+                    }
+                }
+
+                // Blend: base + env * (synth - base)
+                const float base = dst[globalIdx];
+                const float synth = synthWave[static_cast<size_t>(i)];
+                dst[globalIdx] = base + env * (synth - base);
+            }
+        }
+    }
 }

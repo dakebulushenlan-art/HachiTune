@@ -181,6 +181,36 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         PitchCurveProcessor::rebuildCurvesFromSource(project, audioData.f0);
     }
 
+    // Ensure every note has originalDeltaPitch populated.
+    // The serializer may not have persisted it (older format), or
+    // rebuildCurvesFromSource was skipped because basePitch/deltaPitch
+    // were already loaded from the file.  Extract from global deltaPitch
+    // so that rebuildBaseFromNotes() (called during stretch/undo) can
+    // resample correctly instead of producing zero delta.
+    {
+        const int totalFrames = static_cast<int>(audioData.deltaPitch.size());
+        for (auto& note : project.getNotes())
+        {
+            if (note.isRest() || note.hasOriginalDeltaPitch())
+                continue;
+
+            const int startFrame = note.getStartFrame();
+            const int endFrame = note.getEndFrame();
+            const int numFrames = endFrame - startFrame;
+            if (numFrames <= 0)
+                continue;
+
+            std::vector<float> origDelta(static_cast<size_t>(numFrames));
+            for (int i = 0; i < numFrames; ++i)
+            {
+                const int globalIdx = startFrame + i;
+                if (globalIdx >= 0 && globalIdx < totalFrames)
+                    origDelta[static_cast<size_t>(i)] = audioData.deltaPitch[static_cast<size_t>(globalIdx)];
+            }
+            note.setOriginalDeltaPitch(std::move(origDelta));
+        }
+    }
+
     project.setModified(false);
     return true;
 }
@@ -217,6 +247,16 @@ juce::var ProjectSerializer::noteToJson(const Note& note) {
     obj->setProperty("varianceScale", note.getVarianceScale());
     obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
     obj->setProperty("smoothRightFrames", note.getSmoothRightFrames());
+
+    // Per-note original delta pitch (pristine curve from analysis)
+    if (note.hasOriginalDeltaPitch())
+        obj->setProperty("originalDeltaPitch", floatArrayToString(note.getOriginalDeltaPitch(), 4));
+
+    // Per-note delta scale/offset
+    if (std::abs(note.getDeltaScale() - 1.0f) > 0.0001f)
+        obj->setProperty("deltaScale", note.getDeltaScale());
+    if (std::abs(note.getDeltaOffset()) > 0.0001f)
+        obj->setProperty("deltaOffset", note.getDeltaOffset());
 
     return juce::var(obj);
 }
@@ -261,6 +301,15 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     note.setVarianceScale(static_cast<float>(json.getProperty("varianceScale", 1.0)));
     note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));
     note.setSmoothRightFrames(json.getProperty("smoothRightFrames", 0));
+
+    // Per-note original delta pitch (pristine curve from analysis)
+    auto origDeltaStr = json.getProperty("originalDeltaPitch", juce::var());
+    if (!origDeltaStr.isVoid() && origDeltaStr.toString().isNotEmpty())
+        note.setOriginalDeltaPitch(stringToFloatArray(origDeltaStr.toString()));
+
+    // Per-note delta scale/offset
+    note.setDeltaScale(static_cast<float>(json.getProperty("deltaScale", 1.0)));
+    note.setDeltaOffset(static_cast<float>(json.getProperty("deltaOffset", 0.0)));
 
     return true;
 }
