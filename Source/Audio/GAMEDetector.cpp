@@ -146,17 +146,22 @@ GAMEDetector::createSessionOptions(GPUProvider provider, int deviceId)
 {
     Ort::SessionOptions options;
 
+    options.SetGraphOptimizationLevel(
+        GraphOptimizationLevel::ORT_ENABLE_ALL);
+    options.EnableCpuMemArena();
+
     if (provider == GPUProvider::CPU)
     {
-        options.SetIntraOpNumThreads(4);
+        const int numThreads =
+            std::max(1u, std::thread::hardware_concurrency()) / 2;
+        options.SetIntraOpNumThreads(std::max(numThreads, 2));
+        options.EnableMemPattern();
     }
     else
     {
         options.SetIntraOpNumThreads(1);
         options.SetInterOpNumThreads(1);
     }
-    options.SetGraphOptimizationLevel(
-        GraphOptimizationLevel::ORT_ENABLE_ALL);
 
 #if defined(_WIN32) && defined(USE_DIRECTML)
     if (provider == GPUProvider::DirectML)
@@ -187,6 +192,8 @@ GAMEDetector::createSessionOptions(GPUProvider provider, int deviceId)
         {
             OrtCUDAProviderOptions cudaOptions{};
             cudaOptions.device_id = deviceId;
+            cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchDefault;
+            cudaOptions.arena_extend_strategy = 1; // kSameAsRequested — tighter memory
             options.AppendExecutionProvider_CUDA(cudaOptions);
         }
         catch (const Ort::Exception &)
@@ -231,21 +238,33 @@ bool GAMEDetector::loadModels(const juce::File &gameDir, GPUProvider provider,
 
     try
     {
+        // Destroy existing sessions BEFORE replacing the env they reference.
+        encoder.session.reset();
+        segmenter.session.reset();
+        estimator.session.reset();
+        bd2dur.session.reset();
+
         onnxEnv = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING,
                                              "GAMEDetector");
-        auto options = createSessionOptions(provider, deviceId);
+        auto heavyOpts = createSessionOptions(provider, deviceId);
+
+        // Lightweight options for small models (bd2dur, estimator):
+        // single thread avoids thread-pool overhead on trivial ops.
+        auto lightOpts = createSessionOptions(provider, deviceId);
+        lightOpts.SetIntraOpNumThreads(1);
 
         // Load all required models
         struct ModelEntry
         {
             const char *filename;
             ModelSession *session;
+            Ort::SessionOptions *opts;
         };
         ModelEntry models[] = {
-            {"encoder.onnx", &encoder},
-            {"segmenter.onnx", &segmenter},
-            {"estimator.onnx", &estimator},
-            {"bd2dur.onnx", &bd2dur},
+            {"encoder.onnx", &encoder, &heavyOpts},
+            {"segmenter.onnx", &segmenter, &heavyOpts},
+            {"estimator.onnx", &estimator, &lightOpts},
+            {"bd2dur.onnx", &bd2dur, &lightOpts},
         };
 
         for (auto &entry : models)
@@ -257,7 +276,7 @@ bool GAMEDetector::loadModels(const juce::File &gameDir, GPUProvider provider,
                 loaded = false;
                 return false;
             }
-            if (!entry.session->load(*onnxEnv, path, options))
+            if (!entry.session->load(*onnxEnv, path, *entry.opts))
             {
                 loaded = false;
                 return false;
@@ -451,8 +470,8 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
     int64_t waveformShape[] = {1, L};
     int64_t durationShape[] = {1};
 
-    // Need mutable copy for CreateTensor (it takes non-const pointer)
-    std::vector<float> waveformBuf(chunkWaveform);
+    // CreateTensor wraps the pointer without copying; ORT does not modify inputs.
+    auto *waveformPtr = const_cast<float *>(chunkWaveform.data());
 
     std::vector<Ort::Value> encoderInputs;
     encoderInputs.reserve(encoder.inputNames.size());
@@ -463,7 +482,7 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
         if (name == "waveform")
         {
             encoderInputs.emplace_back(Ort::Value::CreateTensor<float>(
-                memInfo, waveformBuf.data(), waveformBuf.size(), waveformShape, 2));
+                memInfo, waveformPtr, chunkWaveform.size(), waveformShape, 2));
         }
         else if (name == "duration")
         {
@@ -535,83 +554,70 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
     int64_t frameMaskShape[] = {1, T};
     int64_t langShape[] = {1};
     int64_t language = 0;
+    int64_t radiusVal = static_cast<int64_t>(segRadius);
+    float tVal = 0.0f;
 
     const int totalSteps = supportsLoop ? numD3PMSteps : 1;
+    const int boundariesIdx = [&]()
+    {
+        int idx = segmenter.findOutput("boundaries");
+        return idx >= 0 ? idx : 0;
+    }();
 
+    // Build input tensors once; only tVal and prevBoundaries data change per step.
+    // Tensors wrap raw pointers, so updating the underlying data is sufficient.
+    std::vector<Ort::Value> segInputs;
+    segInputs.reserve(segmenter.inputNames.size());
+    for (size_t i = 0; i < segmenter.inputNameStrings.size(); ++i)
+    {
+        const auto &name = segmenter.inputNameStrings[i];
+        if (name == "x_seg")
+            segInputs.emplace_back(Ort::Value::CreateTensor<float>(
+                memInfo, x_segData.data(), featureSize, featureShape, 3));
+        else if (name == "maskT")
+            segInputs.emplace_back(Ort::Value::CreateTensor(
+                memInfo, maskTBoolData.get(), maskTSize,
+                frameMaskShape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL));
+        else if (name == "known_boundaries")
+            segInputs.emplace_back(Ort::Value::CreateTensor(
+                memInfo, knownBoundaries.get(), maskTSize,
+                frameMaskShape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL));
+        else if (name == "prev_boundaries")
+            segInputs.emplace_back(Ort::Value::CreateTensor(
+                memInfo, prevBoundaries.get(), maskTSize,
+                frameMaskShape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL));
+        else if (name == "threshold")
+            segInputs.emplace_back(Ort::Value::CreateTensor<float>(
+                memInfo, &segThreshold, 1, nullptr, 0));
+        else if (name == "radius")
+            segInputs.emplace_back(Ort::Value::CreateTensor<int64_t>(
+                memInfo, &radiusVal, 1, nullptr, 0));
+        else if (name == "t")
+            segInputs.emplace_back(Ort::Value::CreateTensor<float>(
+                memInfo, &tVal, 1, nullptr, 0));
+        else if (name == "language")
+            segInputs.emplace_back(Ort::Value::CreateTensor<int64_t>(
+                memInfo, &language, 1, langShape, 1));
+        else
+        {
+            LOG("GAME segmenter: unexpected input '" + juce::String(name) + "'");
+            return {};
+        }
+    }
+
+    auto t0_segAll = std::chrono::high_resolution_clock::now();
     for (int step = 0; step < totalSteps; ++step)
     {
-        float t = supportsLoop
-                      ? static_cast<float>(step) / static_cast<float>(totalSteps)
-                      : 0.0f;
+        tVal = supportsLoop
+                   ? static_cast<float>(step) / static_cast<float>(totalSteps)
+                   : 0.0f;
 
-        std::vector<Ort::Value> segInputs;
-        segInputs.reserve(segmenter.inputNames.size());
-        int64_t radiusVal = static_cast<int64_t>(segRadius);
+        // segInputs wraps raw pointers → tVal and prevBoundaries already updated in place
 
-        for (size_t i = 0; i < segmenter.inputNameStrings.size(); ++i)
-        {
-            const auto &name = segmenter.inputNameStrings[i];
-            if (name == "x_seg")
-            {
-                segInputs.emplace_back(Ort::Value::CreateTensor<float>(
-                    memInfo, x_segData.data(), featureSize, featureShape, 3));
-            }
-            else if (name == "maskT")
-            {
-                segInputs.emplace_back(Ort::Value::CreateTensor(
-                    memInfo, maskTBoolData.get(), maskTSize,
-                    frameMaskShape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL));
-            }
-            else if (name == "known_boundaries")
-            {
-                segInputs.emplace_back(Ort::Value::CreateTensor(
-                    memInfo, knownBoundaries.get(), maskTSize,
-                    frameMaskShape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL));
-            }
-            else if (name == "prev_boundaries")
-            {
-                segInputs.emplace_back(Ort::Value::CreateTensor(
-                    memInfo, prevBoundaries.get(), maskTSize,
-                    frameMaskShape, 2, ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL));
-            }
-            else if (name == "threshold")
-            {
-                segInputs.emplace_back(Ort::Value::CreateTensor<float>(
-                    memInfo, &segThreshold, 1, nullptr, 0));
-            }
-            else if (name == "radius")
-            {
-                segInputs.emplace_back(Ort::Value::CreateTensor<int64_t>(
-                    memInfo, &radiusVal, 1, nullptr, 0));
-            }
-            else if (name == "t")
-            {
-                segInputs.emplace_back(Ort::Value::CreateTensor<float>(
-                    memInfo, &t, 1, nullptr, 0));
-            }
-            else if (name == "language")
-            {
-                segInputs.emplace_back(Ort::Value::CreateTensor<int64_t>(
-                    memInfo, &language, 1, langShape, 1));
-            }
-            else
-            {
-                LOG("GAME segmenter: unexpected input '" + juce::String(name) + "'");
-                return {};
-            }
-        }
-
-        auto t0_seg = std::chrono::high_resolution_clock::now();
         auto segOutputs = segmenter.session->Run(
             runOptions, segmenter.inputNames.data(), segInputs.data(),
             segInputs.size(), segmenter.outputNames.data(),
             segmenter.outputNames.size());
-        auto t1_seg = std::chrono::high_resolution_clock::now();
-        LOG("GAME segmenter step " + juce::String(step + 1) + "/" + juce::String(totalSteps) + ": " + juce::String(std::chrono::duration<double, std::milli>(t1_seg - t0_seg).count(), 1) + " ms");
-
-        int boundariesIdx = segmenter.findOutput("boundaries");
-        if (boundariesIdx < 0)
-            boundariesIdx = 0;
 
         std::memcpy(prevBoundaries.get(),
                     segOutputs[boundariesIdx].GetTensorData<bool>(), maskTSize);
@@ -620,6 +626,8 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
             progressCallback(progressBase + progressSpan *
                                                 (0.15 + 0.50 * static_cast<double>(step + 1) / totalSteps));
     }
+    auto t1_segAll = std::chrono::high_resolution_clock::now();
+    LOG("GAME segmenter (" + juce::String(totalSteps) + " steps): " + juce::String(std::chrono::duration<double, std::milli>(t1_segAll - t0_segAll).count(), 1) + " ms");
 
     // ── bd2dur ───────────────────────────────────────────────
     std::vector<Ort::Value> bd2durInputs;

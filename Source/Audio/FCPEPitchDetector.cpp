@@ -200,19 +200,22 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
                                          "FCPEPitchDetector");
 
     Ort::SessionOptions sessionOptions;
+    sessionOptions.SetGraphOptimizationLevel(
+        GraphOptimizationLevel::ORT_ENABLE_ALL);
+    sessionOptions.EnableCpuMemArena();
+
     if (provider == GPUProvider::CPU)
     {
       const int numThreads =
           std::max(1u, std::thread::hardware_concurrency()) / 2;
       sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+      sessionOptions.EnableMemPattern();
     }
     else
     {
       sessionOptions.SetIntraOpNumThreads(1);
       sessionOptions.SetInterOpNumThreads(1);
     }
-    sessionOptions.SetGraphOptimizationLevel(
-        GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     // Configure execution provider based on GPU settings
 #if defined(_WIN32) && defined(USE_DIRECTML)
@@ -245,6 +248,8 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
       {
         OrtCUDAProviderOptions cudaOptions;
         cudaOptions.device_id = deviceId;
+        cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchDefault;
+        cudaOptions.arena_extend_strategy = 1;
         sessionOptions.AppendExecutionProvider_CUDA(cudaOptions);
       }
       catch (const Ort::Exception &e)
