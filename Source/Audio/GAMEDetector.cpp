@@ -3,6 +3,7 @@
 #include "../Utils/Localization.h"
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstring>
 #include <juce_core/juce_core.h>
 #include <numeric>
@@ -476,10 +477,13 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
         }
     }
 
+    auto t0_enc = std::chrono::high_resolution_clock::now();
     auto encoderOutputs = encoder.session->Run(
         runOptions, encoder.inputNames.data(), encoderInputs.data(),
         encoderInputs.size(), encoder.outputNames.data(),
         encoder.outputNames.size());
+    auto t1_enc = std::chrono::high_resolution_clock::now();
+    LOG("GAME encoder: " + juce::String(std::chrono::duration<double, std::milli>(t1_enc - t0_enc).count(), 1) + " ms" + " (L=" + juce::String(L) + ")");
 
     if (progressCallback)
         progressCallback(progressBase + progressSpan * 0.15);
@@ -597,10 +601,13 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
             }
         }
 
+        auto t0_seg = std::chrono::high_resolution_clock::now();
         auto segOutputs = segmenter.session->Run(
             runOptions, segmenter.inputNames.data(), segInputs.data(),
             segInputs.size(), segmenter.outputNames.data(),
             segmenter.outputNames.size());
+        auto t1_seg = std::chrono::high_resolution_clock::now();
+        LOG("GAME segmenter step " + juce::String(step + 1) + "/" + juce::String(totalSteps) + ": " + juce::String(std::chrono::duration<double, std::milli>(t1_seg - t0_seg).count(), 1) + " ms");
 
         int boundariesIdx = segmenter.findOutput("boundaries");
         if (boundariesIdx < 0)
@@ -645,10 +652,13 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
         }
     }
 
+    auto t0_bd = std::chrono::high_resolution_clock::now();
     auto bd2durOutputs = bd2dur.session->Run(
         runOptions, bd2dur.inputNames.data(), bd2durInputs.data(),
         bd2durInputs.size(), bd2dur.outputNames.data(),
         bd2dur.outputNames.size());
+    auto t1_bd = std::chrono::high_resolution_clock::now();
+    LOG("GAME bd2dur: " + juce::String(std::chrono::duration<double, std::milli>(t1_bd - t0_bd).count(), 1) + " ms");
 
     if (progressCallback)
         progressCallback(progressBase + progressSpan * 0.70);
@@ -722,10 +732,13 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
         }
     }
 
+    auto t0_est = std::chrono::high_resolution_clock::now();
     auto estOutputs = estimator.session->Run(
         runOptions, estimator.inputNames.data(), estInputs.data(),
         estInputs.size(), estimator.outputNames.data(),
         estimator.outputNames.size());
+    auto t1_est = std::chrono::high_resolution_clock::now();
+    LOG("GAME estimator: " + juce::String(std::chrono::duration<double, std::milli>(t1_est - t0_est).count(), 1) + " ms");
 
     if (progressCallback)
         progressCallback(progressBase + progressSpan * 0.85);
