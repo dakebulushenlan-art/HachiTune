@@ -71,7 +71,7 @@ private:
     bool loaded = false;
 
     // D3PM and inference parameters
-    int numD3PMSteps = 20;
+    int numD3PMSteps = 8;
     float segThreshold = 0.2f;
     int segRadius = 2;
     float estThreshold = 0.2f;
