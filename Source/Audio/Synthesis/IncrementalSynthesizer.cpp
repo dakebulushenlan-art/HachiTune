@@ -380,7 +380,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
           // Distribute synthesized audio into per-note synthWaveforms.
           // Each note gets the slice of targetSegment corresponding to its
-          // output frame range [startFrame, endFrame).
+          // output frame range [startFrame, endFrame), PLUS margin samples on
+          // each side so that composeGlobalWaveform() can crossfade with real
+          // audio instead of held-value extrapolation at note boundaries.
+          constexpr int kSynthMarginSamples = 256; // margin each side
+
           for (auto &note : capturedProject->getNotes()) {
             if (note.isRest())
               continue;
@@ -397,37 +401,55 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             if (!note.isDirty() && !note.isSynthDirty() && note.hasSynthWaveform())
               continue;
 
-            // Full note range in samples
+            // Full note range in samples (the "body")
             const int noteStartSample = noteStart * hopSize;
             const int noteEndSample = noteEnd * hopSize;
             const int noteSamples = noteEndSample - noteStartSample;
             if (noteSamples <= 0)
               continue;
 
-            std::vector<float> noteSynth(static_cast<size_t>(noteSamples), 0.0f);
+            // Compute margin: how far we can extend into targetSegment
+            // beyond the note's body on each side.
+            const int targetStartSample = capturedStartFrame * hopSize;
+            const int targetEndSample = targetStartSample + samplesToWrite;
 
-            // Copy the overlapping portion from targetSegment
-            const int overlapStartSample = overlapStart * hopSize;
-            const int overlapEndSample = overlapEnd * hopSize;
-            const int localSrcStart = (overlapStart - capturedStartFrame) * hopSize;
-            const int localDstStart = (overlapStart - noteStart) * hopSize;
+            // Left margin: extend before noteStartSample
+            const int leftMarginAvail = noteStartSample - targetStartSample;
+            const int leftMargin = std::max(0, std::min(kSynthMarginSamples, leftMarginAvail));
 
-            for (int i = 0; i < overlapEndSample - overlapStartSample; ++i) {
-              const int srcIdx = localSrcStart + i;
-              const int dstIdx = localDstStart + i;
-              if (srcIdx >= 0 && srcIdx < samplesToWrite &&
-                  dstIdx >= 0 && dstIdx < noteSamples) {
+            // Right margin: extend after noteEndSample
+            const int rightMarginAvail = targetEndSample - noteEndSample;
+            const int rightMargin = std::max(0, std::min(kSynthMarginSamples, rightMarginAvail));
+
+            // Total synth vector: [preroll | body | postroll]
+            const int totalSynthLen = leftMargin + noteSamples + rightMargin;
+            std::vector<float> noteSynth(static_cast<size_t>(totalSynthLen), 0.0f);
+
+            // Copy from targetSegment: the extended region
+            // [noteStartSample - leftMargin, noteEndSample + rightMargin) in global coords
+            // maps to targetSegment[(noteStartSample - leftMargin - targetStartSample) ..]
+            const int extGlobalStart = noteStartSample - leftMargin;
+            const int extLocalSrc = extGlobalStart - targetStartSample;
+
+            // The overlap between [extGlobalStart, noteEndSample+rightMargin) and
+            // [capturedStartFrame*hopSize, capturedStartFrame*hopSize + samplesToWrite)
+            // determines what we can actually copy from targetSegment.
+            const int copyStart = std::max(0, extLocalSrc);
+            const int copyEnd = std::min(samplesToWrite,
+                extLocalSrc + totalSynthLen);
+            const int dstOffset = copyStart - extLocalSrc;
+
+            for (int i = copyStart; i < copyEnd; ++i) {
+              const int dstIdx = dstOffset + (i - copyStart);
+              if (dstIdx >= 0 && dstIdx < totalSynthLen) {
                 noteSynth[static_cast<size_t>(dstIdx)] =
-                    targetSegment[static_cast<size_t>(srcIdx)];
+                    targetSegment[static_cast<size_t>(i)];
               }
             }
 
-            // For parts of the note outside the synthesis range, use srcClipWaveform
+            // For parts of the note body outside the synthesis range, use srcClipWaveform
             if (note.hasSrcClipWaveform()) {
               const auto &srcClip = note.getSrcClipWaveform();
-              // srcClipWaveform corresponds to srcStartFrame..srcEndFrame in original
-              // We need to resample if note is stretched, but for non-overlapping parts
-              // just fill with original audio
               const int srcFrames = note.getSrcEndFrame() - note.getSrcStartFrame();
               const int dstFrames = note.getEndFrame() - note.getStartFrame();
               const int srcSamples = static_cast<int>(srcClip.size());
@@ -448,12 +470,15 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                   srcPos = static_cast<float>(i);
                 }
                 int srcIdx = static_cast<int>(srcPos);
-                if (srcIdx >= 0 && srcIdx < srcSamples)
-                  noteSynth[static_cast<size_t>(i)] = srcClip[static_cast<size_t>(srcIdx)];
+                if (srcIdx >= 0 && srcIdx < srcSamples) {
+                  // Body samples start at offset leftMargin in noteSynth
+                  noteSynth[static_cast<size_t>(leftMargin + i)] =
+                      srcClip[static_cast<size_t>(srcIdx)];
+                }
               }
             }
 
-            note.setSynthWaveform(std::move(noteSynth));
+            note.setSynthWaveform(std::move(noteSynth), leftMargin);
           }
 
           // Compose the global waveform from per-note synthWaveforms

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
-#include "FCPEPitchDetector.h"  // For GPUProvider enum
+#include "GPUProvider.h"
 #include <vector>
 #include <array>
 #include <memory>
@@ -29,10 +29,10 @@ public:
     static constexpr int N_CLASS = 360;
     static constexpr int N_MELS = 128;
     static constexpr int MEL_FMIN = 30;
-    static constexpr int MEL_FMAX = SAMPLE_RATE / 2;  // 8000
+    static constexpr int MEL_FMAX = SAMPLE_RATE / 2; // 8000
     static constexpr int WINDOW_LENGTH = 1024;
     static constexpr int HOP_SIZE = 160;
-    static constexpr float RMVPE_CONST = 1997.3794084376191f;  // Renamed from CONST to avoid Windows macro conflict
+    static constexpr float RMVPE_CONST = 1997.3794084376191f; // Renamed from CONST to avoid Windows macro conflict
     static constexpr float DEFAULT_THRESHOLD = 0.03f;
 
     RMVPEPitchDetector();
@@ -45,7 +45,7 @@ public:
      * @param deviceId GPU device ID (0 = first GPU)
      * @return true if successful
      */
-    bool loadModel(const juce::File& modelPath,
+    bool loadModel(const juce::File &modelPath,
                    GPUProvider provider = GPUProvider::CPU,
                    int deviceId = 0);
 
@@ -64,13 +64,13 @@ public:
      * @param threshold Confidence threshold (default 0.03)
      * @return F0 values in Hz (0 for unvoiced frames)
      */
-    std::vector<float> extractF0(const float* audio, int numSamples,
+    std::vector<float> extractF0(const float *audio, int numSamples,
                                  int sampleRate, float threshold = DEFAULT_THRESHOLD);
 
     /**
      * Extract F0 with progress callback.
      */
-    std::vector<float> extractF0WithProgress(const float* audio, int numSamples,
+    std::vector<float> extractF0WithProgress(const float *audio, int numSamples,
                                              int sampleRate, float threshold,
                                              std::function<void(double)> progressCallback);
 
@@ -93,21 +93,21 @@ private:
     bool loaded = false;
 
     // Resample audio to 16kHz
-    std::vector<float> resampleTo16k(const float* audio, int numSamples, int srcRate);
+    std::vector<float> resampleTo16k(const float *audio, int numSamples, int srcRate);
 
     // Process a single chunk of 16kHz audio
-    std::vector<float> extractF0Chunk(const float* audio16k, int numSamples, float threshold);
+    std::vector<float> extractF0Chunk(const float *audio16k, int numSamples, float threshold);
 
     // Decode hidden states to F0 (matching Python decode function)
-    std::vector<float> decodeF0(const float* hidden, int numFrames, float threshold);
+    std::vector<float> decodeF0(const float *hidden, int numFrames, float threshold);
 
 #ifdef HAVE_ONNXRUNTIME
     std::unique_ptr<Ort::Env> onnxEnv;
     std::unique_ptr<Ort::Session> onnxSession;
     std::unique_ptr<Ort::AllocatorWithDefaultOptions> allocator;
 
-    std::vector<const char*> inputNames;
-    std::vector<const char*> outputNames;
+    std::vector<const char *> inputNames;
+    std::vector<const char *> outputNames;
     std::vector<std::string> inputNameStrings;
     std::vector<std::string> outputNameStrings;
 

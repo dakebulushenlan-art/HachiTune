@@ -170,18 +170,18 @@ SettingsComponent::SettingsComponent(
   configureRowLabel(someSegmentsDebugLabel);
   addAndMakeVisible(someSegmentsDebugLabel);
 
-  someSegmentsDebugToggle.setButtonText("");
-  someSegmentsDebugToggle.setClickingTogglesState(true);
-  someSegmentsDebugToggle.onClick = [this]() {
-    showSomeSegmentsDebug = someSegmentsDebugToggle.getToggleState();
+  segmentsDebugToggle.setButtonText("");
+  segmentsDebugToggle.setClickingTogglesState(true);
+  segmentsDebugToggle.onClick = [this]() {
+    showSegmentsDebug = segmentsDebugToggle.getToggleState();
     if (settingsManager) {
-      settingsManager->setShowSomeSegmentsDebug(showSomeSegmentsDebug);
+      settingsManager->setShowSegmentsDebug(showSegmentsDebug);
       settingsManager->saveConfig();
     }
-    if (onShowSomeSegmentsDebugChanged)
-      onShowSomeSegmentsDebugChanged(showSomeSegmentsDebug);
+    if (onShowSegmentsDebugChanged)
+      onShowSegmentsDebugChanged(showSegmentsDebug);
   };
-  addAndMakeVisible(someSegmentsDebugToggle);
+  addAndMakeVisible(segmentsDebugToggle);
 
   someValuesDebugLabel.setText("Show SOME values (debug)",
                                juce::dontSendNotification);
@@ -334,7 +334,7 @@ SettingsComponent::~SettingsComponent() {
   sampleRateComboBox.setLookAndFeel(nullptr);
   bufferSizeComboBox.setLookAndFeel(nullptr);
   outputChannelsComboBox.setLookAndFeel(nullptr);
-  someSegmentsDebugToggle.setLookAndFeel(nullptr);
+  segmentsDebugToggle.setLookAndFeel(nullptr);
   someValuesDebugToggle.setLookAndFeel(nullptr);
   uvInterpolationDebugToggle.setLookAndFeel(nullptr);
   actualF0DebugToggle.setLookAndFeel(nullptr);
@@ -456,7 +456,7 @@ void SettingsComponent::resized() {
     }
 
     layoutRow(pitchDetectorLabel, pitchDetectorComboBox);
-    layoutRow(someSegmentsDebugLabel, someSegmentsDebugToggle);
+    layoutRow(someSegmentsDebugLabel, segmentsDebugToggle);
     layoutRow(someValuesDebugLabel, someValuesDebugToggle);
     layoutRow(uvInterpolationDebugLabel, uvInterpolationDebugToggle);
     layoutRow(actualF0DebugLabel, actualF0DebugToggle);
@@ -662,7 +662,7 @@ void SettingsComponent::updateTabVisibility() {
   pitchDetectorLabel.setVisible(showGeneral);
   pitchDetectorComboBox.setVisible(showGeneral);
   someSegmentsDebugLabel.setVisible(showGeneral);
-  someSegmentsDebugToggle.setVisible(showGeneral);
+  segmentsDebugToggle.setVisible(showGeneral);
   someValuesDebugLabel.setVisible(showGeneral);
   someValuesDebugToggle.setVisible(showGeneral);
   uvInterpolationDebugLabel.setVisible(showGeneral);
@@ -950,7 +950,7 @@ void SettingsComponent::loadSettings() {
     pitchDetectorType = settingsManager->getPitchDetectorType();
     followSystemAudioOutput = settingsManager->getFollowSystemAudioOutput();
     preferredAudioOutputDevice = settingsManager->getPreferredAudioOutputDevice();
-    showSomeSegmentsDebug = settingsManager->getShowSomeSegmentsDebug();
+    showSegmentsDebug = settingsManager->getShowSegmentsDebug();
     showSomeValuesDebug = settingsManager->getShowSomeValuesDebug();
     showUvInterpolationDebug = settingsManager->getShowUvInterpolationDebug();
     showActualF0Debug = settingsManager->getShowActualF0Debug();
@@ -995,7 +995,7 @@ void SettingsComponent::loadSettings() {
   else if (pitchDetectorType == PitchDetectorType::FCPE)
     pitchDetectorComboBox.setSelectedId(2, juce::dontSendNotification);
 
-  someSegmentsDebugToggle.setToggleState(showSomeSegmentsDebug,
+  segmentsDebugToggle.setToggleState(showSegmentsDebug,
                                          juce::dontSendNotification);
   someValuesDebugToggle.setToggleState(showSomeValuesDebug,
                                        juce::dontSendNotification);
@@ -1032,7 +1032,7 @@ void SettingsComponent::saveSettings() {
     settingsManager->setGPUDeviceId(gpuDeviceId);
     settingsManager->setPitchDetectorType(pitchDetectorType);
     settingsManager->setLanguage(langCode);
-    settingsManager->setShowSomeSegmentsDebug(showSomeSegmentsDebug);
+    settingsManager->setShowSegmentsDebug(showSegmentsDebug);
     settingsManager->setShowSomeValuesDebug(showSomeValuesDebug);
     settingsManager->setShowUvInterpolationDebug(showUvInterpolationDebug);
     settingsManager->setShowActualF0Debug(showActualF0Debug);

@@ -17,6 +17,13 @@ class IMainView;
  * 1. ARA Mode: Direct audio access via ARA protocol (Studio One, Cubase, Logic,
  * etc.)
  * 2. Non-ARA Mode: Auto-capture and process (FL Studio, Ableton, etc.)
+ *
+ * Exposes 5 host-automatable parameters:
+ * - Bypass: pass through original audio
+ * - Output Gain: post-processing volume (-24 to +12 dB)
+ * - Dry/Wet: blend between original and processed audio (0-100%)
+ * - Pitch Offset: global pitch shift in semitones (-24 to +24 st)
+ * - Formant Shift: formant preservation shift (-12 to +12 st)
  */
 class HachiTuneAudioProcessor : public juce::AudioProcessor
 #if JucePlugin_Enable_ARA
@@ -32,6 +39,8 @@ public:
   void prepareToPlay(double sampleRate, int samplesPerBlock) override;
   void releaseResources() override;
   void processBlock(juce::AudioBuffer<float> &, juce::MidiBuffer &) override;
+  void processBlockBypassed(juce::AudioBuffer<float> &,
+                            juce::MidiBuffer &) override;
 
 #if !JucePlugin_PreferredChannelConfigurations
   bool isBusesLayoutSupported(const BusesLayout &layouts) const override;
@@ -66,45 +75,22 @@ public:
 
   // ========== Host Transport Control ==========
 
-  /**
-   * Get the transport controller for host synchronization.
-   * Use this to control playback and receive transport state updates.
-   */
-  PluginTransportController& getTransportController() { return transportController; }
+  PluginTransportController &getTransportController() {
+    return transportController;
+  }
 
-  /**
-   * Request host to start/stop playback.
-   * @param shouldPlay true to start, false to pause
-   */
   void requestHostPlayState(bool shouldPlay) {
     transportController.requestPlay(shouldPlay);
   }
 
-  /**
-   * Request host to stop and rewind to beginning.
-   */
-  void requestHostStop() {
-    transportController.requestStop();
-  }
+  void requestHostStop() { transportController.requestStop(); }
 
-  /**
-   * Request host to seek to a specific position.
-   * @param timeInSeconds Target position in seconds
-   */
   void requestHostSeek(double timeInSeconds) {
     transportController.requestSeek(timeInSeconds);
   }
 
-  /**
-   * Toggle play/pause state.
-   */
-  void toggleHostPlayPause() {
-    transportController.togglePlayPause();
-  }
+  void toggleHostPlayPause() { transportController.togglePlayPause(); }
 
-  /**
-   * Check if host supports transport control.
-   */
   bool canControlHostTransport() const {
     return transportController.canControlTransport();
   }
@@ -121,6 +107,17 @@ public:
                                     NonAraCaptureController::State::Capturing;
   }
 
+  // ========== Parameter Access ==========
+
+  juce::AudioProcessorValueTreeState &getAPVTS() { return apvts; }
+
+  // Parameter IDs (stable across versions for automation compatibility)
+  static constexpr const char *PARAM_BYPASS = "bypass";
+  static constexpr const char *PARAM_OUTPUT_GAIN = "outputGain";
+  static constexpr const char *PARAM_DRY_WET = "dryWet";
+  static constexpr const char *PARAM_PITCH_OFFSET = "pitchOffset";
+  static constexpr const char *PARAM_FORMANT_SHIFT = "formantShift";
+
 private:
   struct HostUiSyncState {
     std::atomic<double> latestSeconds{0.0};
@@ -131,6 +128,40 @@ private:
   void processNonARAMode(juce::AudioBuffer<float> &buffer,
                          const juce::AudioPlayHead::PositionInfo &posInfo,
                          bool isRealtime);
+
+  /** Apply bypass, dry/wet mix, and output gain to the processed buffer. */
+  void applyOutputProcessing(juce::AudioBuffer<float> &processedBuffer,
+                             const juce::AudioBuffer<float> &dryBuffer);
+
+  /** Detect parameter changes on audio thread and dispatch to message thread. */
+  void checkParameterChanges();
+
+  static juce::AudioProcessorValueTreeState::ParameterLayout
+  createParameterLayout();
+
+  // APVTS (must be declared after AudioProcessor base is constructed)
+  juce::AudioProcessorValueTreeState apvts;
+
+  // Raw parameter value pointers for lock-free audio-thread access
+  std::atomic<float> *bypassParamValue = nullptr;
+  std::atomic<float> *outputGainParamValue = nullptr;
+  std::atomic<float> *dryWetParamValue = nullptr;
+  std::atomic<float> *pitchOffsetParamValue = nullptr;
+  std::atomic<float> *formantShiftParamValue = nullptr;
+
+  // Cached parameter values for change detection (audio thread only)
+  float cachedPitchOffset = 0.0f;
+  float cachedFormantShift = 0.0f;
+
+  // Debounced parameter sync: audio thread -> message thread -> project
+  struct ParamSyncState {
+    std::atomic<bool> pending{false};
+    std::atomic<float> pitchOffset{0.0f};
+    std::atomic<float> formantShift{0.0f};
+    std::atomic<bool> needsResynth{false};
+  };
+  std::shared_ptr<ParamSyncState> paramSyncState =
+      std::make_shared<ParamSyncState>();
 
   PluginTransportController transportController;
   RealtimePitchProcessor realtimeProcessor;
@@ -147,6 +178,9 @@ private:
   NonAraCaptureController::State lastCaptureUiState =
       NonAraCaptureController::State::Idle;
   static constexpr int MAX_CAPTURE_SECONDS = 300; // 5 minutes max
+
+  // Plugin state version for forward/backward compatibility
+  static constexpr int PLUGIN_STATE_VERSION = 1;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HachiTuneAudioProcessor)
 };

@@ -33,4 +33,11 @@ public:
                             double sampleRate) = 0;
   virtual void updatePlaybackPosition(double timeSeconds) = 0;
   virtual void notifyHostStopped() = 0;
+
+  /**
+   * Trigger re-synthesis from external parameter changes (e.g. DAW automation).
+   * Called on the message thread when plugin parameters like pitch offset or
+   * formant shift are changed via host automation.
+   */
+  virtual void triggerResynthesis() = 0;
 };

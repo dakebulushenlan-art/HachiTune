@@ -46,7 +46,7 @@ public:
   std::function<void()> onSettingsChanged;
   std::function<void()> onLanguageChanged;
   std::function<void(PitchDetectorType)> onPitchDetectorChanged;
-  std::function<void(bool)> onShowSomeSegmentsDebugChanged;
+  std::function<void(bool)> onShowSegmentsDebugChanged;
   std::function<void(bool)> onShowSomeValuesDebugChanged;
   std::function<void(bool)> onShowUvInterpolationDebugChanged;
   std::function<void(bool)> onShowActualF0DebugChanged;
@@ -134,7 +134,7 @@ private:
   juce::Label pitchDetectorLabel;
   StyledComboBox pitchDetectorComboBox;
   juce::Label someSegmentsDebugLabel;
-  juce::ToggleButton someSegmentsDebugToggle;
+  juce::ToggleButton segmentsDebugToggle;
   juce::Label someValuesDebugLabel;
   juce::ToggleButton someValuesDebugToggle;
   juce::Label uvInterpolationDebugLabel;
@@ -168,7 +168,7 @@ private:
   juce::String lastConfirmedDevice = "CPU";
   int lastConfirmedGpuDeviceId = 0;
   PitchDetectorType pitchDetectorType = PitchDetectorType::RMVPE;
-  bool showSomeSegmentsDebug = false;
+  bool showSegmentsDebug = false;
   bool showSomeValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;

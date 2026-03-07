@@ -593,18 +593,18 @@ void PianoRollComponent::drawLoopOverlay(juce::Graphics &g) {
 }
 
 void PianoRollComponent::drawSomeSegmentDebugOverlay(juce::Graphics &g) {
-  if (!showSomeSegmentsDebug || !project)
+  if (!showSegmentsDebug || !project)
     return;
 
   const auto &audioData = project->getAudioData();
-  if (audioData.someChunkRanges.empty())
+  if (audioData.segmentChunkRanges.empty())
     return;
 
   const float height =
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
   g.setColour(juce::Colours::orange.withAlpha(0.10f));
-  for (const auto &range : audioData.someChunkRanges) {
+  for (const auto &range : audioData.segmentChunkRanges) {
     int startFrame = std::max(0, range.first);
     int endFrame = std::max(startFrame, range.second);
     if (endFrame <= startFrame)
@@ -616,7 +616,7 @@ void PianoRollComponent::drawSomeSegmentDebugOverlay(juce::Graphics &g) {
   }
 
   g.setColour(juce::Colours::orange.withAlpha(0.75f));
-  for (const auto &range : audioData.someChunkRanges) {
+  for (const auto &range : audioData.segmentChunkRanges) {
     int startFrame = std::max(0, range.first);
     int endFrame = std::max(startFrame, range.second);
     if (endFrame <= startFrame)
@@ -632,7 +632,7 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
     return;
 
   const auto &audioData = project->getAudioData();
-  if (audioData.someDebugChunks.empty())
+  if (audioData.segmentDebugChunks.empty())
     return;
 
   const int totalFrames = static_cast<int>(audioData.f0.size());
@@ -656,7 +656,7 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
   const int maxChunks = 60;
   int chunksDrawn = 0;
 
-  for (const auto &chunk : audioData.someDebugChunks) {
+  for (const auto &chunk : audioData.segmentDebugChunks) {
     const int startFrame = std::max(0, chunk.startFrame);
     const int endFrame = std::max(startFrame, chunk.endFrame);
     if (endFrame <= startFrame)
@@ -1478,7 +1478,7 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
           static_cast<int>(audioData.f0.size()),
           static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
 
-      const auto &chunkRanges = audioData.someChunkRanges;
+      const auto &chunkRanges = audioData.segmentChunkRanges;
       size_t chunkIdx = 0;
 
       juce::Path path;

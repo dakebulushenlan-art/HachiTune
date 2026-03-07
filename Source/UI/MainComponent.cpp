@@ -68,16 +68,16 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // Initialize view state from settings
   pianoRoll.setShowDeltaPitch(settingsManager->getShowDeltaPitch());
   pianoRoll.setShowBasePitch(settingsManager->getShowBasePitch());
-  pianoRoll.setShowSomeSegmentsDebug(
-      settingsManager->getShowSomeSegmentsDebug());
+  pianoRoll.setShowSegmentsDebug(
+      settingsManager->getShowSegmentsDebug());
   pianoRoll.setShowSomeValuesDebug(
       settingsManager->getShowSomeValuesDebug());
   pianoRoll.setShowUvInterpolationDebug(
       settingsManager->getShowUvInterpolationDebug());
   pianoRoll.setShowActualF0Debug(
       settingsManager->getShowActualF0Debug());
-  pianoRollView.setShowSomeSegmentsDebug(
-      settingsManager->getShowSomeSegmentsDebug());
+  pianoRollView.setShowSegmentsDebug(
+      settingsManager->getShowSegmentsDebug());
 
   // Add child components - macOS uses native menu, others use in-app menu bar
 #if JUCE_MAC
@@ -1249,14 +1249,14 @@ void MainComponent::showSettings() {
           if (editorController)
             editorController->setPitchDetectorType(type);
         };
-    settingsOverlay->getSettingsComponent()->onShowSomeSegmentsDebugChanged =
+    settingsOverlay->getSettingsComponent()->onShowSegmentsDebugChanged =
         [this](bool show) {
           if (settingsManager) {
-            settingsManager->setShowSomeSegmentsDebug(show);
+            settingsManager->setShowSegmentsDebug(show);
             settingsManager->saveConfig();
           }
-          pianoRoll.setShowSomeSegmentsDebug(show);
-          pianoRollView.setShowSomeSegmentsDebug(show);
+          pianoRoll.setShowSegmentsDebug(show);
+          pianoRollView.setShowSegmentsDebug(show);
           pianoRollView.refreshOverview();
           pianoRoll.repaint();
         };
@@ -1474,6 +1474,18 @@ void MainComponent::notifyHostStopped() {
 
   // In plugin mode, the host controls playback state
   isPlaying = false;
+}
+
+void MainComponent::triggerResynthesis() {
+  if (!isPluginMode())
+    return;
+
+  // Triggered by DAW parameter automation (pitch offset, formant shift).
+  // Follows the same flow as parameterPanel.onParameterEditFinished.
+  resynthesizeIncremental();
+  notifyProjectDataChanged();
+  if (onPitchEditFinished)
+    onPitchEditFinished();
 }
 
 bool MainComponent::isARAModeActive() const {

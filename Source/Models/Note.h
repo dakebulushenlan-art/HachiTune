@@ -124,15 +124,25 @@ public:
     bool hasSrcClipWaveform() const { return !srcClipWaveform.empty(); }
 
     // Synthesized waveform (vocoder output for this note, regenerated when synthDirty)
+    // When synthPreroll > 0, the waveform contains extra leading samples before
+    // the note's startFrame*HOP_SIZE, enabling real-audio crossfade at boundaries.
     const std::vector<float>& getSynthWaveform() const { return synthWaveform; }
-    void setSynthWaveform(std::vector<float> samples) { synthWaveform = std::move(samples); synthDirty = false; }
+    void setSynthWaveform(std::vector<float> samples) { synthWaveform = std::move(samples); synthPreroll = 0; synthDirty = false; }
+    void setSynthWaveform(std::vector<float> samples, int preroll) { synthWaveform = std::move(samples); synthPreroll = preroll; synthDirty = false; }
     bool hasSynthWaveform() const { return !synthWaveform.empty(); }
-    void clearSynthWaveform() { synthWaveform.clear(); synthDirty = true; }
+    void clearSynthWaveform() { synthWaveform.clear(); synthPreroll = 0; synthDirty = true; }
+
+    // Synth preroll: number of margin samples prepended before noteStart in synthWaveform.
+    // synthWaveform[0..synthPreroll) covers audio BEFORE noteStart*HOP_SIZE.
+    // synthWaveform[synthPreroll..synthPreroll+noteSamples) is the note body.
+    // synthWaveform[synthPreroll+noteSamples..) is the postroll after noteEnd.
+    int getSynthPreroll() const { return synthPreroll; }
+    void setSynthPreroll(int preroll) { synthPreroll = preroll; }
 
     // Synth dirty flag (needs re-synthesis; separate from display dirty flag)
     bool isSynthDirty() const { return synthDirty; }
     void setSynthDirty(bool d) { synthDirty = d; }
-    void markSynthDirty() { synthDirty = true; synthWaveform.clear(); }
+    void markSynthDirty() { synthDirty = true; synthWaveform.clear(); synthPreroll = 0; }
 
     // Mel spectrogram clip (original mel frames for this note)
     const std::vector<std::vector<float>>& getClipMel() const { return clipMel; }
@@ -202,6 +212,7 @@ private:
     std::vector<float> clipWaveform;
     std::vector<float> srcClipWaveform;  // Immutable original audio (from originalWaveform)
     std::vector<float> synthWaveform;    // Vocoder output (regenerated when synthDirty)
+    int synthPreroll = 0;                // Margin samples prepended before noteStart in synthWaveform
     std::vector<std::vector<float>> clipMel;  // Mel spectrogram clip [T, numMels]
     bool selected = false;
     bool dirty = false;       // For incremental synthesis (display/trigger)

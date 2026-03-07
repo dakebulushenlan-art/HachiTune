@@ -24,19 +24,19 @@ namespace PlatformPaths
 {
     inline juce::File getModelsDirectory()
     {
-    #if JUCE_MAC
+#if JUCE_MAC
         // macOS: Use Resources folder inside app bundle
         auto appBundle = juce::File::getSpecialLocation(juce::File::currentApplicationFile);
         return appBundle.getChildFile("Contents/Resources/models");
-    #else
+#else
         // Windows/Linux: Use models folder next to executable
         return juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                   .getParentDirectory()
-                   .getChildFile("models");
-    #endif
+            .getParentDirectory()
+            .getChildFile("models");
+#endif
     }
 
-    inline juce::File getModelFile(const juce::String& fileName)
+    inline juce::File getModelFile(const juce::String &fileName)
     {
         auto probe = getModelsDirectory().getChildFile(fileName);
         if (probe.existsAsFile())
@@ -74,38 +74,82 @@ namespace PlatformPaths
         return probe;
     }
 
+    inline juce::File getModelSubDir(const juce::String &dirName,
+                                     const juce::String &verifyFile = "")
+    {
+        // Helper: check if candidate dir is valid
+        auto isValid = [&](const juce::File &candidate) -> bool
+        {
+            if (!candidate.isDirectory())
+                return false;
+            if (verifyFile.isEmpty())
+                return true;
+            return candidate.getChildFile(verifyFile).existsAsFile();
+        };
+
+        auto probe = getModelsDirectory().getChildFile(dirName);
+        if (isValid(probe))
+            return probe;
+
+        auto cwdProbe = juce::File::getCurrentWorkingDirectory()
+                            .getChildFile("Resources/models")
+                            .getChildFile(dirName);
+        if (isValid(cwdProbe))
+            return cwdProbe;
+
+        auto dir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                       .getParentDirectory();
+        for (int i = 0; i < 8 && dir.exists(); ++i)
+        {
+            auto modelsCandidate = dir.getChildFile("models").getChildFile(dirName);
+            if (isValid(modelsCandidate))
+                return modelsCandidate;
+
+            auto resourcesCandidate = dir.getChildFile("Resources/models").getChildFile(dirName);
+            if (isValid(resourcesCandidate))
+                return resourcesCandidate;
+
+            auto parent = dir.getParentDirectory();
+            if (parent == dir)
+                break;
+            dir = parent;
+        }
+
+        return probe;
+    }
+
     inline juce::File getLogsDirectory()
     {
-    #if JUCE_MAC
+#if JUCE_MAC
         // macOS: ~/Library/Logs/HachiTune/
         return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                   .getChildFile("Library/Logs/HachiTune");
-    #elif JUCE_WINDOWS
+            .getChildFile("Library/Logs/HachiTune");
+#elif JUCE_WINDOWS
         // Windows: %APPDATA%/HachiTune/Logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-                   .getChildFile("HachiTune/Logs");
-    #else
+            .getChildFile("HachiTune/Logs");
+#else
         // Linux: ~/.config/HachiTune/logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-                   .getChildFile("HachiTune/logs");
-    #endif
+            .getChildFile("HachiTune/logs");
+#endif
     }
 
     inline juce::File getConfigDirectory()
     {
         // All platforms use userApplicationDataDirectory
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-                   .getChildFile("HachiTune");
+            .getChildFile("HachiTune");
     }
 
-    inline juce::File getLogFile(const juce::String& name)
+    inline juce::File getLogFile(const juce::String &name)
     {
         auto logsDir = getLogsDirectory();
         logsDir.createDirectory();
         return logsDir.getChildFile(name);
     }
 
-    inline juce::File getConfigFile(const juce::String& name)
+    inline juce::File getConfigFile(const juce::String &name)
     {
         auto configDir = getConfigDirectory();
         configDir.createDirectory();

@@ -3,7 +3,6 @@
   "menu.edit": "編集",
   "menu.view": "表示",
   "menu.settings": "設定...",
-
   "command.open_audio": "開く...",
   "command.open_audio.desp": "オーディオを開く",
   "command.save_project": "プロジェクトを保存",
@@ -38,7 +37,6 @@
   "command.toggle_draw.desp": "ピッチ描画モードを切り替え",
   "command.exit_draw": "描画モード終了",
   "command.exit_draw.desp": "ピッチ描画モードを終了",
-
   "toolbar.play": "再生",
   "toolbar.pause": "一時停止",
   "toolbar.stop": "停止",
@@ -126,6 +124,6 @@
   "dialog.midi_exported": "MIDIを書き出しました:",
   "dialog.failed_write_midi": "MIDIファイルを書き込めませんでした:",
   "dialog.no_notes_to_export": "書き出すノートがありません。オーディオファイルを読み込んで分析してください。",
-  "error.some_error": "SOMEエラー",
+  "error.game_error": "GAMEエラー",
   "error.inference_failed": "推論に失敗しました"
 }

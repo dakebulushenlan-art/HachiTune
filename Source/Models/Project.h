@@ -11,7 +11,7 @@
  */
 struct AudioData
 {
-    struct SomeDebugEvent {
+    struct SegmentDebugEvent {
         int startFrame = 0;
         int endFrame = 0;
         int attachedStartFrame = 0;
@@ -21,12 +21,12 @@ struct AudioData
         int durationFrames = 0;
     };
 
-    struct SomeDebugChunk {
+    struct SegmentDebugChunk {
         int chunkIndex = 0;
         int startFrame = 0;
         int endFrame = 0;
         int shortRestThreshold = 0;
-        std::vector<SomeDebugEvent> events;
+        std::vector<SegmentDebugEvent> events;
     };
 
     juce::AudioBuffer<float> waveform;
@@ -41,8 +41,8 @@ struct AudioData
     std::vector<float> deltaPitch;                    // [T] delta pitch in MIDI (dense)
     std::vector<bool> voicedMask;                     // [T] uv mask (true = voiced, F0-based)
     std::vector<bool> vadMask;                        // [T] energy-based VAD (true = has audio energy, captures consonants)
-    std::vector<std::pair<int, int>> someChunkRanges; // [N] SOME slicer chunks in frame range [start, end)
-    std::vector<SomeDebugChunk> someDebugChunks;      // raw SOME outputs for debug visualization
+    std::vector<std::pair<int, int>> segmentChunkRanges; // [N] SOME slicer chunks in frame range [start, end)
+    std::vector<SegmentDebugChunk> segmentDebugChunks;      // raw SOME outputs for debug visualization
     
     float getDuration() const
     {

@@ -56,13 +56,13 @@ public:
   // View settings
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
   void setShowBasePitch(bool show) { showBasePitch = show; }
-  void setShowSomeSegmentsDebug(bool show) { showSomeSegmentsDebug = show; }
+  void setShowSegmentsDebug(bool show) { showSegmentsDebug = show; }
   void setShowSomeValuesDebug(bool show) { showSomeValuesDebug = show; }
   void setShowUvInterpolationDebug(bool show) { showUvInterpolationDebug = show; }
   void setShowActualF0Debug(bool show) { showActualF0Debug = show; }
   bool getShowDeltaPitch() const { return showDeltaPitch; }
   bool getShowBasePitch() const { return showBasePitch; }
-  bool getShowSomeSegmentsDebug() const { return showSomeSegmentsDebug; }
+  bool getShowSegmentsDebug() const { return showSegmentsDebug; }
   bool getShowSomeValuesDebug() const { return showSomeValuesDebug; }
   bool getShowUvInterpolationDebug() const { return showUvInterpolationDebug; }
   bool getShowActualF0Debug() const { return showActualF0Debug; }
@@ -90,7 +90,7 @@ private:
   int windowHeight = 800;
   bool showDeltaPitch = true;
   bool showBasePitch = false;
-  bool showSomeSegmentsDebug = false;
+  bool showSegmentsDebug = false;
   bool showSomeValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;

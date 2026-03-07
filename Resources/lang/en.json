@@ -3,7 +3,6 @@
   "menu.edit": "Edit",
   "menu.view": "View",
   "menu.settings": "Settings...",
-
   "command.open_audio": "Open...",
   "command.open_audio.desp": "Open an audio file",
   "command.save_project": "Save Project",
@@ -38,7 +37,6 @@
   "command.toggle_draw.desp": "Toggle pitch drawing mode",
   "command.exit_draw": "Exit Draw Mode",
   "command.exit_draw.desp": "Exit pitch drawing mode",
-
   "toolbar.play": "Play",
   "toolbar.pause": "Pause",
   "toolbar.stop": "Stop",
@@ -55,9 +53,7 @@
   "toolbar.render": "Render",
   "toolbar.ara_mode": "ARA Mode",
   "toolbar.non_ara": "Non-ARA",
-
   "panel.parameters": "Parameters",
-
   "param.note_info": "Note Info",
   "param.no_selection": "No note selected",
   "param.pitch": "Pitch",
@@ -68,7 +64,6 @@
   "param.formant_shift": "Formant Shift (st)",
   "param.global": "Global",
   "param.global_pitch": "Global Pitch (st)",
-
   "settings.title": "Settings",
   "settings.general": "General",
   "settings.language": "Language:",
@@ -91,13 +86,11 @@
   "settings.cuda_desc": "CUDA: Uses NVIDIA GPU for inference.\nFastest option if you have an NVIDIA GPU.",
   "settings.directml_desc": "DirectML: Uses GPU via DirectX 12.\nWorks with most GPUs on Windows.",
   "settings.coreml_desc": "CoreML: Uses Apple Neural Engine or GPU.\nBest option on macOS/iOS devices.",
-
   "lang.auto": "Auto",
   "lang.en": "English",
   "lang.zh": "简体中文",
   "lang.zh-TW": "繁體中文",
   "lang.ja": "日本語",
-
   "progress.loading": "Loading...",
   "progress.loading_audio": "Loading audio...",
   "progress.reading_audio": "Reading audio...",
@@ -116,7 +109,6 @@
   "progress.export_failed": "Export failed",
   "progress.loading_vocoder": "Loading vocoder...",
   "progress.ready": "Ready",
-
   "dialog.select_audio": "Select an audio file...",
   "dialog.save_project": "Save project...",
   "dialog.save_audio": "Save audio file...",
@@ -128,12 +120,10 @@
   "dialog.failed_open": "Could not open file for writing:",
   "dialog.failed_create_writer": "Could not create audio writer for:",
   "dialog.failed_write": "Failed to write audio data to:",
-
   "dialog.export_midi": "Export MIDI...",
   "dialog.midi_exported": "MIDI exported successfully to:",
   "dialog.failed_write_midi": "Failed to write MIDI file to:",
   "dialog.no_notes_to_export": "No notes to export. Please load an audio file and analyze it first.",
-
-  "error.some_error": "SOME Error",
+  "error.game_error": "GAME Error",
   "error.inference_failed": "Inference failed"
 }

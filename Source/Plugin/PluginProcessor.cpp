@@ -2,18 +2,70 @@
 #include "../UI/IMainView.h"
 #include "../Utils/Localization.h"
 #include "PluginEditor.h"
+#include <cmath>
+
+// ============================================================================
+// Parameter Layout
+// ============================================================================
+
+juce::AudioProcessorValueTreeState::ParameterLayout
+HachiTuneAudioProcessor::createParameterLayout() {
+  std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+  // Bypass — standard host bypass
+  params.push_back(std::make_unique<juce::AudioParameterBool>(
+      juce::ParameterID{PARAM_BYPASS, 1}, "Bypass", false));
+
+  // Output Gain — post-processing volume in dB
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{PARAM_OUTPUT_GAIN, 1}, "Output Gain",
+      juce::NormalisableRange<float>(-24.0f, 12.0f, 0.1f), 0.0f));
+
+  // Dry/Wet — blend between original and processed (0-100%)
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{PARAM_DRY_WET, 1}, "Dry/Wet",
+      juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f));
+
+  // Global Pitch Offset — semitone shift applied to entire project
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{PARAM_PITCH_OFFSET, 1}, "Pitch Offset",
+      juce::NormalisableRange<float>(-24.0f, 24.0f, 0.01f), 0.0f));
+
+  // Formant Shift — formant preservation shift in semitones
+  params.push_back(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID{PARAM_FORMANT_SHIFT, 1}, "Formant Shift",
+      juce::NormalisableRange<float>(-12.0f, 12.0f, 0.01f), 0.0f));
+
+  return {params.begin(), params.end()};
+}
+
+// ============================================================================
+// Constructor / Destructor
+// ============================================================================
 
 HachiTuneAudioProcessor::HachiTuneAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
     : AudioProcessor(
           BusesProperties()
               .withInput("Input", juce::AudioChannelSet::stereo(), true)
-              .withOutput("Output", juce::AudioChannelSet::stereo(), true))
+              .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+#else
+    :
 #endif
-{
+      apvts(*this, nullptr, "HachiTuneParameters", createParameterLayout()) {
+  // Cache raw parameter pointers for lock-free audio-thread access
+  bypassParamValue = apvts.getRawParameterValue(PARAM_BYPASS);
+  outputGainParamValue = apvts.getRawParameterValue(PARAM_OUTPUT_GAIN);
+  dryWetParamValue = apvts.getRawParameterValue(PARAM_DRY_WET);
+  pitchOffsetParamValue = apvts.getRawParameterValue(PARAM_PITCH_OFFSET);
+  formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
 }
 
 HachiTuneAudioProcessor::~HachiTuneAudioProcessor() = default;
+
+// ============================================================================
+// AudioProcessor Info
+// ============================================================================
 
 const juce::String HachiTuneAudioProcessor::getName() const {
   return JucePlugin_Name;
@@ -43,10 +95,18 @@ bool HachiTuneAudioProcessor::isMidiEffect() const {
 #endif
 }
 
+// ============================================================================
+// Prepare / Release
+// ============================================================================
+
 void HachiTuneAudioProcessor::prepareToPlay(double sampleRate,
                                             int samplesPerBlock) {
   hostSampleRate = sampleRate;
   realtimeProcessor.prepareToPlay(sampleRate, samplesPerBlock);
+
+  // Report zero latency — HachiTune uses pre-computed audio buffers,
+  // so output at time T corresponds to input at time T (no analysis delay).
+  setLatencySamples(0);
 
 #if JucePlugin_Enable_ARA
   prepareToPlayForARA(sampleRate, samplesPerBlock,
@@ -65,6 +125,10 @@ void HachiTuneAudioProcessor::releaseResources() {
 #endif
 }
 
+// ============================================================================
+// Bus Layout
+// ============================================================================
+
 #if !JucePlugin_PreferredChannelConfigurations
 bool HachiTuneAudioProcessor::isBusesLayoutSupported(
     const BusesLayout &layouts) const {
@@ -75,6 +139,10 @@ bool HachiTuneAudioProcessor::isBusesLayoutSupported(
          out == juce::AudioChannelSet::stereo();
 }
 #endif
+
+// ============================================================================
+// Mode Detection
+// ============================================================================
 
 bool HachiTuneAudioProcessor::isARAModeActive() const {
 #if JucePlugin_Enable_ARA
@@ -109,18 +177,146 @@ juce::String HachiTuneAudioProcessor::getHostStatusMessage() const {
   return araActive ? "ARA Mode" : "Non-ARA Mode";
 }
 
+// ============================================================================
+// Output Processing (Bypass, Dry/Wet, Gain)
+// ============================================================================
+
+void HachiTuneAudioProcessor::applyOutputProcessing(
+    juce::AudioBuffer<float> &processedBuffer,
+    const juce::AudioBuffer<float> &dryBuffer) {
+  const int numSamples = processedBuffer.getNumSamples();
+  const int numChannels = processedBuffer.getNumChannels();
+
+  // Read parameters (lock-free atomic loads)
+  const float dryWetPercent = dryWetParamValue->load();
+  const float outputGainDb = outputGainParamValue->load();
+
+  // Apply dry/wet mix
+  const float wetAmount = dryWetPercent / 100.0f;
+  if (wetAmount < 1.0f) {
+    const float dryAmount = 1.0f - wetAmount;
+    const int dryChannels =
+        std::min(numChannels, dryBuffer.getNumChannels());
+    const int drySamples =
+        std::min(numSamples, dryBuffer.getNumSamples());
+
+    for (int ch = 0; ch < dryChannels; ++ch) {
+      // processed = dry * dryAmount + wet * wetAmount
+      const float *dryData = dryBuffer.getReadPointer(ch);
+      float *wetData = processedBuffer.getWritePointer(ch);
+      for (int i = 0; i < drySamples; ++i)
+        wetData[i] = dryData[i] * dryAmount + wetData[i] * wetAmount;
+    }
+  }
+
+  // Apply output gain
+  if (std::abs(outputGainDb) > 0.01f) {
+    const float gainLinear = std::pow(10.0f, outputGainDb / 20.0f);
+    processedBuffer.applyGain(gainLinear);
+  }
+}
+
+// ============================================================================
+// Parameter Change Detection (Audio Thread -> Message Thread)
+// ============================================================================
+
+void HachiTuneAudioProcessor::checkParameterChanges() {
+  if (!mainComponent)
+    return;
+
+  const float pitchOffset = pitchOffsetParamValue->load();
+  const float formantShift = formantShiftParamValue->load();
+
+  const bool pitchChanged = std::abs(pitchOffset - cachedPitchOffset) > 0.001f;
+  const bool formantChanged =
+      std::abs(formantShift - cachedFormantShift) > 0.001f;
+
+  if (!pitchChanged && !formantChanged)
+    return;
+
+  cachedPitchOffset = pitchOffset;
+  cachedFormantShift = formantShift;
+
+  // Store latest values and dispatch to message thread (coalesced)
+  auto syncState = paramSyncState;
+  syncState->pitchOffset.store(pitchOffset);
+  syncState->formantShift.store(formantShift);
+  syncState->needsResynth.store(true);
+
+  if (!syncState->pending.exchange(true)) {
+    juce::Component::SafePointer<juce::Component> safeMain(
+        mainComponent->getComponent());
+    juce::MessageManager::callAsync([safeMain, syncState]() {
+      syncState->pending.store(false);
+      if (!syncState->needsResynth.exchange(false))
+        return;
+
+      auto *view = dynamic_cast<IMainView *>(safeMain.getComponent());
+      if (!view)
+        return;
+      auto *project = view->getProject();
+      if (!project)
+        return;
+
+      // Apply parameter values to project
+      const float po = syncState->pitchOffset.load();
+      const float fs = syncState->formantShift.load();
+      bool changed = false;
+
+      if (std::abs(project->getGlobalPitchOffset() - po) > 0.001f) {
+        project->setGlobalPitchOffset(po);
+        changed = true;
+      }
+      if (std::abs(project->getFormantShift() - fs) > 0.001f) {
+        project->setFormantShift(fs);
+        changed = true;
+      }
+
+      // Trigger re-synthesis if values actually changed
+      if (changed) {
+        view->triggerResynthesis();
+      }
+    });
+  }
+}
+
+// ============================================================================
+// Process Block
+// ============================================================================
+
 void HachiTuneAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                            juce::MidiBuffer &midiMessages) {
   juce::ignoreUnused(midiMessages);
   juce::ScopedNoDenormals noDenormals;
 
+  // Check bypass — if bypassed, pass through input unchanged
+  const bool bypassed = bypassParamValue->load() >= 0.5f;
+  if (bypassed) {
+    // Transport sync still needs to run even when bypassed
+    transportController.processBlock(getPlayHead(), hostSampleRate);
+    return; // Input buffer passes through unchanged
+  }
+
   // Process transport control requests and update sync state
   transportController.processBlock(getPlayHead(), hostSampleRate);
 
+  // Check for parameter automation changes (pitch offset, formant shift)
+  checkParameterChanges();
+
 #if JucePlugin_Enable_ARA
-  // ARA mode: let ARA renderer handle audio
-  if (processBlockForARA(buffer, isRealtime(), getPlayHead()))
-    return;
+  // ARA mode: let ARA renderer handle audio, then apply output processing
+  if (isARAModeActive()) {
+    // Save dry copy before ARA processing
+    juce::AudioBuffer<float> dryBuffer;
+    const float dryWet = dryWetParamValue->load();
+    if (dryWet < 99.9f)
+      dryBuffer.makeCopyOf(buffer);
+
+    if (processBlockForARA(buffer, isRealtime(), getPlayHead())) {
+      applyOutputProcessing(buffer, dryBuffer);
+      return;
+    }
+  }
 #endif
 
   // Non-ARA mode
@@ -134,6 +330,16 @@ void HachiTuneAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                     isRealtime() == juce::AudioProcessor::Realtime::yes);
 }
 
+void HachiTuneAudioProcessor::processBlockBypassed(
+    juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
+  juce::ignoreUnused(midiMessages);
+
+  // Transport sync still runs when bypassed so cursor stays in sync
+  transportController.processBlock(getPlayHead(), hostSampleRate);
+
+  // Input passes through unchanged (buffer already contains input)
+}
+
 void HachiTuneAudioProcessor::processNonARAMode(
     juce::AudioBuffer<float> &buffer,
     const juce::AudioPlayHead::PositionInfo &posInfo, bool isRealtime) {
@@ -142,8 +348,7 @@ void HachiTuneAudioProcessor::processNonARAMode(
   const bool hostIsPlaying = posInfo.getIsPlaying();
 
   // Check if we have analyzed project ready for real-time processing
-  bool hasProject =
-      mainComponent && mainComponent->hasAnalyzedProject();
+  bool hasProject = mainComponent && mainComponent->hasAnalyzedProject();
 
   // Update UI cursor position from host playback position (only when we have
   // analyzed audio)
@@ -218,11 +423,20 @@ void HachiTuneAudioProcessor::processNonARAMode(
   }
 
   if (hasProject && realtimeProcessor.isReady()) {
+    // Save dry copy for dry/wet mixing
+    juce::AudioBuffer<float> dryBuffer;
+    const float dryWet = dryWetParamValue->load();
+    if (dryWet < 99.9f)
+      dryBuffer.makeCopyOf(buffer);
+
     // Real-time pitch correction mode
     juce::AudioBuffer<float> outputBuffer(numChannels, numSamples);
     if (realtimeProcessor.processBlock(buffer, outputBuffer, &posInfo)) {
       for (int ch = 0; ch < numChannels; ++ch)
         buffer.copyFrom(ch, 0, outputBuffer, ch, 0, numSamples);
+
+      // Apply dry/wet mix and output gain
+      applyOutputProcessing(buffer, dryBuffer);
     }
     return;
   }
@@ -271,19 +485,49 @@ void HachiTuneAudioProcessor::processNonARAMode(
   // Passthrough during capture
 }
 
+// ============================================================================
+// Non-ARA Capture Control
+// ============================================================================
+
 void HachiTuneAudioProcessor::startCapture() {
   captureController->resetToWaiting();
 }
 
 void HachiTuneAudioProcessor::stopCapture() { captureController->stop(); }
 
+// ============================================================================
+// Editor Connection
+// ============================================================================
+
 void HachiTuneAudioProcessor::setMainComponent(IMainView *mc) {
   mainComponent = mc;
   if (mc) {
     mc->bindRealtimeProcessor(realtimeProcessor);
+
+    // Sync current APVTS parameter values to project
+    if (auto *project = mc->getProject()) {
+      const float po = pitchOffsetParamValue->load();
+      const float fs = formantShiftParamValue->load();
+      if (std::abs(po) > 0.001f)
+        project->setGlobalPitchOffset(po);
+      if (std::abs(fs) > 0.001f)
+        project->setFormantShift(fs);
+    }
+
     if (pendingStateJson.isNotEmpty() &&
         mc->restoreProjectJson(pendingStateJson)) {
       pendingStateJson.clear();
+      // After restoring project, sync project values to APVTS
+      if (auto *project = mc->getProject()) {
+        apvts.getParameter(PARAM_PITCH_OFFSET)
+            ->setValueNotifyingHost(apvts.getParameter(PARAM_PITCH_OFFSET)
+                                       ->convertTo0to1(
+                                           project->getGlobalPitchOffset()));
+        apvts.getParameter(PARAM_FORMANT_SHIFT)
+            ->setValueNotifyingHost(apvts.getParameter(PARAM_FORMANT_SHIFT)
+                                       ->convertTo0to1(
+                                           project->getFormantShift()));
+      }
     }
   } else {
     realtimeProcessor.setProject(nullptr);
@@ -295,29 +539,103 @@ juce::AudioProcessorEditor *HachiTuneAudioProcessor::createEditor() {
   return new HachiTuneAudioProcessorEditor(*this);
 }
 
-void HachiTuneAudioProcessor::getStateInformation(juce::MemoryBlock &destData) {
-  juce::String jsonString;
+// ============================================================================
+// State Save / Load (versioned envelope)
+// ============================================================================
+
+void HachiTuneAudioProcessor::getStateInformation(
+    juce::MemoryBlock &destData) {
+  // Create versioned envelope containing both APVTS state and project state
+  auto *envelope = new juce::DynamicObject();
+  envelope->setProperty("pluginStateVersion", PLUGIN_STATE_VERSION);
+
+  // APVTS parameters state (as XML string)
+  auto apvtsState = apvts.copyState();
+  auto apvtsXml = apvtsState.createXml();
+  if (apvtsXml)
+    envelope->setProperty("parametersXml", apvtsXml->toString());
+
+  // Project state (existing JSON)
+  juce::String projectJson;
   if (mainComponent) {
-    jsonString = mainComponent->serializeProjectJson();
+    projectJson = mainComponent->serializeProjectJson();
   } else if (pendingStateJson.isNotEmpty()) {
-    jsonString = pendingStateJson;
+    projectJson = pendingStateJson;
   }
-  if (jsonString.isNotEmpty())
-    destData.append(jsonString.toRawUTF8(), jsonString.getNumBytesAsUTF8());
+
+  if (projectJson.isNotEmpty()) {
+    auto parsedProject = juce::JSON::parse(projectJson);
+    if (parsedProject.isObject())
+      envelope->setProperty("projectState", parsedProject);
+  }
+
+  auto jsonString = juce::JSON::toString(juce::var(envelope), false);
+  destData.append(jsonString.toRawUTF8(), jsonString.getNumBytesAsUTF8());
 }
 
 void HachiTuneAudioProcessor::setStateInformation(const void *data,
-                                                  int sizeInBytes) {
-  juce::String jsonString(
+                                                   int sizeInBytes) {
+  juce::String rawString(
       juce::CharPointer_UTF8(static_cast<const char *>(data)),
       static_cast<size_t>(sizeInBytes));
 
-  if (mainComponent && mainComponent->restoreProjectJson(jsonString)) {
+  auto parsed = juce::JSON::parse(rawString);
+  if (!parsed.isObject())
     return;
-  }
 
-  pendingStateJson = jsonString;
+  // Check if this is a versioned envelope or legacy project JSON
+  if (parsed.hasProperty("pluginStateVersion")) {
+    // New versioned format
+    // Restore APVTS parameters
+    auto parametersXml = parsed.getProperty("parametersXml", "").toString();
+    if (parametersXml.isNotEmpty()) {
+      auto xml = juce::parseXML(parametersXml);
+      if (xml) {
+        auto tree = juce::ValueTree::fromXml(*xml);
+        if (tree.isValid())
+          apvts.replaceState(tree);
+      }
+    }
+
+    // Restore project state
+    auto projectState = parsed.getProperty("projectState", {});
+    if (projectState.isObject()) {
+      auto projectJson = juce::JSON::toString(projectState, false);
+      if (mainComponent && mainComponent->restoreProjectJson(projectJson)) {
+        // Sync project values to cached state
+        if (auto *project = mainComponent->getProject()) {
+          cachedPitchOffset = project->getGlobalPitchOffset();
+          cachedFormantShift = project->getFormantShift();
+        }
+        return;
+      }
+      pendingStateJson = projectJson;
+    }
+  } else {
+    // Legacy format: raw project JSON (backward compatibility)
+    if (mainComponent && mainComponent->restoreProjectJson(rawString)) {
+      // Sync legacy project values to APVTS
+      if (auto *project = mainComponent->getProject()) {
+        apvts.getParameter(PARAM_PITCH_OFFSET)
+            ->setValueNotifyingHost(apvts.getParameter(PARAM_PITCH_OFFSET)
+                                       ->convertTo0to1(
+                                           project->getGlobalPitchOffset()));
+        apvts.getParameter(PARAM_FORMANT_SHIFT)
+            ->setValueNotifyingHost(apvts.getParameter(PARAM_FORMANT_SHIFT)
+                                       ->convertTo0to1(
+                                           project->getFormantShift()));
+        cachedPitchOffset = project->getGlobalPitchOffset();
+        cachedFormantShift = project->getFormantShift();
+      }
+      return;
+    }
+    pendingStateJson = rawString;
+  }
 }
+
+// ============================================================================
+// Plugin Filter Factory
+// ============================================================================
 
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
   return new HachiTuneAudioProcessor();

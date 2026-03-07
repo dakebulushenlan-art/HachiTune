@@ -23,8 +23,8 @@ public:
     drawBackground = shouldDraw;
     repaint();
   }
-  void setShowSomeSegmentsDebug(bool show) {
-    showSomeSegmentsDebug = show;
+  void setShowSegmentsDebug(bool show) {
+    showSegmentsDebug = show;
     repaint();
   }
 
@@ -59,7 +59,7 @@ private:
 
   Project *project = nullptr;
   bool drawBackground = true;
-  bool showSomeSegmentsDebug = false;
+  bool showSegmentsDebug = false;
   DragMode dragMode = DragMode::None;
   float dragStartX = 0.0f;
   double dragStartStartTime = 0.0;

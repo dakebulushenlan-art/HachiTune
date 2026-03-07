@@ -158,8 +158,8 @@ public:
     showBasePitch = show;
     repaint();
   }
-  void setShowSomeSegmentsDebug(bool show) {
-    showSomeSegmentsDebug = show;
+  void setShowSegmentsDebug(bool show) {
+    showSegmentsDebug = show;
     repaint();
   }
   void setShowSomeValuesDebug(bool show) {
@@ -260,7 +260,7 @@ private:
   // View settings
   bool showDeltaPitch = true;
   bool showBasePitch = false;
-  bool showSomeSegmentsDebug = false;
+  bool showSegmentsDebug = false;
   bool showSomeValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;

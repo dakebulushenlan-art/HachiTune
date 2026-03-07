@@ -499,6 +499,49 @@ void Project::composeGlobalWaveform()
         }
     };
 
+    // Helper: time-stretch (linear interpolation) from origWaveform[srcOff..srcOff+srcLen)
+    //         into waveform[dstOff..dstOff+dstLen).  Handles srcLen != dstLen gracefully
+    //         so that gaps/segments are never truncated with trailing zeros.
+    auto stretchFromOrig = [&](int srcOff, int dstOff, int srcLen, int dstLen) {
+        if (srcLen <= 0 || dstLen <= 0) return;
+        // Clamp source range
+        if (srcOff < 0) { srcLen += srcOff; srcOff = 0; }
+        srcLen = std::min(srcLen, origSamples - srcOff);
+        if (srcLen <= 0) return;
+        // Clamp destination range
+        if (dstOff < 0) { dstLen += dstOff; dstOff = 0; }
+        dstLen = std::min(dstLen, totalSamples - dstOff);
+        if (dstLen <= 0) return;
+
+        // If lengths match, straight copy is fine (no interpolation overhead)
+        if (srcLen == dstLen) {
+            for (int ch = 0; ch < numChannels; ++ch) {
+                const float *src = origWaveform.getReadPointer(
+                    std::min(ch, std::max(0, origWaveform.getNumChannels() - 1)));
+                float *dst = waveform.getWritePointer(ch);
+                std::copy(src + srcOff, src + srcOff + srcLen, dst + dstOff);
+            }
+            return;
+        }
+
+        // Linear interpolation resample: map each dst sample to a fractional src position
+        const double ratio = (srcLen <= 1) ? 0.0
+                           : static_cast<double>(srcLen - 1) / static_cast<double>(dstLen - 1);
+        for (int ch = 0; ch < numChannels; ++ch) {
+            const float *src = origWaveform.getReadPointer(
+                std::min(ch, std::max(0, origWaveform.getNumChannels() - 1)));
+            float *dst = waveform.getWritePointer(ch);
+            for (int i = 0; i < dstLen; ++i) {
+                const double srcPos = static_cast<double>(i) * ratio;
+                const int idx = static_cast<int>(srcPos);
+                const float frac = static_cast<float>(srcPos - idx);
+                const int s0 = srcOff + std::min(idx, srcLen - 1);
+                const int s1 = srcOff + std::min(idx + 1, srcLen - 1);
+                dst[dstOff + i] = src[s0] + frac * (src[s1] - src[s0]);
+            }
+        }
+    };
+
     // --- Step 4: Place segments via src→dst coordinate mapping -------------
     // Timeline = [leading gap][note0][gap01][note1]...[trailing gap]
     // Each segment is mapped from its source position (originalWaveform) to
@@ -512,19 +555,22 @@ void Project::composeGlobalWaveform()
         {
             int srcLen = sortedNotes[0]->getSrcStartFrame() * HOP_SIZE;
             int dstLen = sortedNotes[0]->getStartFrame() * HOP_SIZE;
-            copyFromOrig(0, 0, std::min(srcLen, dstLen));
+            stretchFromOrig(0, 0, srcLen, dstLen);
         }
 
         for (size_t i = 0; i < sortedNotes.size(); ++i) {
             const auto *note = sortedNotes[i];
 
-            // Note region without synthWaveform: place original audio
-            if (!note->hasSynthWaveform()) {
+            // Always place original audio as base layer for every note region.
+            // For notes with synthWaveform, this provides a smooth base that
+            // the crossfade in Step 5 blends against at note boundaries,
+            // avoiding the synth→silence→synth discontinuity.
+            {
                 int srcStart = note->getSrcStartFrame() * HOP_SIZE;
                 int srcLen = (note->getSrcEndFrame() - note->getSrcStartFrame()) * HOP_SIZE;
                 int dstStart = note->getStartFrame() * HOP_SIZE;
                 int dstLen = (note->getEndFrame() - note->getStartFrame()) * HOP_SIZE;
-                copyFromOrig(srcStart, dstStart, std::min(srcLen, dstLen));
+                stretchFromOrig(srcStart, dstStart, srcLen, dstLen);
             }
 
             // Gap after this note → before next note (or trailing gap)
@@ -542,55 +588,165 @@ void Project::composeGlobalWaveform()
             int gapSrcLen = gapSrcEnd - gapSrcStart;
             int gapDstLen = gapDstEnd - gapDstStart;
             if (gapSrcLen > 0 && gapDstLen > 0)
-                copyFromOrig(gapSrcStart, gapDstStart,
-                             std::min(gapSrcLen, gapDstLen));
+                stretchFromOrig(gapSrcStart, gapDstStart,
+                                gapSrcLen, gapDstLen);
         }
     }
 
-    // --- Step 5: Overlay synthWaveforms with edge crossfade ---------------
-    constexpr int kEdgeFadeSamples = 512; // ~11.6ms at 44100Hz
+    // --- Step 5: Overlay synthWaveforms with adaptive edge crossfade ------
+    // Pre-compute adjacency: collect synth notes and check which edges face
+    // another synth note vs. a gap.  Adjacent-synth edges use a much shorter
+    // crossfade so we don't linger in the base (wrong-pitch) audio.
+    //
+    // Each synthWaveform may contain margin samples (preroll/postroll) beyond
+    // the note body, allowing real-audio crossfade at boundaries.
+    struct SynthNoteInfo {
+        const Note *note;
+        int bodyStartSample;  // noteStart * HOP_SIZE (where the body begins in global coords)
+        int bodySamples;      // note body length in samples
+        int preroll;          // margin samples before body in synthWaveform
+        int synthTotalLen;    // total synthWaveform length
+        bool leftAdjacentSynth  = false; // previous synth note is adjacent
+        bool rightAdjacentSynth = false; // next synth note is adjacent
+    };
 
-    for (const auto *note : sortedNotes) {
-        if (!note->hasSynthWaveform())
-            continue;
+    std::vector<SynthNoteInfo> synthInfos;
+    synthInfos.reserve(sortedNotes.size());
+    for (const auto *n : sortedNotes) {
+        if (!n->hasSynthWaveform()) continue;
+        SynthNoteInfo si;
+        si.note = n;
+        si.bodyStartSample = n->getStartFrame() * HOP_SIZE;
+        si.bodySamples = (n->getEndFrame() - n->getStartFrame()) * HOP_SIZE;
+        si.preroll = n->getSynthPreroll();
+        si.synthTotalLen = static_cast<int>(n->getSynthWaveform().size());
+        if (si.synthTotalLen <= 0) continue;
+        synthInfos.push_back(si);
+    }
 
-        const auto &synthWave = note->getSynthWaveform();
-        const int noteStartSample = note->getStartFrame() * HOP_SIZE;
-        const int noteSamples = static_cast<int>(synthWave.size());
+    // Detect adjacency: two synth notes are "adjacent" when the gap between
+    // them is at most kAdjacencyThreshold samples.
+    constexpr int kAdjacencyThreshold = HOP_SIZE; // 1 frame tolerance
+    for (size_t si = 0; si + 1 < synthInfos.size(); ++si) {
+        auto &curr = synthInfos[si];
+        auto &next = synthInfos[si + 1];
+        int currBodyEnd = curr.bodyStartSample + curr.bodySamples;
+        int nextBodyStart = next.bodyStartSample;
+        if (nextBodyStart - currBodyEnd <= kAdjacencyThreshold) {
+            curr.rightAdjacentSynth = true;
+            next.leftAdjacentSynth  = true;
+        }
+    }
 
-        if (noteSamples <= 0)
-            continue;
+    constexpr int kGapFadeSamples    = 512; // ~11.6ms — crossfade to base at gaps
+    constexpr int kSpliceFadeSamples = 64;  // ~1.5ms  — minimal fade at synth-synth edges
 
-        const int maxFade = std::max(1, noteSamples / 4);
-        const int fadeLen = std::min(kEdgeFadeSamples, maxFade);
+    for (const auto &si : synthInfos) {
+        const auto &synthWave = si.note->getSynthWaveform();
+        const int preroll = si.preroll;
+        // The synthWaveform global start (including preroll margin)
+        const int synthGlobalStart = si.bodyStartSample - preroll;
+        const int synthTotalLen = si.synthTotalLen;
+
+        // Choose fade lengths per edge
+        const int leftFadeReq  = si.leftAdjacentSynth  ? kSpliceFadeSamples : kGapFadeSamples;
+        const int rightFadeReq = si.rightAdjacentSynth ? kSpliceFadeSamples : kGapFadeSamples;
+        const int maxFade = std::max(1, si.bodySamples / 4);
+        const int leftFade  = std::min(leftFadeReq,  maxFade);
+        const int rightFade = std::min(rightFadeReq, maxFade);
+
+        // We overlay only the body portion [preroll .. preroll+bodySamples)
+        // The margin is reserved for Step 6 crossfade.
+        for (int ch = 0; ch < numChannels; ++ch) {
+            float *dst = waveform.getWritePointer(ch);
+
+            for (int i = 0; i < si.bodySamples; ++i) {
+                const int globalIdx = si.bodyStartSample + i;
+                if (globalIdx < 0 || globalIdx >= totalSamples)
+                    continue;
+
+                // Asymmetric edge envelope
+                float env = 1.0f;
+                if (i < leftFade && leftFade > 1) {
+                    const float t = static_cast<float>(i) /
+                                    static_cast<float>(leftFade);
+                    env = t * t * (3.0f - 2.0f * t); // smoothstep
+                } else if (i >= si.bodySamples - rightFade && rightFade > 1) {
+                    const int fromEnd = si.bodySamples - 1 - i;
+                    const float t = static_cast<float>(fromEnd) /
+                                    static_cast<float>(rightFade);
+                    env = t * t * (3.0f - 2.0f * t);
+                }
+
+                const float base  = dst[globalIdx];
+                const float synth = synthWave[static_cast<size_t>(preroll + i)];
+                dst[globalIdx] = base + env * (synth - base);
+            }
+        }
+    }
+
+    // --- Step 6: Direct synth-to-synth crossfade at adjacent boundaries ---
+    // At adjacent synth note boundaries, both synthWaveforms now contain real
+    // margin audio (preroll of next note, postroll of current note) from the
+    // same continuous synthesis pass.  We crossfade these real signals instead
+    // of using held-value extrapolation, eliminating the remaining pop.
+    constexpr int kSpliceHalf = 64; // 64 samples each side = 128 total ≈ 2.9ms
+
+    for (size_t si = 0; si + 1 < synthInfos.size(); ++si) {
+        const auto &curr = synthInfos[si];
+        const auto &next = synthInfos[si + 1];
+        if (!curr.rightAdjacentSynth) continue; // not adjacent
+
+        const auto &sw1 = curr.note->getSynthWaveform();
+        const auto &sw2 = next.note->getSynthWaveform();
+        const int n1BodyStart = curr.bodyStartSample;
+        const int n1BodyLen   = curr.bodySamples;
+        const int n1Preroll   = curr.preroll;
+        const int n1TotalLen  = curr.synthTotalLen;
+        const int n2BodyStart = next.bodyStartSample;
+        const int n2Preroll   = next.preroll;
+        const int n2TotalLen  = next.synthTotalLen;
+
+        // Global start of each synth (including margins)
+        const int n1GlobalStart = n1BodyStart - n1Preroll;
+        const int n2GlobalStart = n2BodyStart - n2Preroll;
+
+        // Junction: where note1 body ends
+        const int junction = n1BodyStart + n1BodyLen;
 
         for (int ch = 0; ch < numChannels; ++ch) {
             float *dst = waveform.getWritePointer(ch);
 
-            for (int i = 0; i < noteSamples; ++i) {
-                const int globalIdx = noteStartSample + i;
-                if (globalIdx < 0 || globalIdx >= totalSamples)
-                    continue;
+            for (int k = -kSpliceHalf; k < kSpliceHalf; ++k) {
+                const int pos = junction + k;
+                if (pos < 0 || pos >= totalSamples) continue;
 
-                // Edge crossfade envelope: smoothstep ramp at boundaries
-                float env = 1.0f;
-                if (fadeLen > 1) {
-                    if (i < fadeLen) {
-                        const float t = static_cast<float>(i) /
-                                        static_cast<float>(fadeLen);
-                        env = t * t * (3.0f - 2.0f * t); // smoothstep
-                    } else if (i >= noteSamples - fadeLen) {
-                        const int fromEnd = noteSamples - 1 - i;
-                        const float t = static_cast<float>(fromEnd) /
-                                        static_cast<float>(fadeLen);
-                        env = t * t * (3.0f - 2.0f * t);
-                    }
+                // Crossfade parameter: 0.0 at left edge → 1.0 at right edge
+                const float t_raw = static_cast<float>(k + kSpliceHalf) /
+                                    static_cast<float>(2 * kSpliceHalf);
+                const float t = t_raw * t_raw * (3.0f - 2.0f * t_raw);
+
+                // synth1 value — use real margin data if available
+                const int s1idx = pos - n1GlobalStart;
+                float val1;
+                if (s1idx >= 0 && s1idx < n1TotalLen) {
+                    val1 = sw1[static_cast<size_t>(s1idx)];
+                } else {
+                    // Fallback: clamp to nearest valid sample
+                    val1 = sw1[static_cast<size_t>(std::clamp(s1idx, 0, n1TotalLen - 1))];
                 }
 
-                // Blend: base + env * (synth - base)
-                const float base = dst[globalIdx];
-                const float synth = synthWave[static_cast<size_t>(i)];
-                dst[globalIdx] = base + env * (synth - base);
+                // synth2 value — use real margin data if available
+                const int s2idx = pos - n2GlobalStart;
+                float val2;
+                if (s2idx >= 0 && s2idx < n2TotalLen) {
+                    val2 = sw2[static_cast<size_t>(s2idx)];
+                } else {
+                    // Fallback: clamp to nearest valid sample
+                    val2 = sw2[static_cast<size_t>(std::clamp(s2idx, 0, n2TotalLen - 1))];
+                }
+
+                dst[pos] = val1 * (1.0f - t) + val2 * t;
             }
         }
     }

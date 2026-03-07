@@ -9,7 +9,7 @@
 #include "../FCPEPitchDetector.h"
 #include "../PitchDetectorType.h"
 #include "../RMVPEPitchDetector.h"
-#include "../SOMEDetector.h"
+#include "../GAMEDetector.h"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -20,9 +20,10 @@
  * - Mel spectrogram computation
  * - F0 (pitch) extraction using RMVPE or FCPE
  * - F0 smoothing and interpolation
- * - Note segmentation using SOME model
+ * - Note segmentation using GAME model
  */
-class AudioAnalyzer {
+class AudioAnalyzer
+{
 public:
   using ProgressCallback =
       std::function<void(double progress, const juce::String &message)>;
@@ -62,25 +63,31 @@ public:
   bool isAnalyzing() const { return isRunning.load(); }
 
   // Access to detectors for configuration
-  FCPEPitchDetector *getFCPEDetector() {
+  FCPEPitchDetector *getFCPEDetector()
+  {
     return fcpeDetector ? fcpeDetector.get() : externalFCPEDetector;
   }
-  RMVPEPitchDetector *getRMVPEDetector() {
+  RMVPEPitchDetector *getRMVPEDetector()
+  {
     return rmvpeDetector ? rmvpeDetector.get() : externalRMVPEDetector;
   }
-  SOMEDetector *getSOMEDetector() {
-    return someDetector ? someDetector.get() : externalSOMEDetector;
+  GAMEDetector *getGAMEDetector()
+  {
+    return gameDetector ? gameDetector.get() : externalGAMEDetector;
   }
 
   // Set external detectors (optional - if not set, internal ones are used)
-  void setFCPEDetector(FCPEPitchDetector *detector) {
+  void setFCPEDetector(FCPEPitchDetector *detector)
+  {
     externalFCPEDetector = detector;
   }
-  void setRMVPEDetector(RMVPEPitchDetector *detector) {
+  void setRMVPEDetector(RMVPEPitchDetector *detector)
+  {
     externalRMVPEDetector = detector;
   }
-  void setSOMEDetector(SOMEDetector *detector) {
-    externalSOMEDetector = detector;
+  void setGAMEDetector(GAMEDetector *detector)
+  {
+    externalGAMEDetector = detector;
   }
 
 private:
@@ -90,8 +97,8 @@ private:
   // Extract F0 using FCPE
   void extractF0WithFCPE(AudioData &audioData, int targetFrames);
 
-  // Segment notes using SOME model
-  void segmentWithSOME(Project &project);
+  // Segment notes using GAME model
+  void segmentWithGAME(Project &project);
 
   // Fallback segmentation based on F0 changes
   void segmentFallback(Project &project);
@@ -104,12 +111,12 @@ private:
 
   std::unique_ptr<FCPEPitchDetector> fcpeDetector;
   std::unique_ptr<RMVPEPitchDetector> rmvpeDetector;
-  std::unique_ptr<SOMEDetector> someDetector;
+  std::unique_ptr<GAMEDetector> gameDetector;
 
   // External detectors (optional, not owned)
   FCPEPitchDetector *externalFCPEDetector = nullptr;
   RMVPEPitchDetector *externalRMVPEDetector = nullptr;
-  SOMEDetector *externalSOMEDetector = nullptr;
+  GAMEDetector *externalGAMEDetector = nullptr;
 
   bool useFCPE = true;
   PitchDetectorType detectorType = PitchDetectorType::RMVPE;

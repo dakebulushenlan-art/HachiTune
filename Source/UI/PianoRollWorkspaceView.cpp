@@ -171,9 +171,9 @@ void PianoRollWorkspaceView::refreshOverview()
     overviewPanel.repaint();
 }
 
-void PianoRollWorkspaceView::setShowSomeSegmentsDebug(bool show)
+void PianoRollWorkspaceView::setShowSegmentsDebug(bool show)
 {
-  overviewPanel.setShowSomeSegmentsDebug(show);
+  overviewPanel.setShowSegmentsDebug(show);
 }
 
 void PianoRollWorkspaceView::updateOverviewVisibility()
