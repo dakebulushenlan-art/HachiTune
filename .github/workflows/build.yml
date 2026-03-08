@@ -33,7 +33,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "Resources/models"
           Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx" -OutFile "Resources/models/rmvpe.onnx"
-          Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx" -OutFile "Resources/models/some.onnx"
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
@@ -104,7 +103,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "Resources/models"
           Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx" -OutFile "Resources/models/rmvpe.onnx"
-          Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx" -OutFile "Resources/models/some.onnx"
 
       - name: Download DirectML Runtime
         shell: pwsh
@@ -199,7 +197,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "Resources/models"
           Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx" -OutFile "Resources/models/rmvpe.onnx"
-          Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx" -OutFile "Resources/models/some.onnx"
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_CUDA=ON -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
@@ -269,7 +266,6 @@ jobs:
         run: |
           mkdir -p Resources/models
           curl -L -o Resources/models/rmvpe.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx"
-          curl -L -o Resources/models/some.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx"
 
       - name: Configure CMake
         run: |
@@ -346,6 +342,17 @@ jobs:
           cd ../package-nomodels
           zip -r ../HachiTune-macOS-App-NoModels.zip HachiTune.app
 
+      - name: Create Plugin ZIPs
+        run: |
+          # VST3 with models
+          if [ -d "package/HachiTune.vst3" ]; then
+            cd package && zip -r ../HachiTune-macOS-VST3.zip HachiTune.vst3 && cd ..
+          fi
+          # AU with models
+          if [ -d "package/HachiTune.component" ]; then
+            cd package && zip -r ../HachiTune-macOS-AU.zip HachiTune.component && cd ..
+          fi
+
       - name: Upload Artifact (DMG)
         uses: actions/upload-artifact@v4
         with:
@@ -388,6 +395,22 @@ jobs:
           path: package-nomodels/
           retention-days: 30
 
+      - name: Upload Artifact (VST3)
+        uses: actions/upload-artifact@v4
+        with:
+          name: HachiTune-macOS-VST3
+          path: HachiTune-macOS-VST3.zip
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload Artifact (AU)
+        uses: actions/upload-artifact@v4
+        with:
+          name: HachiTune-macOS-AU
+          path: HachiTune-macOS-AU.zip
+          retention-days: 30
+          if-no-files-found: ignore
+
   # ===========================================
   # Linux Build
   # ===========================================
@@ -429,7 +452,6 @@ jobs:
         run: |
           mkdir -p Resources/models
           curl -L -o Resources/models/rmvpe.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx"
-          curl -L -o Resources/models/some.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx"
 
       - name: Configure CMake
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DENABLE_NOTE_STRETCH=OFF
@@ -526,7 +548,6 @@ jobs:
         run: |
           mkdir -p Resources/models
           curl -L -o Resources/models/rmvpe.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/rmvpe.onnx"
-          curl -L -o Resources/models/some.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx"
 
       - name: Configure CMake
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_GPU=ON -DENABLE_NOTE_STRETCH=OFF
@@ -650,6 +671,15 @@ jobs:
             mv HachiTune-macOS-App-NoModels/*.zip ./HachiTune-macOS-App-NoModels.zip || true
           fi
 
+          # macOS plugin ZIPs
+          if [ -d "HachiTune-macOS-VST3" ]; then
+            mv HachiTune-macOS-VST3/*.zip ./HachiTune-macOS-VST3.zip || true
+          fi
+
+          if [ -d "HachiTune-macOS-AU" ]; then
+            mv HachiTune-macOS-AU/*.zip ./HachiTune-macOS-AU.zip || true
+          fi
+
           # Linux tarballs are already ready
           if [ -d "HachiTune-Linux" ]; then
             mv HachiTune-Linux/*.tar.gz ./HachiTune-Linux.tar.gz || true
@@ -683,6 +713,8 @@ jobs:
             artifacts/HachiTune-macOS-NoModels.dmg
             artifacts/HachiTune-macOS-App.zip
             artifacts/HachiTune-macOS-App-NoModels.zip
+            artifacts/HachiTune-macOS-VST3.zip
+            artifacts/HachiTune-macOS-AU.zip
             artifacts/HachiTune-Linux.tar.gz
             artifacts/HachiTune-Linux-NoModels.tar.gz
             artifacts/HachiTune-Linux-GPU.tar.gz
