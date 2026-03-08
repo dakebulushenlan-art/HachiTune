@@ -25,7 +25,9 @@ class InteractionHandler;
 class LoopDragHandler;
 class SelectHandler;
 class DrawHandler;
+#if HACHITUNE_ENABLE_STRETCH
 class StretchHandler;
+#endif
 class SplitHandler;
 
 /**
@@ -33,12 +35,15 @@ class SplitHandler;
  */
 enum class EditMode
 {
-  Select,  // Normal selection and dragging
+  Select, // Normal selection and dragging
+#if HACHITUNE_ENABLE_STRETCH
   Stretch, // Stretch note timing
-  Draw,    // Pitch drawing mode
-  Split    // Note splitting mode
+#endif
+  Draw, // Pitch drawing mode
+  Split // Note splitting mode
 };
 
+#if HACHITUNE_ENABLE_STRETCH
 /**
  * Stretch sub-mode: determines behavior when stretching notes.
  */
@@ -47,6 +52,7 @@ enum class StretchMode
   Absorb, // Adjacent note absorbs the length change (zero-sum, total timeline unchanged)
   Ripple  // Subsequent notes shift to accommodate the length change (timeline grows/shrinks)
 };
+#endif
 
 /**
  * Piano roll component for displaying and editing notes.
@@ -60,7 +66,9 @@ class PianoRollComponent : public juce::Component,
   friend class LoopDragHandler;
   friend class SelectHandler;
   friend class DrawHandler;
+#if HACHITUNE_ENABLE_STRETCH
   friend class StretchHandler;
+#endif
   friend class SplitHandler;
 
 public:
@@ -137,6 +145,7 @@ public:
   void setEditMode(EditMode mode);
   EditMode getEditMode() const { return editMode; }
 
+#if HACHITUNE_ENABLE_STRETCH
   // Stretch sub-mode (Absorb vs Ripple)
   void setStretchMode(StretchMode mode)
   {
@@ -152,6 +161,7 @@ public:
       return stretchMode == StretchMode::Absorb ? StretchMode::Ripple : StretchMode::Absorb;
     return stretchMode;
   }
+#endif
 
   // Cancel current drawing operation (used when undo is triggered during
   // drawing)
@@ -199,7 +209,9 @@ public:
   std::function<void(float)> onZoomChanged;
   std::function<void(double)> onScrollChanged;
   std::function<void(const LoopRange &)> onLoopRangeChanged;
+#if HACHITUNE_ENABLE_STRETCH
   std::function<void(StretchMode)> onStretchModeChanged;
+#endif
   std::function<void(int, int)>
       onReinterpolateUV; // Called to re-infer UV regions (startFrame, endFrame)
 
@@ -223,7 +235,9 @@ private:
   void drawLoopOverlay(juce::Graphics &g);
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
+#if HACHITUNE_ENABLE_STRETCH
   void drawStretchGuides(juce::Graphics &g);
+#endif
   void updatePitchToolHandlesFromSelection();
 
   float midiToY(float midiNote) const;
@@ -273,7 +287,9 @@ private:
 
   // Edit mode
   EditMode editMode = EditMode::Select;
+#if HACHITUNE_ENABLE_STRETCH
   StretchMode stretchMode = StretchMode::Absorb;
+#endif
 
   // View settings
   bool showDeltaPitch = true;
@@ -301,7 +317,9 @@ private:
   std::unique_ptr<LoopDragHandler> loopDragHandler_;
   std::unique_ptr<SelectHandler> selectHandler_;
   std::unique_ptr<DrawHandler> drawHandler_;
+#if HACHITUNE_ENABLE_STRETCH
   std::unique_ptr<StretchHandler> stretchHandler_;
+#endif
   std::unique_ptr<SplitHandler> splitHandler_;
   InteractionHandler *currentHandler_ = nullptr;
 

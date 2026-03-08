@@ -1,5 +1,7 @@
 #pragma once
 
+#if HACHITUNE_ENABLE_STRETCH
+
 #include "InteractionHandler.h"
 #include "../../../Utils/CenteredMelSpectrogram.h"
 
@@ -128,3 +130,5 @@ private:
   static constexpr int minStretchNoteFrames = 3;
   std::unique_ptr<CenteredMelSpectrogram> centeredMelComputer;
 };
+
+#endif // HACHITUNE_ENABLE_STRETCH

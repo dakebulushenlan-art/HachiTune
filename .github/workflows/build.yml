@@ -2,9 +2,11 @@ name: Build HachiTune
 
 on:
   push:
-    branches: [main, master,refactor]
+    branches: [main, master, refactor]
+    tags:
+      - "v*"
   pull_request:
-    branches: [main, master,refactor]
+    branches: [main, master, refactor]
   workflow_dispatch:
 
 env:
@@ -34,7 +36,7 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx" -OutFile "Resources/models/some.onnx"
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_ASIO=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
@@ -43,10 +45,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package
-          
+
           # Copy standalone app
           Copy-Item -Path "build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/*" -Destination "package/" -Recurse -Force
-          
+
           # Move VST3 binary next to the exe (avoid the VST3 folder packaging)
           $vst3Binary = "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/HachiTune.vst3/Contents/x86_64-win/HachiTune.vst3"
           if (Test-Path $vst3Binary) {
@@ -122,7 +124,7 @@ jobs:
           Get-ChildItem "vendor/directml/bin/"
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_DIRECTML=ON -DUSE_BUNDLED_DIRECTML_RUNTIME=ON -DUSE_ASIO=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_DIRECTML=ON -DUSE_BUNDLED_DIRECTML_RUNTIME=ON -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
@@ -200,7 +202,7 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx" -OutFile "Resources/models/some.onnx"
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_CUDA=ON -DUSE_ASIO=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_CUDA=ON -DUSE_ASIO=ON -DENABLE_NOTE_STRETCH=OFF
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
@@ -209,10 +211,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package
-          
+
           # Copy standalone app
           Copy-Item -Path "build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/*" -Destination "package/" -Recurse -Force
-          
+
           # Move VST3 binary next to the exe (avoid the VST3 folder packaging)
           $vst3Binary = "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/HachiTune.vst3/Contents/x86_64-win/HachiTune.vst3"
           if (Test-Path $vst3Binary) {
@@ -274,7 +276,8 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-            -DCMAKE_OSX_ARCHITECTURES=arm64
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DENABLE_NOTE_STRETCH=OFF
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
@@ -282,15 +285,15 @@ jobs:
       - name: Prepare Package
         run: |
           mkdir -p package
-          
+
           # Copy standalone app
           cp -R "build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/HachiTune.app" package/
-          
+
           # Copy VST3 plugin
           if [ -d "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
             cp -R "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3/HachiTune.vst3" package/
           fi
-          
+
           # Copy AU plugin
           if [ -d "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/AU" ]; then
             cp -R "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/AU/HachiTune.component" package/
@@ -429,7 +432,7 @@ jobs:
           curl -L -o Resources/models/some.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx"
 
       - name: Configure CMake
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DENABLE_NOTE_STRETCH=OFF
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
@@ -437,15 +440,15 @@ jobs:
       - name: Prepare Package
         run: |
           mkdir -p package/HachiTune
-          
+
           # Copy standalone app
           cp -R build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/* package/HachiTune/
-          
+
           # Copy VST3 plugin
           if [ -d "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
             cp -R build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3 package/HachiTune/
           fi
-          
+
           # Create launch script
           cat > package/HachiTune/run.sh << 'EOF'
           #!/bin/bash
@@ -460,7 +463,7 @@ jobs:
           cp -R package package-nomodels
           find package-nomodels -type d -name models -exec sh -c 'rm -rf "$1"/*' _ {} \;
           mkdir -p package-nomodels/HachiTune/models
-          
+
           # Create tarball
           cd package
           tar -czvf ../HachiTune-Linux.tar.gz HachiTune
@@ -526,7 +529,7 @@ jobs:
           curl -L -o Resources/models/some.onnx "https://github.com/mdkrain/HachiTune/releases/download/Resources%2Fmodels/some.onnx"
 
       - name: Configure CMake
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_GPU=ON
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DUSE_GPU=ON -DENABLE_NOTE_STRETCH=OFF
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
@@ -534,15 +537,15 @@ jobs:
       - name: Prepare Package
         run: |
           mkdir -p package/HachiTune
-          
+
           # Copy standalone app
           cp -R build/HachiTune_artefacts/${{ env.BUILD_TYPE }}/* package/HachiTune/
-          
+
           # Copy VST3 plugin
           if [ -d "build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3" ]; then
             cp -R build/HachiTunePlugin_artefacts/${{ env.BUILD_TYPE }}/VST3 package/HachiTune/
           fi
-          
+
           # Create launch script
           cat > package/HachiTune/run.sh << 'EOF'
           #!/bin/bash
@@ -557,7 +560,7 @@ jobs:
           cp -R package package-nomodels
           find package-nomodels -type d -name models -exec sh -c 'rm -rf "$1"/*' _ {} \;
           mkdir -p package-nomodels/HachiTune/models
-          
+
           # Create tarball
           cd package
           tar -czvf ../HachiTune-Linux-GPU.tar.gz HachiTune
@@ -603,7 +606,7 @@ jobs:
       - name: Prepare Release Files
         run: |
           cd artifacts
-          
+
           # Windows packages
           if [ -d "HachiTune-Windows-CPU" ]; then
             cd HachiTune-Windows-CPU && zip -r ../HachiTune-Windows-CPU.zip . && cd ..
@@ -612,7 +615,7 @@ jobs:
           if [ -d "HachiTune-Windows-CPU-NoModels" ]; then
             cd HachiTune-Windows-CPU-NoModels && zip -r ../HachiTune-Windows-CPU-NoModels.zip . && cd ..
           fi
-          
+
           if [ -d "HachiTune-Windows-DirectML" ]; then
             cd HachiTune-Windows-DirectML && zip -r ../HachiTune-Windows-DirectML.zip . && cd ..
           fi
@@ -620,7 +623,7 @@ jobs:
           if [ -d "HachiTune-Windows-DirectML-NoModels" ]; then
             cd HachiTune-Windows-DirectML-NoModels && zip -r ../HachiTune-Windows-DirectML-NoModels.zip . && cd ..
           fi
-          
+
           if [ -d "HachiTune-Windows-CUDA" ]; then
             cd HachiTune-Windows-CUDA && zip -r ../HachiTune-Windows-CUDA.zip . && cd ..
           fi
@@ -628,7 +631,7 @@ jobs:
           if [ -d "HachiTune-Windows-CUDA-NoModels" ]; then
             cd HachiTune-Windows-CUDA-NoModels && zip -r ../HachiTune-Windows-CUDA-NoModels.zip . && cd ..
           fi
-          
+
           # macOS DMG is already ready
           if [ -d "HachiTune-macOS" ]; then
             mv HachiTune-macOS/*.dmg ./HachiTune-macOS.dmg || true
@@ -637,7 +640,7 @@ jobs:
           if [ -d "HachiTune-macOS-NoModels" ]; then
             mv HachiTune-macOS-NoModels/*.dmg ./HachiTune-macOS-NoModels.dmg || true
           fi
-          
+
           # macOS App ZIP is already ready
           if [ -d "HachiTune-macOS-App" ]; then
             mv HachiTune-macOS-App/*.zip ./HachiTune-macOS-App.zip || true
@@ -646,7 +649,7 @@ jobs:
           if [ -d "HachiTune-macOS-App-NoModels" ]; then
             mv HachiTune-macOS-App-NoModels/*.zip ./HachiTune-macOS-App-NoModels.zip || true
           fi
-          
+
           # Linux tarballs are already ready
           if [ -d "HachiTune-Linux" ]; then
             mv HachiTune-Linux/*.tar.gz ./HachiTune-Linux.tar.gz || true
@@ -655,7 +658,7 @@ jobs:
           if [ -d "HachiTune-Linux-NoModels" ]; then
             mv HachiTune-Linux-NoModels/*.tar.gz ./HachiTune-Linux-NoModels.tar.gz || true
           fi
-          
+
           if [ -d "HachiTune-Linux-GPU" ]; then
             mv HachiTune-Linux-GPU/*.tar.gz ./HachiTune-Linux-GPU.tar.gz || true
           fi
@@ -663,7 +666,7 @@ jobs:
           if [ -d "HachiTune-Linux-GPU-NoModels" ]; then
             mv HachiTune-Linux-GPU-NoModels/*.tar.gz ./HachiTune-Linux-GPU-NoModels.tar.gz || true
           fi
-          
+
           ls -la
 
       - name: Create Release
