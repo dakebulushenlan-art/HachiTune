@@ -22,6 +22,9 @@ HachiTune is a standalone app and audio plugin for editing vocal pitch in a pian
 - GPU acceleration via CUDA or DirectML on Windows; CoreML on macOS
 - Multi-language UI (English, Japanese, Chinese Simplified, Chinese Traditional)
 
+## Download
+To [Release](https://github.com/KCKT0112/HachiTune/releases)
+
 ## Requirements
 
 - CMake 3.22+
