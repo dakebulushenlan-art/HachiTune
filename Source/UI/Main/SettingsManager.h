@@ -9,7 +9,8 @@
 /**
  * Manages application settings and configuration persistence.
  */
-class SettingsManager {
+class SettingsManager
+{
 public:
   SettingsManager();
   ~SettingsManager() = default;
@@ -36,34 +37,38 @@ public:
   juce::File getLastFilePath() const { return lastFilePath; }
   void setRecentFiles(const juce::StringArray &files) { recentFiles = files; }
   const juce::StringArray &getRecentFiles() const { return recentFiles; }
-  void setWindowSize(int w, int h) {
+  void setWindowSize(int w, int h)
+  {
     windowWidth = w;
     windowHeight = h;
   }
   int getWindowWidth() const { return windowWidth; }
   int getWindowHeight() const { return windowHeight; }
   bool getFollowSystemAudioOutput() const { return followSystemAudioOutput; }
-  void setFollowSystemAudioOutput(bool follow) {
+  void setFollowSystemAudioOutput(bool follow)
+  {
     followSystemAudioOutput = follow;
   }
-  juce::String getPreferredAudioOutputDevice() const {
+  juce::String getPreferredAudioOutputDevice() const
+  {
     return preferredAudioOutputDevice;
   }
-  void setPreferredAudioOutputDevice(const juce::String &name) {
+  void setPreferredAudioOutputDevice(const juce::String &name)
+  {
     preferredAudioOutputDevice = name;
   }
 
   // View settings
   void setShowDeltaPitch(bool show) { showDeltaPitch = show; }
   void setShowBasePitch(bool show) { showBasePitch = show; }
-  void setShowSomeSegmentsDebug(bool show) { showSomeSegmentsDebug = show; }
-  void setShowSomeValuesDebug(bool show) { showSomeValuesDebug = show; }
+  void setShowSegmentsDebug(bool show) { showSegmentsDebug = show; }
+  void setShowGameValuesDebug(bool show) { showGameValuesDebug = show; }
   void setShowUvInterpolationDebug(bool show) { showUvInterpolationDebug = show; }
   void setShowActualF0Debug(bool show) { showActualF0Debug = show; }
   bool getShowDeltaPitch() const { return showDeltaPitch; }
   bool getShowBasePitch() const { return showBasePitch; }
-  bool getShowSomeSegmentsDebug() const { return showSomeSegmentsDebug; }
-  bool getShowSomeValuesDebug() const { return showSomeValuesDebug; }
+  bool getShowSegmentsDebug() const { return showSegmentsDebug; }
+  bool getShowGameValuesDebug() const { return showGameValuesDebug; }
   bool getShowUvInterpolationDebug() const { return showUvInterpolationDebug; }
   bool getShowActualF0Debug() const { return showActualF0Debug; }
 
@@ -90,8 +95,8 @@ private:
   int windowHeight = 800;
   bool showDeltaPitch = true;
   bool showBasePitch = false;
-  bool showSomeSegmentsDebug = false;
-  bool showSomeValuesDebug = false;
+  bool showSegmentsDebug = false;
+  bool showGameValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
   bool followSystemAudioOutput = true;

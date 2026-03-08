@@ -19,102 +19,105 @@
 
 namespace
 {
-juce::Colour getScaleAccentColour(ScaleMode mode)
-{
-  switch (mode) {
-  case ScaleMode::None:
-    return APP_COLOR_PRIMARY;
-  case ScaleMode::Major:
-    return juce::Colour(0xFF74A9FFu);
-  case ScaleMode::Minor:
-    return juce::Colour(0xFFB689FFu);
-  case ScaleMode::Dorian:
-    return juce::Colour(0xFF5BD0C0u);
-  case ScaleMode::Phrygian:
-    return juce::Colour(0xFFFF8C77u);
-  case ScaleMode::Lydian:
-    return juce::Colour(0xFFFFD166u);
-  case ScaleMode::Mixolydian:
-    return juce::Colour(0xFF75D0FFu);
-  case ScaleMode::Locrian:
-    return juce::Colour(0xFF9FA9BFu);
-  case ScaleMode::Chromatic:
+  juce::Colour getScaleAccentColour(ScaleMode mode)
+  {
+    switch (mode)
+    {
+    case ScaleMode::None:
+      return APP_COLOR_PRIMARY;
+    case ScaleMode::Major:
+      return juce::Colour(0xFF74A9FFu);
+    case ScaleMode::Minor:
+      return juce::Colour(0xFFB689FFu);
+    case ScaleMode::Dorian:
+      return juce::Colour(0xFF5BD0C0u);
+    case ScaleMode::Phrygian:
+      return juce::Colour(0xFFFF8C77u);
+    case ScaleMode::Lydian:
+      return juce::Colour(0xFFFFD166u);
+    case ScaleMode::Mixolydian:
+      return juce::Colour(0xFF75D0FFu);
+    case ScaleMode::Locrian:
+      return juce::Colour(0xFF9FA9BFu);
+    case ScaleMode::Chromatic:
+      return APP_COLOR_PRIMARY;
+    }
     return APP_COLOR_PRIMARY;
   }
-  return APP_COLOR_PRIMARY;
-}
 
-bool isBlackKey(int noteInOctave)
-{
-  return noteInOctave == 1 || noteInOctave == 3 || noteInOctave == 6 ||
-         noteInOctave == 8 || noteInOctave == 10;
-}
+  bool isBlackKey(int noteInOctave)
+  {
+    return noteInOctave == 1 || noteInOctave == 3 || noteInOctave == 6 ||
+           noteInOctave == 8 || noteInOctave == 10;
+  }
 
-enum class ScaleToneState
-{
-  Root,
-  InScale,
-  OutOfScale
-};
+  enum class ScaleToneState
+  {
+    Root,
+    InScale,
+    OutOfScale
+  };
 
-ScaleToneState getScaleToneState(ScaleMode mode, int noteInOctave, int rootNote)
-{
-  if (mode == ScaleMode::None || rootNote < 0)
-    return ScaleToneState::InScale;
+  ScaleToneState getScaleToneState(ScaleMode mode, int noteInOctave, int rootNote)
+  {
+    if (mode == ScaleMode::None || rootNote < 0)
+      return ScaleToneState::InScale;
 
-  const int normalizedNote = (noteInOctave % 12 + 12) % 12;
-  const int normalizedRoot = (rootNote % 12 + 12) % 12;
+    const int normalizedNote = (noteInOctave % 12 + 12) % 12;
+    const int normalizedRoot = (rootNote % 12 + 12) % 12;
 
-  if (mode == ScaleMode::Chromatic)
-    return ScaleToneState::InScale;
-  if (normalizedNote == normalizedRoot)
-    return ScaleToneState::Root;
-  if (ScaleUtils::isPitchClassInScale(mode, normalizedNote, normalizedRoot))
-    return ScaleToneState::InScale;
-  return ScaleToneState::OutOfScale;
-}
+    if (mode == ScaleMode::Chromatic)
+      return ScaleToneState::InScale;
+    if (normalizedNote == normalizedRoot)
+      return ScaleToneState::Root;
+    if (ScaleUtils::isPitchClassInScale(mode, normalizedNote, normalizedRoot))
+      return ScaleToneState::InScale;
+    return ScaleToneState::OutOfScale;
+  }
 
-int normalizeTimelineBeatDenominator(int denominator)
-{
-  denominator = juce::jlimit(1, 32, denominator);
-  int normalized = 1;
-  while (normalized < denominator)
-    normalized <<= 1;
-  const int lower = normalized >> 1;
-  if (lower >= 1 && (denominator - lower) < (normalized - denominator))
-    normalized = lower;
-  return juce::jlimit(1, 32, normalized);
-}
+  int normalizeTimelineBeatDenominator(int denominator)
+  {
+    denominator = juce::jlimit(1, 32, denominator);
+    int normalized = 1;
+    while (normalized < denominator)
+      normalized <<= 1;
+    const int lower = normalized >> 1;
+    if (lower >= 1 && (denominator - lower) < (normalized - denominator))
+      normalized = lower;
+    return juce::jlimit(1, 32, normalized);
+  }
 
-double gridDivisionToQuarterNotes(TimelineGridDivision division)
-{
-  switch (division) {
-  case TimelineGridDivision::Whole:
-    return 4.0;
-  case TimelineGridDivision::Half:
-    return 2.0;
-  case TimelineGridDivision::Quarter:
+  double gridDivisionToQuarterNotes(TimelineGridDivision division)
+  {
+    switch (division)
+    {
+    case TimelineGridDivision::Whole:
+      return 4.0;
+    case TimelineGridDivision::Half:
+      return 2.0;
+    case TimelineGridDivision::Quarter:
+      return 1.0;
+    case TimelineGridDivision::Eighth:
+      return 0.5;
+    case TimelineGridDivision::Sixteenth:
+      return 0.25;
+    case TimelineGridDivision::ThirtySecond:
+      return 0.125;
+    }
     return 1.0;
-  case TimelineGridDivision::Eighth:
-    return 0.5;
-  case TimelineGridDivision::Sixteenth:
-    return 0.25;
-  case TimelineGridDivision::ThirtySecond:
-    return 0.125;
   }
-  return 1.0;
+
+  bool isMultipleOf(double value, double step)
+  {
+    if (step <= 0.0)
+      return false;
+    const double ratio = value / step;
+    return std::abs(ratio - std::round(ratio)) < 1.0e-4;
+  }
 }
 
-bool isMultipleOf(double value, double step)
+PianoRollComponent::PianoRollComponent()
 {
-  if (step <= 0.0)
-    return false;
-  const double ratio = value / step;
-  return std::abs(ratio - std::round(ratio)) < 1.0e-4;
-}
-}
-
-PianoRollComponent::PianoRollComponent() {
   // Initialize modular components
   coordMapper = std::make_unique<CoordinateMapper>();
   renderer = std::make_unique<PianoRollRenderer>();
@@ -140,43 +143,52 @@ PianoRollComponent::PianoRollComponent() {
   noteSplitter->setCoordinateMapper(coordMapper.get());
 
   // Setup scrollZoomController callbacks
-  scrollZoomController->onRepaintNeeded = [this]() { repaint(); };
-  scrollZoomController->onZoomChanged = [this](float pps) {
+  scrollZoomController->onRepaintNeeded = [this]()
+  { repaint(); };
+  scrollZoomController->onZoomChanged = [this](float pps)
+  {
     if (onZoomChanged)
       onZoomChanged(pps);
   };
-  scrollZoomController->onScrollChanged = [this](double x) {
+  scrollZoomController->onScrollChanged = [this](double x)
+  {
     if (onScrollChanged)
       onScrollChanged(x);
   };
 
   // Setup pitchEditor callbacks
-  pitchEditor->onNoteSelected = [this](Note *note) {
+  pitchEditor->onNoteSelected = [this](Note *note)
+  {
     if (onNoteSelected)
       onNoteSelected(note);
   };
-  pitchEditor->onPitchEdited = [this]() {
+  pitchEditor->onPitchEdited = [this]()
+  {
     repaint();
     if (onPitchEdited)
       onPitchEdited();
   };
-  pitchEditor->onPitchEditFinished = [this]() {
+  pitchEditor->onPitchEditFinished = [this]()
+  {
     if (onPitchEditFinished)
       onPitchEditFinished();
   };
-  pitchEditor->onBasePitchCacheInvalidated = [this]() {
+  pitchEditor->onBasePitchCacheInvalidated = [this]()
+  {
     invalidateBasePitchCache();
   };
 
   // Setup pitchToolController callbacks
-  pitchToolController->onPitchEdited = [this]() {
+  pitchToolController->onPitchEdited = [this]()
+  {
     repaint();
     if (onPitchEdited)
       onPitchEdited();
   };
 
   // Setup noteSplitter callbacks
-  noteSplitter->onNoteSplit = [this]() {
+  noteSplitter->onNoteSplit = [this]()
+  {
     invalidateBasePitchCache();
     repaint();
   };
@@ -214,20 +226,24 @@ PianoRollComponent::PianoRollComponent() {
   // No extra controls here; overview lives outside the piano roll.
 }
 
-PianoRollComponent::~PianoRollComponent() {
+PianoRollComponent::~PianoRollComponent()
+{
   horizontalScrollBar.removeListener(this);
   verticalScrollBar.removeListener(this);
 }
 
-int PianoRollComponent::getVisibleContentWidth() const {
+int PianoRollComponent::getVisibleContentWidth() const
+{
   return std::max(0, getWidth() - pianoKeysWidth - 14);
 }
 
-int PianoRollComponent::getVisibleContentHeight() const {
+int PianoRollComponent::getVisibleContentHeight() const
+{
   return std::max(0, getHeight() - headerHeight - 14);
 }
 
-void PianoRollComponent::paint(juce::Graphics &g) {
+void PianoRollComponent::paint(juce::Graphics &g)
+{
   updatePitchToolHandlesFromSelection();
 
   // Apply rounded corner clipping
@@ -264,17 +280,18 @@ void PianoRollComponent::paint(juce::Graphics &g) {
                 headerHeight - static_cast<int>(scrollY));
 
     drawGrid(g);
-    drawSomeSegmentDebugOverlay(g);
+    drawGameChunksDebugOverlay(g);
     drawLoopOverlay(g);
     drawNotes(g, NoteRenderPass::Body);
     drawPitchCurves(g);
     drawNotes(g, NoteRenderPass::Overlay);
     drawStretchGuides(g);
-    drawSomeValuesDebugOverlay(g);
+    drawGameValuesDebugOverlay(g);
     drawSelectionRect(g);
-    
+
     // Draw pitch tool handles in world space (transform applied by g.setOrigin above)
-    if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty()) {
+    if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty())
+    {
       pitchToolHandles->draw(g);
     }
   }
@@ -292,7 +309,8 @@ void PianoRollComponent::paint(juce::Graphics &g) {
         static_cast<float>(getHeight() - scrollBarSize); // Exclude scrollbar
 
     // Only draw if cursor is in visible area
-    if (x >= pianoKeysWidth && x < getWidth() - scrollBarSize) {
+    if (x >= pianoKeysWidth && x < getWidth() - scrollBarSize)
+    {
       g.setColour(APP_COLOR_PRIMARY);
       g.fillRect(x - 0.5f, cursorTop, 1.0f, cursorBottom);
 
@@ -302,7 +320,7 @@ void PianoRollComponent::paint(juce::Graphics &g) {
       juce::Path triangle;
       triangle.addTriangle(x - triangleWidth * 0.5f, 0.0f, // Top-left
                            x + triangleWidth * 0.5f, 0.0f, // Top-right
-                           x, triangleHeight // Bottom-center (pointing down)
+                           x, triangleHeight               // Bottom-center (pointing down)
       );
       g.fillPath(triangle);
     }
@@ -312,7 +330,8 @@ void PianoRollComponent::paint(juce::Graphics &g) {
   drawPianoKeys(g);
 }
 
-void PianoRollComponent::resized() {
+void PianoRollComponent::resized()
+{
   auto bounds = getLocalBounds();
   constexpr int scrollBarSize = 8;
 
@@ -328,7 +347,8 @@ void PianoRollComponent::resized() {
 }
 
 void PianoRollComponent::drawBackgroundWaveform(
-    juce::Graphics &g, const juce::Rectangle<int> &visibleArea) {
+    juce::Graphics &g, const juce::Rectangle<int> &visibleArea)
+{
   if (!project)
     return;
 
@@ -343,7 +363,8 @@ void PianoRollComponent::drawBackgroundWaveform(
                     cachedWidth == visibleArea.getWidth() &&
                     cachedHeight == visibleArea.getHeight();
 
-  if (cacheValid) {
+  if (cacheValid)
+  {
     g.drawImageAt(waveformCache, visibleArea.getX(), visibleArea.getY());
     return;
   }
@@ -367,7 +388,8 @@ void PianoRollComponent::drawBackgroundWaveform(
   waveformPath.startNewSubPath(0.0f, centerY);
 
   // Draw only the visible portion
-  for (int px = 0; px < visibleWidth; ++px) {
+  for (int px = 0; px < visibleWidth; ++px)
+  {
     double time = (scrollX + px) / pixelsPerSecond;
     int startSample = static_cast<int>(time * SAMPLE_RATE);
     int endSample =
@@ -385,7 +407,8 @@ void PianoRollComponent::drawBackgroundWaveform(
   }
 
   // Bottom half (reverse)
-  for (int px = visibleWidth - 1; px >= 0; --px) {
+  for (int px = visibleWidth - 1; px >= 0; --px)
+  {
     double time = (scrollX + px) / pixelsPerSecond;
     int startSample = static_cast<int>(time * SAMPLE_RATE);
     int endSample =
@@ -417,7 +440,8 @@ void PianoRollComponent::drawBackgroundWaveform(
   g.drawImageAt(waveformCache, visibleArea.getX(), visibleArea.getY());
 }
 
-void PianoRollComponent::drawGrid(juce::Graphics &g) {
+void PianoRollComponent::drawGrid(juce::Graphics &g)
+{
   const float duration = project ? project->getAudioData().getDuration() : 60.0f;
   const float width =
       std::max(duration * pixelsPerSecond, static_cast<float>(getWidth()));
@@ -454,12 +478,14 @@ void PianoRollComponent::drawGrid(juce::Graphics &g) {
       activeScaleRootNote >= 0;
   const juce::Colour scaleAccent = getScaleAccentColour(activeScaleMode);
 
-  if (showScaleOverlay) {
+  if (showScaleOverlay)
+  {
     const auto rootRowColour = scaleAccent.withAlpha(0.24f);
     const auto inScaleRowColour = scaleAccent.withAlpha(0.08f);
     const auto outOfScaleRowColour = juce::Colours::black.withAlpha(0.20f);
 
-    for (int midi = startMidi; midi <= endMidi; ++midi) {
+    for (int midi = startMidi; midi <= endMidi; ++midi)
+    {
       const int noteInOctave = (midi % 12 + 12) % 12;
       const auto toneState =
           getScaleToneState(activeScaleMode, noteInOctave, activeScaleRootNote);
@@ -472,12 +498,15 @@ void PianoRollComponent::drawGrid(juce::Graphics &g) {
     }
   }
 
-  if (!showScaleOverlay) {
+  if (!showScaleOverlay)
+  {
     // Chromatic mode keeps the traditional piano black-key shading.
     g.setColour(APP_COLOR_SELECTION_OVERLAY);
-    for (int midi = startMidi; midi <= endMidi; ++midi) {
+    for (int midi = startMidi; midi <= endMidi; ++midi)
+    {
       const int noteInOctave = (midi % 12 + 12) % 12;
-      if (isBlackKey(noteInOctave)) {
+      if (isBlackKey(noteInOctave))
+      {
         const float y = midiToY(static_cast<float>(midi));
         g.fillRect(visibleStartX, y, visibleEndX - visibleStartX, pixelsPerSemitone);
       }
@@ -485,36 +514,47 @@ void PianoRollComponent::drawGrid(juce::Graphics &g) {
   }
 
   // Horizontal pitch lines.
-  for (int midi = startMidi; midi <= endMidi; ++midi) {
+  for (int midi = startMidi; midi <= endMidi; ++midi)
+  {
     const float y = midiToY(static_cast<float>(midi));
     const int noteInOctave = (midi % 12 + 12) % 12;
 
-    if (!showScaleOverlay) {
+    if (!showScaleOverlay)
+    {
       g.setColour(noteInOctave == 0 ? APP_COLOR_GRID_BAR : APP_COLOR_GRID);
-    } else if (getScaleToneState(activeScaleMode, noteInOctave,
-                                 activeScaleRootNote) == ScaleToneState::Root) {
+    }
+    else if (getScaleToneState(activeScaleMode, noteInOctave,
+                               activeScaleRootNote) == ScaleToneState::Root)
+    {
       g.setColour(scaleAccent.withAlpha(0.70f));
-    } else if (getScaleToneState(activeScaleMode, noteInOctave,
-                                 activeScaleRootNote) == ScaleToneState::InScale) {
+    }
+    else if (getScaleToneState(activeScaleMode, noteInOctave,
+                               activeScaleRootNote) == ScaleToneState::InScale)
+    {
       g.setColour(APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.40f));
-    } else {
+    }
+    else
+    {
       g.setColour(APP_COLOR_GRID.darker(0.25f));
     }
 
     g.drawHorizontalLine(static_cast<int>(y), visibleStartX, visibleEndX);
   }
 
-  if (timelineDisplayMode == TimelineDisplayMode::Beats) {
+  if (timelineDisplayMode == TimelineDisplayMode::Beats)
+  {
     const double gridSeconds = getTimelineGridSeconds();
     const double beatSeconds = getTimelineBeatSeconds();
     const double barSeconds = getTimelineBarSeconds();
-    if (gridSeconds > 1.0e-6 && beatSeconds > 1.0e-6 && barSeconds > 1.0e-6) {
+    if (gridSeconds > 1.0e-6 && beatSeconds > 1.0e-6 && barSeconds > 1.0e-6)
+    {
       const double visibleStartTime = visibleStartX / pixelsPerSecond;
       const double visibleEndTime = visibleEndX / pixelsPerSecond;
       const int firstGrid = std::max(
           0, static_cast<int>(std::floor(visibleStartTime / gridSeconds)) - 1);
 
-      for (int i = firstGrid;; ++i) {
+      for (int i = firstGrid;; ++i)
+      {
         const double time = static_cast<double>(i) * gridSeconds;
         if (time > visibleEndTime + gridSeconds)
           break;
@@ -523,27 +563,35 @@ void PianoRollComponent::drawGrid(juce::Graphics &g) {
         if (x < visibleStartX - 1.0f || x > visibleEndX + 1.0f)
           continue;
 
-        if (isMultipleOf(time, barSeconds)) {
+        if (isMultipleOf(time, barSeconds))
+        {
           g.setColour(APP_COLOR_GRID_BAR);
-        } else if (isMultipleOf(time, beatSeconds)) {
+        }
+        else if (isMultipleOf(time, beatSeconds))
+        {
           g.setColour(showScaleOverlay
                           ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
                           : APP_COLOR_GRID);
-        } else {
+        }
+        else
+        {
           g.setColour(APP_COLOR_GRID.darker(0.2f));
         }
         g.drawVerticalLine(static_cast<int>(x), visibleTopY, visibleBottomY);
       }
     }
-  } else {
+  }
+  else
+  {
     // Time mode keeps simple second-based spacing.
-    const float secondsPerLine = pixelsPerSecond >= 180.0f ? 0.25f
-                               : pixelsPerSecond >= 90.0f  ? 0.5f
-                               : pixelsPerSecond >= 45.0f  ? 1.0f
-                               : pixelsPerSecond >= 22.0f  ? 2.0f
+    const float secondsPerLine = pixelsPerSecond >= 180.0f  ? 0.25f
+                                 : pixelsPerSecond >= 90.0f ? 0.5f
+                                 : pixelsPerSecond >= 45.0f ? 1.0f
+                                 : pixelsPerSecond >= 22.0f ? 2.0f
                                                             : 5.0f;
     const float pixelsPerLine = secondsPerLine * pixelsPerSecond;
-    if (pixelsPerLine > 1.0e-4f) {
+    if (pixelsPerLine > 1.0e-4f)
+    {
       g.setColour(showScaleOverlay
                       ? APP_COLOR_GRID.interpolatedWith(scaleAccent, 0.20f)
                       : APP_COLOR_GRID);
@@ -555,18 +603,22 @@ void PianoRollComponent::drawGrid(juce::Graphics &g) {
   }
 }
 
-void PianoRollComponent::drawLoopOverlay(juce::Graphics &g) {
+void PianoRollComponent::drawLoopOverlay(juce::Graphics &g)
+{
   if (!project)
     return;
 
   double loopStartSeconds = 0.0;
   double loopEndSeconds = 0.0;
   bool loopEnabled = false;
-  if (loopDragHandler_ && loopDragHandler_->isDragging()) {
+  if (loopDragHandler_ && loopDragHandler_->isDragging())
+  {
     loopStartSeconds = loopDragHandler_->getDragStartSeconds();
     loopEndSeconds = loopDragHandler_->getDragEndSeconds();
     loopEnabled = true;
-  } else {
+  }
+  else
+  {
     const auto &loopRange = project->getLoopRange();
     loopStartSeconds = loopRange.startSeconds;
     loopEndSeconds = loopRange.endSeconds;
@@ -592,19 +644,21 @@ void PianoRollComponent::drawLoopOverlay(juce::Graphics &g) {
   g.fillRect(startX, 0.0f, endX - startX, height);
 }
 
-void PianoRollComponent::drawSomeSegmentDebugOverlay(juce::Graphics &g) {
-  if (!showSomeSegmentsDebug || !project)
+void PianoRollComponent::drawGameChunksDebugOverlay(juce::Graphics &g)
+{
+  if (!showSegmentsDebug || !project)
     return;
 
   const auto &audioData = project->getAudioData();
-  if (audioData.someChunkRanges.empty())
+  if (audioData.segmentChunkRanges.empty())
     return;
 
   const float height =
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
   g.setColour(juce::Colours::orange.withAlpha(0.10f));
-  for (const auto &range : audioData.someChunkRanges) {
+  for (const auto &range : audioData.segmentChunkRanges)
+  {
     int startFrame = std::max(0, range.first);
     int endFrame = std::max(startFrame, range.second);
     if (endFrame <= startFrame)
@@ -616,7 +670,8 @@ void PianoRollComponent::drawSomeSegmentDebugOverlay(juce::Graphics &g) {
   }
 
   g.setColour(juce::Colours::orange.withAlpha(0.75f));
-  for (const auto &range : audioData.someChunkRanges) {
+  for (const auto &range : audioData.segmentChunkRanges)
+  {
     int startFrame = std::max(0, range.first);
     int endFrame = std::max(startFrame, range.second);
     if (endFrame <= startFrame)
@@ -627,12 +682,13 @@ void PianoRollComponent::drawSomeSegmentDebugOverlay(juce::Graphics &g) {
   }
 }
 
-void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
-  if (!showSomeValuesDebug || !project)
+void PianoRollComponent::drawGameValuesDebugOverlay(juce::Graphics &g)
+{
+  if (!showGameValuesDebug || !project)
     return;
 
   const auto &audioData = project->getAudioData();
-  if (audioData.someDebugChunks.empty())
+  if (audioData.segmentDebugChunks.empty())
     return;
 
   const int totalFrames = static_cast<int>(audioData.f0.size());
@@ -644,8 +700,8 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
                           HOP_SIZE));
   const int visibleEndFrame = std::min(
       totalFrames, static_cast<int>((scrollX + getVisibleContentWidth()) /
-                                        pixelsPerSecond * audioData.sampleRate /
-                                        HOP_SIZE) +
+                                    pixelsPerSecond * audioData.sampleRate /
+                                    HOP_SIZE) +
                        1);
   if (visibleEndFrame <= visibleStartFrame)
     return;
@@ -656,7 +712,8 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
   const int maxChunks = 60;
   int chunksDrawn = 0;
 
-  for (const auto &chunk : audioData.someDebugChunks) {
+  for (const auto &chunk : audioData.segmentDebugChunks)
+  {
     const int startFrame = std::max(0, chunk.startFrame);
     const int endFrame = std::max(startFrame, chunk.endFrame);
     if (endFrame <= startFrame)
@@ -682,8 +739,9 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
     g.setColour(juce::Colours::orange.withAlpha(0.78f));
     g.drawVerticalLine(static_cast<int>(x1), 0.0f, contentHeight);
 
-    // Raw SOME event markers/labels inside this chunk.
-    for (size_t i = 0; i < chunk.events.size(); ++i) {
+    // Raw GAME event markers/labels inside this chunk.
+    for (size_t i = 0; i < chunk.events.size(); ++i)
+    {
       const auto &ev = chunk.events[i];
       if (ev.endFrame <= startFrame || ev.startFrame >= endFrame)
         continue;
@@ -697,21 +755,27 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
       const float ex2 = framesToSeconds(overlapEnd) * pixelsPerSecond;
       const float ew = std::max(1.0f, ex2 - ex1);
 
-      if (ev.isRest) {
+      if (ev.isRest)
+      {
         ++restCount;
         // Red: rest segments placed on nearby note lane (not at top).
         float anchorMidi = 60.0f;
         bool foundAnchor = false;
-        for (int k = static_cast<int>(i) - 1; k >= 0; --k) {
-          if (!chunk.events[static_cast<size_t>(k)].isRest) {
+        for (int k = static_cast<int>(i) - 1; k >= 0; --k)
+        {
+          if (!chunk.events[static_cast<size_t>(k)].isRest)
+          {
             anchorMidi = chunk.events[static_cast<size_t>(k)].midiNote;
             foundAnchor = true;
             break;
           }
         }
-        if (!foundAnchor) {
-          for (size_t k = i + 1; k < chunk.events.size(); ++k) {
-            if (!chunk.events[k].isRest) {
+        if (!foundAnchor)
+        {
+          for (size_t k = i + 1; k < chunk.events.size(); ++k)
+          {
+            if (!chunk.events[k].isRest)
+            {
               anchorMidi = chunk.events[k].midiNote;
               foundAnchor = true;
               break;
@@ -731,7 +795,8 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
         g.drawVerticalLine(static_cast<int>(ex1), restBandTop,
                            restBandTop + restBandHeight);
 
-        if (ew > 40.0f) {
+        if (ew > 40.0f)
+        {
           juce::String restTag = "rest";
           if (i == 0)
             restTag = "pre-rest";
@@ -744,7 +809,9 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
                            static_cast<int>(ew) - 3,
                            static_cast<int>(restBandHeight),
                            juce::Justification::centredLeft, 1, 0.85f);
-        } else if (ew > 12.0f) {
+        }
+        else if (ew > 12.0f)
+        {
           g.setColour(juce::Colours::white.withAlpha(0.95f));
           g.drawFittedText("R", static_cast<int>(ex1) + 1,
                            static_cast<int>(restBandTop),
@@ -767,7 +834,8 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
       g.setColour(juce::Colours::black.withAlpha(0.84f));
       g.fillRoundedRectangle(ex1, ny, ew, h, 2.0f);
 
-      if (ew > 60.0f && eventLabelsInChunk < 80) {
+      if (ew > 60.0f && eventLabelsInChunk < 80)
+      {
         const juce::String noteLabel =
             "ev#" + juce::String(static_cast<int>(i)) + " m:" +
             juce::String(ev.midiNote, 2) + " f:" + juce::String(overlapStart) +
@@ -781,13 +849,17 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
                          static_cast<int>(std::min(320.0f, ew)), 13,
                          juce::Justification::centredLeft, 1, 0.70f);
         ++eventLabelsInChunk;
-      } else if (ew > 22.0f) {
+      }
+      else if (ew > 22.0f)
+      {
         g.setColour(juce::Colours::white.withAlpha(0.95f));
         g.drawFittedText("m:" + juce::String(ev.midiNote, 1),
                          static_cast<int>(ex1) + 2, static_cast<int>(ny),
                          static_cast<int>(ew) - 3, static_cast<int>(h),
                          juce::Justification::centredLeft, 1, 0.9f);
-      } else if (ew > 8.0f) {
+      }
+      else if (ew > 8.0f)
+      {
         g.setColour(juce::Colours::white.withAlpha(0.95f));
         g.drawVerticalLine(static_cast<int>(ex1 + 0.5f), ny, ny + h);
       }
@@ -820,7 +892,8 @@ void PianoRollComponent::drawSomeValuesDebugOverlay(juce::Graphics &g) {
   }
 }
 
-void PianoRollComponent::drawTimeline(juce::Graphics &g) {
+void PianoRollComponent::drawTimeline(juce::Graphics &g)
+{
   constexpr int scrollBarSize = 8;
   auto timelineArea = juce::Rectangle<int>(
       pianoKeysWidth, 0, getWidth() - pianoKeysWidth - scrollBarSize,
@@ -838,10 +911,12 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
   const float duration = project ? project->getAudioData().getDuration() : 60.0f;
   g.setFont(TimecodeFont::getBoldFont(12.0f));
 
-  if (timelineDisplayMode == TimelineDisplayMode::Beats) {
+  if (timelineDisplayMode == TimelineDisplayMode::Beats)
+  {
     const double beatSeconds = getTimelineBeatSeconds();
     const double barSeconds = getTimelineBarSeconds();
-    if (beatSeconds > 1.0e-6 && barSeconds > 1.0e-6) {
+    if (beatSeconds > 1.0e-6 && barSeconds > 1.0e-6)
+    {
       const int beatsPerBar = juce::jmax(1, timelineBeatNumerator);
       const float pixelsPerBeat = static_cast<float>(beatSeconds * pixelsPerSecond);
       int beatStep = 1;
@@ -851,9 +926,11 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
       const int firstBeat = std::max(
           0, static_cast<int>(std::floor((scrollX / pixelsPerSecond) / beatSeconds)));
       const int lastBeat = static_cast<int>(
-          std::ceil((scrollX + timelineArea.getWidth()) / pixelsPerSecond / beatSeconds)) + beatStep;
+                               std::ceil((scrollX + timelineArea.getWidth()) / pixelsPerSecond / beatSeconds)) +
+                           beatStep;
 
-      for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep) {
+      for (int beatIndex = firstBeat; beatIndex <= lastBeat; beatIndex += beatStep)
+      {
         const double time = static_cast<double>(beatIndex) * beatSeconds;
         if (time > duration + beatSeconds)
           break;
@@ -870,12 +947,15 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
                            static_cast<float>(timelineHeight - tickHeight),
                            static_cast<float>(timelineHeight - 1));
 
-        if (isBarLine) {
+        if (isBarLine)
+        {
           const int bar = beatIndex / beatsPerBar + 1;
           g.setColour(APP_COLOR_TEXT_MUTED);
           g.drawText("Bar " + juce::String(bar), static_cast<int>(x) + 3, 2, 64,
                      timelineHeight - 4, juce::Justification::centredLeft, false);
-        } else if (beatStep == 1 && pixelsPerBeat >= 58.0f) {
+        }
+        else if (beatStep == 1 && pixelsPerBeat >= 58.0f)
+        {
           const int beatInBar = (beatIndex % beatsPerBar) + 1;
           const int bar = beatIndex / beatsPerBar + 1;
           g.setColour(APP_COLOR_TEXT_MUTED.withAlpha(0.8f));
@@ -901,7 +981,8 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
   else
     secondsPerTick = 10.0f;
 
-  for (float time = 0.0f; time <= duration + secondsPerTick; time += secondsPerTick) {
+  for (float time = 0.0f; time <= duration + secondsPerTick; time += secondsPerTick)
+  {
     float x =
         pianoKeysWidth + time * pixelsPerSecond - static_cast<float>(scrollX);
 
@@ -916,7 +997,8 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
                        static_cast<float>(timelineHeight - tickHeight),
                        static_cast<float>(timelineHeight - 1));
 
-    if (isMajor) {
+    if (isMajor)
+    {
       int minutes = static_cast<int>(time) / 60;
       int seconds = static_cast<int>(time) % 60;
       int tenths = static_cast<int>((time - std::floor(time)) * 10);
@@ -936,7 +1018,8 @@ void PianoRollComponent::drawTimeline(juce::Graphics &g) {
   }
 }
 
-void PianoRollComponent::drawLoopTimeline(juce::Graphics &g) {
+void PianoRollComponent::drawLoopTimeline(juce::Graphics &g)
+{
   constexpr int scrollBarSize = 8;
   auto loopArea = juce::Rectangle<int>(
       pianoKeysWidth, timelineHeight,
@@ -956,11 +1039,14 @@ void PianoRollComponent::drawLoopTimeline(juce::Graphics &g) {
   double loopStartSeconds = 0.0;
   double loopEndSeconds = 0.0;
   bool loopEnabled = false;
-  if (loopDragHandler_ && loopDragHandler_->isDragging()) {
+  if (loopDragHandler_ && loopDragHandler_->isDragging())
+  {
     loopStartSeconds = loopDragHandler_->getDragStartSeconds();
     loopEndSeconds = loopDragHandler_->getDragEndSeconds();
     loopEnabled = true;
-  } else {
+  }
+  else
+  {
     const auto &loopRange = project->getLoopRange();
     loopStartSeconds = loopRange.startSeconds;
     loopEndSeconds = loopRange.endSeconds;
@@ -1016,7 +1102,8 @@ void PianoRollComponent::drawLoopTimeline(juce::Graphics &g) {
   g.fillPath(endFlag);
 }
 
-void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
+void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass)
+{
   if (!project)
     return;
 
@@ -1033,7 +1120,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
   const std::vector<Note *> *draggedNotes =
       isMultiDragging ? &pitchEditor->getDraggedNotes() : nullptr;
 
-  auto drawSelectedNoteOutline = [&g](float x, float y, float w, float h) {
+  auto drawSelectedNoteOutline = [&g](float x, float y, float w, float h)
+  {
     constexpr float localOutlinePadding = 2.0f;
     constexpr float outlineThickness = 1.5f;
     constexpr float outlineCornerRadius = 3.5f;
@@ -1045,7 +1133,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
         outlineCornerRadius, outlineThickness);
   };
   auto getDeltaScaleHandleBounds = [](float x, float y, float w,
-                                      float h) -> juce::Rectangle<float> {
+                                      float h) -> juce::Rectangle<float>
+  {
     constexpr float localOutlinePadding = 2.0f;
     constexpr float localHandleWidth = 18.0f;
     constexpr float localHandleHeight = 10.0f;
@@ -1060,7 +1149,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
     return {handleX, handleY, localHandleWidth, localHandleHeight};
   };
   auto getDeltaOffsetHandleBounds = [](float x, float y, float w,
-                                       float h) -> juce::Rectangle<float> {
+                                       float h) -> juce::Rectangle<float>
+  {
     constexpr float localOutlinePadding = 2.0f;
     constexpr float localHandleWidth = 18.0f;
     constexpr float localHandleHeight = 10.0f;
@@ -1086,7 +1176,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
   double visibleStartTime = scrollX / pixelsPerSecond;
   double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
 
-  for (auto &note : project->getNotes()) {
+  for (auto &note : project->getNotes())
+  {
     // Skip rest notes (they have no pitch)
     if (note.isRest())
       continue;
@@ -1109,7 +1200,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
     float pitchOffsetPixels = -note.getPitchOffset() * pixelsPerSemitone;
     float y = baseGridCenterY + pitchOffsetPixels - h * 0.5f;
 
-    if (drawBodies) {
+    if (drawBodies)
+    {
       // Note color based on pitch
       juce::Colour noteColor = note.isSelected()
                                    ? APP_COLOR_NOTE_SELECTED
@@ -1120,12 +1212,15 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
       int startSample = 0;
       int endSample = 0;
       const auto &clipWaveform = note.getClipWaveform();
-      if (!clipWaveform.empty()) {
+      if (!clipWaveform.empty())
+      {
         samples = clipWaveform.data();
         totalSamples = static_cast<int>(clipWaveform.size());
         startSample = 0;
         endSample = totalSamples;
-      } else if (samples && totalSamples > 0) {
+      }
+      else if (samples && totalSamples > 0)
+      {
         startSample = static_cast<int>(framesToSeconds(note.getStartFrame()) *
                                        audioData.sampleRate);
         endSample = static_cast<int>(framesToSeconds(note.getEndFrame()) *
@@ -1134,7 +1229,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
         endSample = std::max(startSample + 1, std::min(endSample, totalSamples));
       }
 
-      if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample) {
+      if (samples && totalSamples > 0 && w > 2.0f && endSample > startSample)
+      {
         // Draw waveform slice inside note
         int numNoteSamples = endSample - startSample;
         int samplesPerPixel = std::max(1, static_cast<int>(numNoteSamples / w));
@@ -1147,7 +1243,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
         // Increase point density for smoother curves (up to 800 points)
         float step = std::max(0.5f, w / 1024.0f);
 
-        for (float px = 0; px <= w; px += step) {
+        for (float px = 0; px <= w; px += step)
+        {
           int sampleIdx =
               startSample + static_cast<int>((px / w) * numNoteSamples);
           int sampleEnd = std::min(sampleIdx + samplesPerPixel, endSample);
@@ -1160,10 +1257,12 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
         }
 
         // Apply smoothing filter to reduce aliasing artifacts
-        if (waveValues.size() > 2) {
+        if (waveValues.size() > 2)
+        {
           smoothed.resize(waveValues.size());
           smoothed[0] = waveValues[0];
-          for (size_t i = 1; i + 1 < waveValues.size(); ++i) {
+          for (size_t i = 1; i + 1 < waveValues.size(); ++i)
+          {
             // Simple 3-point moving average for gentle smoothing
             smoothed[i] = (waveValues[i - 1] * 0.25f + waveValues[i] * 0.5f +
                            waveValues[i + 1] * 0.25f);
@@ -1173,14 +1272,18 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
         }
 
         size_t numPoints = waveValues.size();
-        if (numPoints < 2) {
+        if (numPoints < 2)
+        {
           // Fallback for very short notes
           g.setColour(noteColor.withAlpha(0.85f));
           g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
-        } else {
+        }
+        else
+        {
           // Helper function for Catmull-Rom spline interpolation
           auto catmullRom = [](float t, float p0, float p1, float p2,
-                               float p3) -> float {
+                               float p3) -> float
+          {
             // Catmull-Rom spline: smooth interpolation between p1 and p2
             float t2 = t * t;
             float t3 = t2 * t;
@@ -1200,7 +1303,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
           // Use cubic curves for smooth interpolation
           const int curveSegments =
               4; // Interpolate 4 points between each pair
-          for (size_t i = 0; i + 1 < numPoints; ++i) {
+          for (size_t i = 0; i + 1 < numPoints; ++i)
+          {
             float px1 = (static_cast<float>(i) /
                          static_cast<float>(numPoints - 1)) *
                         w;
@@ -1220,7 +1324,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
             float val3 = waveValues[idx3];
 
             // Draw smooth curve segment
-            for (int seg = 1; seg <= curveSegments; ++seg) {
+            for (int seg = 1; seg <= curveSegments; ++seg)
+            {
               float t =
                   static_cast<float>(seg) / static_cast<float>(curveSegments);
               float px = px1 + (px2 - px1) * t;
@@ -1234,7 +1339,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
           waveformPath.lineTo(x + w, centerY + waveValues[numPoints - 1] *
                                                    waveHeight * 0.5f);
 
-          for (int i = static_cast<int>(numPoints) - 2; i >= 0; --i) {
+          for (int i = static_cast<int>(numPoints) - 2; i >= 0; --i)
+          {
             float px1 = (static_cast<float>(i + 1) /
                          static_cast<float>(numPoints - 1)) *
                         w;
@@ -1252,7 +1358,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
             float val2 = waveValues[idx2];
             float val3 = waveValues[idx3];
 
-            for (int seg = 1; seg <= curveSegments; ++seg) {
+            for (int seg = 1; seg <= curveSegments; ++seg)
+            {
               float t =
                   static_cast<float>(seg) / static_cast<float>(curveSegments);
               float px = px1 + (px2 - px1) * t;
@@ -1272,14 +1379,17 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
                                             juce::PathStrokeType::curved,
                                             juce::PathStrokeType::rounded));
         }
-      } else {
+      }
+      else
+      {
         // Fallback: simple rectangle for very short notes
         g.setColour(noteColor.withAlpha(0.85f));
         g.fillRoundedRectangle(x, y, renderedWidth, h, 2.0f);
       }
     }
 
-    if (drawOverlays && note.isSelected()) {
+    if (drawOverlays && note.isSelected())
+    {
       drawSelectedNoteOutline(x, y, renderedWidth, h);
 
       const auto handleBounds =
@@ -1307,7 +1417,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
                             cx + 2.5f, bottom - 3.5f);
       g.fillPath(downArrow);
 
-      if (selectHandler_->getIsDeltaScaleDragging() && selectHandler_->getDeltaScaleFactor() > 0.0f) {
+      if (selectHandler_->getIsDeltaScaleDragging() && selectHandler_->getDeltaScaleFactor() > 0.0f)
+      {
         const juce::String factorText = "x" + juce::String(selectHandler_->getDeltaScaleFactor(), 2);
         const float infoW = 44.0f;
         const float infoH = 14.0f;
@@ -1342,7 +1453,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
                        static_cast<int>(offsetHandleBounds.getHeight()),
                        juce::Justification::centred, 1);
 
-      if (selectHandler_->getIsDeltaOffsetDragging()) {
+      if (selectHandler_->getIsDeltaOffsetDragging())
+      {
         const juce::String prefix = selectHandler_->getDeltaOffsetSemitones() >= 0.0f ? "+" : "";
         const juce::String offsetText =
             prefix + juce::String(selectHandler_->getDeltaOffsetSemitones(), 2) + " st";
@@ -1366,9 +1478,11 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
         isMultiDragging && draggedNotes &&
         std::find(draggedNotes->begin(), draggedNotes->end(), &note) !=
             draggedNotes->end();
-    if (drawOverlays && (isSingleDragged || isMultiDragged)) {
+    if (drawOverlays && (isSingleDragged || isMultiDragged))
+    {
       const float deltaSemitones = note.getPitchOffset();
-      if (std::abs(deltaSemitones) >= 0.01f) {
+      if (std::abs(deltaSemitones) >= 0.01f)
+      {
         const juce::String prefix = deltaSemitones >= 0.0f ? "+" : "";
         const juce::String label =
             prefix + juce::String(deltaSemitones, 1) + " st";
@@ -1397,7 +1511,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
   // Draw split guide line when in split mode and hovering over a note
   if (drawOverlays && editMode == EditMode::Split && splitHandler_ &&
       splitHandler_->getSplitGuideNote() &&
-      splitHandler_->getSplitGuideX() >= 0) {
+      splitHandler_->getSplitGuideX() >= 0)
+  {
     auto *guideNote = splitHandler_->getSplitGuideNote();
     float guideX = splitHandler_->getSplitGuideX();
     float noteStartTime = framesToSeconds(guideNote->getStartFrame());
@@ -1406,14 +1521,16 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
     float noteEndX = static_cast<float>(noteEndTime * pixelsPerSecond);
 
     // Only draw if guide is within note bounds (with margin)
-    if (guideX > noteStartX + 5 && guideX < noteEndX - 5) {
+    if (guideX > noteStartX + 5 && guideX < noteEndX - 5)
+    {
       float noteY = midiToY(guideNote->getAdjustedMidiNote());
       float noteH = pixelsPerSemitone;
 
       // Draw dashed vertical line
       g.setColour(APP_COLOR_SECONDARY);
       float dashLength = 4.0f;
-      for (float dy = 0; dy < noteH; dy += dashLength * 2) {
+      for (float dy = 0; dy < noteH; dy += dashLength * 2)
+      {
         float segmentLength = std::min(dashLength, noteH - dy);
         g.drawLine(guideX, noteY + dy, guideX,
                    noteY + dy + segmentLength, 2.0f);
@@ -1422,7 +1539,8 @@ void PianoRollComponent::drawNotes(juce::Graphics &g, NoteRenderPass pass) {
   }
 }
 
-void PianoRollComponent::drawStretchGuides(juce::Graphics &g) {
+void PianoRollComponent::drawStretchGuides(juce::Graphics &g)
+{
   if (!project || editMode != EditMode::Stretch || !stretchHandler_)
     return;
 
@@ -1435,7 +1553,8 @@ void PianoRollComponent::drawStretchGuides(juce::Graphics &g) {
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
   const int hoveredIdx = stretchHandler_->getHoveredBoundaryIndex();
 
-  for (size_t i = 0; i < boundaries.size(); ++i) {
+  for (size_t i = 0; i < boundaries.size(); ++i)
+  {
     int frame = boundaries[i].frame;
     const bool isActive =
         dragState.active && boundaries[i].left == dragState.boundary.left &&
@@ -1454,7 +1573,8 @@ void PianoRollComponent::drawStretchGuides(juce::Graphics &g) {
   }
 }
 
-void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
+void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
+{
   if (!project)
     return;
 
@@ -1466,9 +1586,11 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
   float globalOffset = project->getGlobalPitchOffset();
 
   // Draw pitch curves per note with their pitch offsets applied (delta pitch)
-  if (showDeltaPitch) {
+  if (showDeltaPitch)
+  {
     g.setColour(APP_COLOR_PITCH_CURVE);
-    if (showUvInterpolationDebug) {
+    if (showUvInterpolationDebug)
+    {
       const double visibleStartTime = scrollX / pixelsPerSecond;
       const double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
       const int visStartFrame = std::max(
@@ -1478,14 +1600,16 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
           static_cast<int>(audioData.f0.size()),
           static_cast<int>(visibleEndTime * audioData.sampleRate / HOP_SIZE) + 1);
 
-      const auto &chunkRanges = audioData.someChunkRanges;
+      const auto &chunkRanges = audioData.segmentChunkRanges;
       size_t chunkIdx = 0;
 
       juce::Path path;
       bool pathStarted = false;
-      for (int i = visStartFrame; i < visEndFrame; ++i) {
+      for (int i = visStartFrame; i < visEndFrame; ++i)
+      {
         bool inChunk = true;
-        if (!chunkRanges.empty()) {
+        if (!chunkRanges.empty())
+        {
           while (chunkIdx < chunkRanges.size() &&
                  chunkRanges[chunkIdx].second <= i)
             ++chunkIdx;
@@ -1493,7 +1617,8 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
                     chunkRanges[chunkIdx].first <= i &&
                     chunkRanges[chunkIdx].second > i;
         }
-        if (!inChunk) {
+        if (!inChunk)
+        {
           pathStarted = false;
           continue;
         }
@@ -1510,27 +1635,34 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
                               : 0.0f;
         float finalMidi = baseMidi + deltaMidi + globalOffset;
 
-        if (finalMidi <= 0.0f) {
+        if (finalMidi <= 0.0f)
+        {
           pathStarted = false;
           continue;
         }
 
         float x = framesToSeconds(i) * pixelsPerSecond;
         float y = midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
-        if (!pathStarted) {
+        if (!pathStarted)
+        {
           path.startNewSubPath(x, y);
           pathStarted = true;
-        } else {
+        }
+        else
+        {
           path.lineTo(x, y);
         }
       }
       g.strokePath(path, juce::PathStrokeType(2.0f));
-    } else {
+    }
+    else
+    {
       const bool useLiveBasePreview =
           (selectHandler_->isSingleNoteDragging() || pitchEditor->isDraggingMultiNotes());
       const auto &draggedNotes = pitchEditor->getDraggedNotes();
 
-      for (const auto &note : project->getNotes()) {
+      for (const auto &note : project->getNotes())
+      {
         if (note.isRest())
           continue;
 
@@ -1548,7 +1680,8 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
         int endFrame =
             std::min(note.getEndFrame(), static_cast<int>(audioData.f0.size()));
 
-        for (int i = startFrame; i < endFrame; ++i) {
+        for (int i = startFrame; i < endFrame; ++i)
+        {
           float baseMidi =
               (i < static_cast<int>(audioData.basePitch.size()))
                   ? audioData.basePitch[static_cast<size_t>(i)]
@@ -1564,13 +1697,17 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
                                 : 0.0f;
           float finalMidi = baseMidi + deltaMidi + globalOffset;
 
-          if (finalMidi > 0.0f) {
+          if (finalMidi > 0.0f)
+          {
             float x = framesToSeconds(i) * pixelsPerSecond;
             float y = midiToY(finalMidi) + pixelsPerSemitone * 0.5f;
-            if (!pathStarted) {
+            if (!pathStarted)
+            {
               path.startNewSubPath(x, y);
               pathStarted = true;
-            } else {
+            }
+            else
+            {
               path.lineTo(x, y);
             }
           }
@@ -1582,7 +1719,8 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
     }
   }
 
-  if (showActualF0Debug) {
+  if (showActualF0Debug)
+  {
     const double visibleStartTime = scrollX / pixelsPerSecond;
     const double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
     const int visStartFrame =
@@ -1596,10 +1734,13 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
     juce::Path actualPath;
     bool pathStarted = false;
 
-    for (int i = visStartFrame; i < visEndFrame; ++i) {
+    for (int i = visStartFrame; i < visEndFrame; ++i)
+    {
       const float f0 = audioData.f0[static_cast<size_t>(i)];
-      if (f0 <= 0.0f) {
-        if (pathStarted) {
+      if (f0 <= 0.0f)
+      {
+        if (pathStarted)
+        {
           g.strokePath(actualPath, juce::PathStrokeType(1.7f));
           actualPath.clear();
           pathStarted = false;
@@ -1610,10 +1751,13 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
       const float midi = freqToMidi(f0) + globalOffset;
       const float x = framesToSeconds(i) * pixelsPerSecond;
       const float y = midiToY(midi) + pixelsPerSemitone * 0.5f;
-      if (!pathStarted) {
+      if (!pathStarted)
+      {
         actualPath.startNewSubPath(x, y);
         pathStarted = true;
-      } else {
+      }
+      else
+      {
         actualPath.lineTo(x, y);
       }
     }
@@ -1624,16 +1768,19 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
 
   // Draw base pitch curve as dashed line
   // Use cached base pitch to avoid expensive recalculation on every repaint
-  if (showBasePitch) {
+  if (showBasePitch)
+  {
     const bool useLiveBasePreview =
         (selectHandler_->isSingleNoteDragging() || pitchEditor->isDraggingMultiNotes());
-    if (!useLiveBasePreview) {
+    if (!useLiveBasePreview)
+    {
       updateBasePitchCacheIfNeeded();
     }
 
     const auto &basePitchCurve =
         useLiveBasePreview ? audioData.basePitch : cachedBasePitch;
-    if (!basePitchCurve.empty()) {
+    if (!basePitchCurve.empty())
+    {
       // Calculate visible frame range
       double visibleStartTime = scrollX / pixelsPerSecond;
       double visibleEndTime = (scrollX + getWidth()) / pixelsPerSecond;
@@ -1651,21 +1798,29 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
       juce::Path basePath;
       bool basePathStarted = false;
 
-      for (int i = visStartFrame; i < visEndFrame; ++i) {
-        if (i >= 0 && i < static_cast<int>(basePitchCurve.size())) {
+      for (int i = visStartFrame; i < visEndFrame; ++i)
+      {
+        if (i >= 0 && i < static_cast<int>(basePitchCurve.size()))
+        {
           float baseMidi = basePitchCurve[static_cast<size_t>(i)];
-          if (baseMidi > 0.0f) {
+          if (baseMidi > 0.0f)
+          {
             float x = framesToSeconds(i) * pixelsPerSecond;
             float y = midiToY(baseMidi) +
                       pixelsPerSemitone * 0.5f; // Center in grid cell
 
-            if (!basePathStarted) {
+            if (!basePathStarted)
+            {
               basePath.startNewSubPath(x, y);
               basePathStarted = true;
-            } else {
+            }
+            else
+            {
               basePath.lineTo(x, y);
             }
-          } else if (basePathStarted) {
+          }
+          else if (basePathStarted)
+          {
             // Break path at unvoiced regions - draw current segment before
             // breaking
             juce::Path dashedPath;
@@ -1679,7 +1834,8 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
         }
       }
 
-      if (basePathStarted) {
+      if (basePathStarted)
+      {
         // Use dashed stroke for base pitch curve
         juce::Path dashedPath;
         juce::PathStrokeType stroke(1.5f);
@@ -1691,7 +1847,8 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g) {
   }
 }
 
-void PianoRollComponent::drawCursor(juce::Graphics &g) {
+void PianoRollComponent::drawCursor(juce::Graphics &g)
+{
   float x = timeToX(cursorTime);
   float height = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
@@ -1699,7 +1856,8 @@ void PianoRollComponent::drawCursor(juce::Graphics &g) {
   g.fillRect(x - 0.5f, 0.0f, 1.0f, height);
 }
 
-void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
+void PianoRollComponent::drawPianoKeys(juce::Graphics &g)
+{
   constexpr int scrollBarSize = 8;
   auto keyArea = getLocalBounds()
                      .withWidth(pianoKeysWidth)
@@ -1710,8 +1868,8 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
   g.setColour(APP_COLOR_SURFACE_ALT);
   g.fillRect(keyArea);
 
-  static const char *noteNames[] = {"C",  "C#", "D",  "D#", "E",  "F",
-                                    "F#", "G",  "G#", "A",  "A#", "B"};
+  static const char *noteNames[] = {"C", "C#", "D", "D#", "E", "F",
+                                    "F#", "G", "G#", "A", "A#", "B"};
   const ScaleMode activeScaleMode = previewScaleMode.value_or(selectedScaleMode);
   const int activeScaleRootNote = previewScaleRootNote.value_or(selectedScaleRootNote);
   const bool showScaleOverlay =
@@ -1724,7 +1882,8 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
   // Use truncated scrollY to match grid origin (which uses
   // static_cast<int>(scrollY))
   int scrollYInt = static_cast<int>(scrollY);
-  for (int midi = MIN_MIDI_NOTE; midi <= MAX_MIDI_NOTE; ++midi) {
+  for (int midi = MIN_MIDI_NOTE; midi <= MAX_MIDI_NOTE; ++midi)
+  {
     float y = midiToY(static_cast<float>(midi)) -
               static_cast<float>(scrollYInt) + headerHeight;
     int noteInOctave = (midi % 12 + 12) % 12;
@@ -1735,10 +1894,14 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
         getScaleToneState(activeScaleMode, noteInOctave, activeScaleRootNote);
 
     juce::Colour keyFill = isBlack ? APP_COLOR_PIANO_BLACK : APP_COLOR_PIANO_WHITE;
-    if (showScaleOverlay) {
-      if (toneState == ScaleToneState::OutOfScale) {
+    if (showScaleOverlay)
+    {
+      if (toneState == ScaleToneState::OutOfScale)
+      {
         keyFill = APP_COLOR_PIANO_BLACK;
-      } else {
+      }
+      else
+      {
         keyFill = APP_COLOR_PIANO_WHITE;
         keyFill = keyFill.interpolatedWith(scaleAccent,
                                            toneState == ScaleToneState::Root ? 0.32f : 0.16f);
@@ -1750,11 +1913,15 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
     g.fillRect(0.0f, y, static_cast<float>(pianoKeysWidth - 2),
                pixelsPerSemitone - 1);
 
-    if (showScaleOverlay) {
-      if (toneState == ScaleToneState::Root) {
+    if (showScaleOverlay)
+    {
+      if (toneState == ScaleToneState::Root)
+      {
         g.setColour(scaleAccent.withAlpha(0.95f));
         g.fillRect(0.0f, y, 3.0f, pixelsPerSemitone - 1);
-      } else if (toneState == ScaleToneState::InScale) {
+      }
+      else if (toneState == ScaleToneState::InScale)
+      {
         g.setColour(scaleAccent.withAlpha(0.55f));
         g.fillRect(0.0f, y, 2.0f, pixelsPerSemitone - 1);
       }
@@ -1767,7 +1934,8 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
 
     juce::Colour textColour = isBlack ? APP_COLOR_PIANO_TEXT_DIM
                                       : APP_COLOR_PIANO_TEXT;
-    if (showScaleOverlay) {
+    if (showScaleOverlay)
+    {
       if (toneState == ScaleToneState::Root)
         textColour = APP_COLOR_TEXT_PRIMARY;
       else if (toneState == ScaleToneState::OutOfScale)
@@ -1781,49 +1949,59 @@ void PianoRollComponent::drawPianoKeys(juce::Graphics &g) {
   }
 }
 
-float PianoRollComponent::midiToY(float midiNote) const {
+float PianoRollComponent::midiToY(float midiNote) const
+{
   return (MAX_MIDI_NOTE - midiNote) * pixelsPerSemitone;
 }
 
-float PianoRollComponent::yToMidi(float y) const {
+float PianoRollComponent::yToMidi(float y) const
+{
   return MAX_MIDI_NOTE - y / pixelsPerSemitone;
 }
 
-float PianoRollComponent::timeToX(double time) const {
+float PianoRollComponent::timeToX(double time) const
+{
   return static_cast<float>(time * pixelsPerSecond);
 }
 
-double PianoRollComponent::xToTime(float x) const {
+double PianoRollComponent::xToTime(float x) const
+{
   return x / pixelsPerSecond;
 }
 
-double PianoRollComponent::getTimelineQuarterNoteSeconds() const {
+double PianoRollComponent::getTimelineQuarterNoteSeconds() const
+{
   const double bpm = juce::jlimit(20.0, 300.0, timelineTempoBpm);
   return bpm > 0.0 ? 60.0 / bpm : (60.0 / 120.0);
 }
 
-double PianoRollComponent::getTimelineBeatSeconds() const {
+double PianoRollComponent::getTimelineBeatSeconds() const
+{
   const int denominator = normalizeTimelineBeatDenominator(timelineBeatDenominator);
   return getTimelineQuarterNoteSeconds() * (4.0 / static_cast<double>(denominator));
 }
 
-double PianoRollComponent::getTimelineBarSeconds() const {
+double PianoRollComponent::getTimelineBarSeconds() const
+{
   const int numerator = juce::jmax(1, timelineBeatNumerator);
   return getTimelineBeatSeconds() * static_cast<double>(numerator);
 }
 
-double PianoRollComponent::getTimelineGridSeconds() const {
+double PianoRollComponent::getTimelineGridSeconds() const
+{
   const double quarterNotes = gridDivisionToQuarterNotes(timelineGridDivision);
   return getTimelineQuarterNoteSeconds() * quarterNotes;
 }
 
-bool PianoRollComponent::shouldSnapCycleToGrid() const {
+bool PianoRollComponent::shouldSnapCycleToGrid() const
+{
   return timelineDisplayMode == TimelineDisplayMode::Beats &&
          timelineSnapCycle &&
          getTimelineGridSeconds() > 1.0e-6;
 }
 
-double PianoRollComponent::snapTimeToTimelineGrid(double timeSeconds) const {
+double PianoRollComponent::snapTimeToTimelineGrid(double timeSeconds) const
+{
   if (!shouldSnapCycleToGrid())
     return std::max(0.0, timeSeconds);
 
@@ -1832,7 +2010,8 @@ double PianoRollComponent::snapTimeToTimelineGrid(double timeSeconds) const {
   return std::max(0.0, snapped);
 }
 
-void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
+void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
+{
   if (!project)
     return;
 
@@ -1843,7 +2022,8 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
   // Handle timeline clicks - seek to position
-  if (e.y < timelineHeight && e.x >= pianoKeysWidth) {
+  if (e.y < timelineHeight && e.x >= pianoKeysWidth)
+  {
     double time = std::max(0.0, xToTime(adjustedX));
     setCursorTime(time);
     if (onSeek)
@@ -1864,7 +2044,8 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e) {
     currentHandler_->mouseDown(e, adjustedX, adjustedY);
 }
 
-void PianoRollComponent::mouseDrag(const juce::MouseEvent &e) {
+void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
+{
   // Throttle repaints during drag to ~60fps max
   juce::int64 now = juce::Time::getMillisecondCounter();
   bool shouldRepaint = (now - lastDragRepaintTime) >= minDragRepaintInterval;
@@ -1874,8 +2055,10 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e) {
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
   // Loop drag has priority (always active)
-  if (loopDragHandler_->mouseDrag(e, adjustedX, adjustedY)) {
-    if (shouldRepaint) {
+  if (loopDragHandler_->mouseDrag(e, adjustedX, adjustedY))
+  {
+    if (shouldRepaint)
+    {
       repaint();
       lastDragRepaintTime = now;
     }
@@ -1883,15 +2066,18 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e) {
   }
 
   // Delegate to current mode handler
-  if (currentHandler_ && currentHandler_->mouseDrag(e, adjustedX, adjustedY)) {
-    if (shouldRepaint) {
+  if (currentHandler_ && currentHandler_->mouseDrag(e, adjustedX, adjustedY))
+  {
+    if (shouldRepaint)
+    {
       repaint();
       lastDragRepaintTime = now;
     }
   }
 }
 
-void PianoRollComponent::mouseUp(const juce::MouseEvent &e) {
+void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
+{
   // Ensure keyboard focus is maintained after mouse operations
   grabKeyboardFocus();
 
@@ -1907,7 +2093,8 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e) {
     currentHandler_->mouseUp(e, adjustedX, adjustedY);
 }
 
-void PianoRollComponent::mouseMove(const juce::MouseEvent &e) {
+void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
+{
   float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
   float adjustedY = e.y - headerHeight + static_cast<float>(scrollY);
 
@@ -1920,14 +2107,18 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e) {
 
   // Pitch tool handle hover (uses raw event coordinates, not world-adjusted)
   if (editMode == EditMode::Select && pitchToolHandles && !pitchToolHandles->isEmpty() &&
-      e.y >= headerHeight && e.x >= pianoKeysWidth) {
+      e.y >= headerHeight && e.x >= pianoKeysWidth)
+  {
     int hitIndex = pitchToolHandles->hitTest(e.position.x, e.position.y);
-    if (hitIndex != hoveredPitchToolHandle) {
+    if (hitIndex != hoveredPitchToolHandle)
+    {
       hoveredPitchToolHandle = hitIndex;
       pitchToolHandles->setHoveredHandleIndex(hitIndex);
       repaint();
     }
-  } else if (hoveredPitchToolHandle != -1) {
+  }
+  else if (hoveredPitchToolHandle != -1)
+  {
     hoveredPitchToolHandle = -1;
     if (pitchToolHandles)
       pitchToolHandles->setHoveredHandleIndex(-1);
@@ -1935,7 +2126,8 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e) {
   }
 }
 
-void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e) {
+void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
+{
   if (!project)
     return;
 
@@ -1952,7 +2144,8 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e) {
 }
 
 void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
-                                        const juce::MouseWheelDetails &wheel) {
+                                        const juce::MouseWheelDetails &wheel)
+{
   float scrollMultiplier = wheel.isSmooth ? 200.0f : 80.0f;
   const int visibleHeight = getVisibleContentHeight();
   const int visibleWidth = getVisibleContentWidth();
@@ -1972,9 +2165,11 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
   bool isOverTimeline = e.y < headerHeight;
 
   // Hover-based zoom (no modifier keys needed)
-  if (!e.mods.isCommandDown() && !e.mods.isCtrlDown()) {
+  if (!e.mods.isCommandDown() && !e.mods.isCtrlDown())
+  {
     // Over piano keys: vertical zoom
-    if (isOverPianoKeys) {
+    if (isOverPianoKeys)
+    {
       // Calculate MIDI note at mouse position before zoom
       float mouseY = e.y - headerHeight;
       float midiAtMouse = (mouseY + scrollY) / pixelsPerSemitone;
@@ -2003,7 +2198,8 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
     }
 
     // Over timeline: horizontal zoom
-    if (isOverTimeline) {
+    if (isOverTimeline)
+    {
       // Calculate time at mouse position before zoom
       float mouseX = e.x - pianoKeysWidth;
       double timeAtMouse = (mouseX + scrollX) / pixelsPerSecond;
@@ -2032,18 +2228,21 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
     float deltaX = wheel.deltaX;
     float deltaY = wheel.deltaY;
 
-    if (e.mods.isShiftDown() && std::abs(deltaX) < 0.001f) {
+    if (e.mods.isShiftDown() && std::abs(deltaX) < 0.001f)
+    {
       deltaX = deltaY;
       deltaY = 0.0f;
     }
 
-    if (std::abs(deltaX) > 0.001f) {
+    if (std::abs(deltaX) > 0.001f)
+    {
       double newScrollX = scrollX - deltaX * scrollMultiplier;
       newScrollX = std::max(0.0, newScrollX);
       horizontalScrollBar.setCurrentRangeStart(newScrollX);
     }
 
-    if (std::abs(deltaY) > 0.001f) {
+    if (std::abs(deltaY) > 0.001f)
+    {
       double newScrollY = scrollY - deltaY * scrollMultiplier;
       verticalScrollBar.setCurrentRangeStart(newScrollY);
     }
@@ -2051,10 +2250,12 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
   }
 
   // Key-based zoom in grid area
-  if (e.mods.isCommandDown() || e.mods.isCtrlDown()) {
+  if (e.mods.isCommandDown() || e.mods.isCtrlDown())
+  {
     float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
 
-    if (e.mods.isShiftDown()) {
+    if (e.mods.isShiftDown())
+    {
       // Vertical zoom - center on mouse position
       float mouseY = static_cast<float>(e.y - headerHeight);
       float midiAtMouse = yToMidi(mouseY + static_cast<float>(scrollY));
@@ -2077,7 +2278,9 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
       coordMapper->setPixelsPerSemitone(newPps);
       updateScrollBars();
       repaint();
-    } else {
+    }
+    else
+    {
       // Horizontal zoom - center on mouse position
       float mouseX = static_cast<float>(e.x - pianoKeysWidth);
       double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
@@ -2103,7 +2306,8 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
 }
 
 void PianoRollComponent::mouseMagnify(const juce::MouseEvent &e,
-                                      float scaleFactor) {
+                                      float scaleFactor)
+{
   // Pinch-to-zoom on trackpad - horizontal zoom, center on mouse position
   const int visibleWidth = getVisibleContentWidth();
   const double totalTime = project ? project->getAudioData().getDuration() : 0.0;
@@ -2133,22 +2337,27 @@ void PianoRollComponent::mouseMagnify(const juce::MouseEvent &e,
 }
 
 void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
-                                        double newRangeStart) {
-  if (scrollBar == &horizontalScrollBar) {
+                                        double newRangeStart)
+{
+  if (scrollBar == &horizontalScrollBar)
+  {
     scrollX = newRangeStart;
     coordMapper->setScrollX(newRangeStart);
 
     // Notify scroll changed for synchronization
     if (onScrollChanged)
       onScrollChanged(scrollX);
-  } else if (scrollBar == &verticalScrollBar) {
+  }
+  else if (scrollBar == &verticalScrollBar)
+  {
     scrollY = newRangeStart;
     coordMapper->setScrollY(newRangeStart);
   }
   repaint();
 }
 
-void PianoRollComponent::setProject(Project *proj) {
+void PianoRollComponent::setProject(Project *proj)
+{
   project = proj;
   selectedScaleMode =
       project != nullptr ? project->getScaleMode() : ScaleMode::None;
@@ -2196,7 +2405,8 @@ void PianoRollComponent::setProject(Project *proj) {
   repaint();
 }
 
-void PianoRollComponent::setScaleMode(ScaleMode mode) {
+void PianoRollComponent::setScaleMode(ScaleMode mode)
+{
   if (selectedScaleMode == mode && !previewScaleMode.has_value())
     return;
 
@@ -2207,7 +2417,8 @@ void PianoRollComponent::setScaleMode(ScaleMode mode) {
   repaint();
 }
 
-void PianoRollComponent::setScaleRootNote(int noteInOctave) {
+void PianoRollComponent::setScaleRootNote(int noteInOctave)
+{
   const int normalized = juce::jlimit(-1, 11, noteInOctave);
   const bool changed = selectedScaleRootNote != normalized;
   if (!changed && !previewScaleRootNote.has_value())
@@ -2220,7 +2431,8 @@ void PianoRollComponent::setScaleRootNote(int noteInOctave) {
   repaint();
 }
 
-void PianoRollComponent::setScaleRootPreview(std::optional<int> noteInOctave) {
+void PianoRollComponent::setScaleRootPreview(std::optional<int> noteInOctave)
+{
   std::optional<int> normalizedPreview;
   if (noteInOctave.has_value())
     normalizedPreview = juce::jlimit(-1, 11, *noteInOctave);
@@ -2232,7 +2444,8 @@ void PianoRollComponent::setScaleRootPreview(std::optional<int> noteInOctave) {
   repaint();
 }
 
-void PianoRollComponent::setScaleModePreview(std::optional<ScaleMode> mode) {
+void PianoRollComponent::setScaleModePreview(std::optional<ScaleMode> mode)
+{
   if (previewScaleMode == mode)
     return;
 
@@ -2240,7 +2453,8 @@ void PianoRollComponent::setScaleModePreview(std::optional<ScaleMode> mode) {
   repaint();
 }
 
-void PianoRollComponent::setShowScaleColors(bool enabled) {
+void PianoRollComponent::setShowScaleColors(bool enabled)
+{
   if (showScaleColors == enabled)
     return;
 
@@ -2250,7 +2464,8 @@ void PianoRollComponent::setShowScaleColors(bool enabled) {
   repaint();
 }
 
-void PianoRollComponent::setSnapToSemitoneDrag(bool enabled) {
+void PianoRollComponent::setSnapToSemitoneDrag(bool enabled)
+{
   if (snapToSemitoneDrag == enabled)
     return;
 
@@ -2260,7 +2475,8 @@ void PianoRollComponent::setSnapToSemitoneDrag(bool enabled) {
   pitchEditor->setSnapToSemitoneDragEnabled(enabled);
 }
 
-void PianoRollComponent::setPitchReferenceHz(int hz) {
+void PianoRollComponent::setPitchReferenceHz(int hz)
+{
   const int normalized = juce::jlimit(380, 480, hz);
   if (pitchReferenceHz == normalized)
     return;
@@ -2271,7 +2487,8 @@ void PianoRollComponent::setPitchReferenceHz(int hz) {
   pitchEditor->setPitchReferenceHz(normalized);
 }
 
-void PianoRollComponent::setDoubleClickSnapMode(DoubleClickSnapMode mode) {
+void PianoRollComponent::setDoubleClickSnapMode(DoubleClickSnapMode mode)
+{
   if (doubleClickSnapMode == mode)
     return;
 
@@ -2280,7 +2497,8 @@ void PianoRollComponent::setDoubleClickSnapMode(DoubleClickSnapMode mode) {
     project->setDoubleClickSnapMode(mode);
 }
 
-void PianoRollComponent::setTimelineDisplayMode(TimelineDisplayMode mode) {
+void PianoRollComponent::setTimelineDisplayMode(TimelineDisplayMode mode)
+{
   if (timelineDisplayMode == mode)
     return;
 
@@ -2290,7 +2508,8 @@ void PianoRollComponent::setTimelineDisplayMode(TimelineDisplayMode mode) {
   repaint();
 }
 
-void PianoRollComponent::setTimelineBeatSignature(int numerator, int denominator) {
+void PianoRollComponent::setTimelineBeatSignature(int numerator, int denominator)
+{
   const int normalizedNumerator = juce::jlimit(1, 32, numerator);
   const int normalizedDenominator = normalizeTimelineBeatDenominator(denominator);
   if (timelineBeatNumerator == normalizedNumerator &&
@@ -2304,7 +2523,8 @@ void PianoRollComponent::setTimelineBeatSignature(int numerator, int denominator
   repaint();
 }
 
-void PianoRollComponent::setTimelineTempoBpm(double bpm) {
+void PianoRollComponent::setTimelineTempoBpm(double bpm)
+{
   const double normalized = juce::jlimit(20.0, 300.0, bpm);
   if (std::abs(timelineTempoBpm - normalized) < 1.0e-6)
     return;
@@ -2315,7 +2535,8 @@ void PianoRollComponent::setTimelineTempoBpm(double bpm) {
   repaint();
 }
 
-void PianoRollComponent::setTimelineGridDivision(TimelineGridDivision division) {
+void PianoRollComponent::setTimelineGridDivision(TimelineGridDivision division)
+{
   if (timelineGridDivision == division)
     return;
 
@@ -2325,7 +2546,8 @@ void PianoRollComponent::setTimelineGridDivision(TimelineGridDivision division) 
   repaint();
 }
 
-void PianoRollComponent::setTimelineSnapCycle(bool enabled) {
+void PianoRollComponent::setTimelineSnapCycle(bool enabled)
+{
   if (timelineSnapCycle == enabled)
     return;
 
@@ -2334,13 +2556,15 @@ void PianoRollComponent::setTimelineSnapCycle(bool enabled) {
     project->setTimelineSnapCycle(enabled);
 }
 
-void PianoRollComponent::setUndoManager(PitchUndoManager *manager) {
+void PianoRollComponent::setUndoManager(PitchUndoManager *manager)
+{
   undoManager = manager;
   pitchEditor->setUndoManager(manager);
   noteSplitter->setUndoManager(manager);
 }
 
-bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta) {
+bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta)
+{
   if (project == nullptr || semitoneDelta == 0)
     return false;
 
@@ -2361,7 +2585,8 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta) {
   int dirtyStartFrame = std::numeric_limits<int>::max();
   int dirtyEndFrame = std::numeric_limits<int>::min();
 
-  for (auto *note : selectedNotes) {
+  for (auto *note : selectedNotes)
+  {
     if (!note || note->isRest())
       continue;
 
@@ -2387,53 +2612,61 @@ bool PianoRollComponent::nudgeSelectedNotesBySemitones(int semitoneDelta) {
     return false;
 
   auto rebuildAndNotify =
-      [this, dirtyStartFrame, dirtyEndFrame](const std::vector<Note *> &) {
-        if (project == nullptr)
-          return;
+      [this, dirtyStartFrame, dirtyEndFrame](const std::vector<Note *> &)
+  {
+    if (project == nullptr)
+      return;
 
-        PitchCurveProcessor::rebuildBaseFromNotes(*project);
-        invalidateBasePitchCache();
+    PitchCurveProcessor::rebuildBaseFromNotes(*project);
+    invalidateBasePitchCache();
 
-        const int f0Size = static_cast<int>(project->getAudioData().f0.size());
-        if (f0Size > 0 && dirtyStartFrame <= dirtyEndFrame) {
-          const int smoothStart = std::max(0, dirtyStartFrame - 60);
-          const int smoothEnd = std::min(f0Size, dirtyEndFrame + 60);
-          project->setF0DirtyRange(smoothStart, smoothEnd);
-        }
+    const int f0Size = static_cast<int>(project->getAudioData().f0.size());
+    if (f0Size > 0 && dirtyStartFrame <= dirtyEndFrame)
+    {
+      const int smoothStart = std::max(0, dirtyStartFrame - 60);
+      const int smoothEnd = std::min(f0Size, dirtyEndFrame + 60);
+      project->setF0DirtyRange(smoothStart, smoothEnd);
+    }
 
-        if (onPitchEdited)
-          onPitchEdited();
-        if (onPitchEditFinished)
-          onPitchEditFinished();
+    if (onPitchEdited)
+      onPitchEdited();
+    if (onPitchEditFinished)
+      onPitchEditFinished();
 
-        repaint();
-      };
+    repaint();
+  };
 
-  if (undoManager) {
+  if (undoManager)
+  {
     auto action = std::make_unique<MultiNoteMidiNudgeAction>(
         notesToMove, oldMidis, newMidis,
-        [rebuildAndNotify](const std::vector<Note *> &notes) {
+        [rebuildAndNotify](const std::vector<Note *> &notes)
+        {
           rebuildAndNotify(notes);
         });
     undoManager->addAction(std::move(action));
   }
 
-  for (size_t i = 0; i < notesToMove.size(); ++i) {
+  for (size_t i = 0; i < notesToMove.size(); ++i)
+  {
     notesToMove[i]->setMidiNote(newMidis[i]);
     notesToMove[i]->markDirty();
+    notesToMove[i]->markSynthDirty();
   }
 
   rebuildAndNotify(notesToMove);
   return true;
 }
 
-bool PianoRollComponent::keyPressed(const juce::KeyPress &key) {
+bool PianoRollComponent::keyPressed(const juce::KeyPress &key)
+{
   const auto mods = key.getModifiers();
   if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
     return false;
 
   const int keyCode = key.getKeyCode();
-  if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey) {
+  if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)
+  {
     const int direction = keyCode == juce::KeyPress::upKey ? 1 : -1;
     const int step = mods.isShiftDown() ? 12 : 1;
     return nudgeSelectedNotesBySemitones(direction * step);
@@ -2443,28 +2676,33 @@ bool PianoRollComponent::keyPressed(const juce::KeyPress &key) {
 }
 
 bool PianoRollComponent::keyPressed(const juce::KeyPress &key,
-                                    juce::Component *) {
+                                    juce::Component *)
+{
   return keyPressed(key);
 }
 
-void PianoRollComponent::focusLost(FocusChangeType cause) {
+void PianoRollComponent::focusLost(FocusChangeType cause)
+{
   juce::ignoreUnused(cause);
   // Don't automatically re-grab focus - let the host manage focus normally
   // Focus will be re-acquired when user clicks on the piano roll
 }
 
-void PianoRollComponent::focusGained(FocusChangeType cause) {
+void PianoRollComponent::focusGained(FocusChangeType cause)
+{
   juce::ignoreUnused(cause);
   // Focus gained - nothing special needed
 }
 
-void PianoRollComponent::setCursorTime(double time) {
+void PianoRollComponent::setCursorTime(double time)
+{
   if (std::abs(cursorTime - time) < 0.0001)
     return; // Skip if no change
 
   // Calculate dirty rectangle for cursor position
   // Include timeline area (from 0) and extra width for triangle indicator
-  auto getCursorRect = [this](double t) -> juce::Rectangle<int> {
+  auto getCursorRect = [this](double t) -> juce::Rectangle<int>
+  {
     float x =
         static_cast<float>(t * pixelsPerSecond - scrollX) + pianoKeysWidth;
     constexpr int triangleHalfWidth = 6; // Half of triangle width + margin
@@ -2485,7 +2723,8 @@ void PianoRollComponent::setCursorTime(double time) {
   repaint(getCursorRect(cursorTime));
 }
 
-void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor) {
+void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
+{
   float oldPps = pixelsPerSecond;
   const int visibleWidth = getVisibleContentWidth();
   const double totalTime = project ? project->getAudioData().getDuration() : 0.0;
@@ -2500,7 +2739,8 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor) {
   if (std::abs(oldPps - newPps) < 0.01f)
     return; // No significant change
 
-  if (centerOnCursor) {
+  if (centerOnCursor)
+  {
     // Calculate cursor position relative to view
     float cursorX = static_cast<float>(cursorTime * oldPps);
     float cursorRelativeX = cursorX - static_cast<float>(scrollX);
@@ -2521,7 +2761,8 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor) {
   // The caller is responsible for synchronizing other components
 }
 
-void PianoRollComponent::setPixelsPerSemitone(float pps) {
+void PianoRollComponent::setPixelsPerSemitone(float pps)
+{
   const int visibleHeight = getVisibleContentHeight();
   const float minPpsForFill =
       visibleHeight > 0
@@ -2536,7 +2777,8 @@ void PianoRollComponent::setPixelsPerSemitone(float pps) {
   repaint();
 }
 
-void PianoRollComponent::setScrollX(double x) {
+void PianoRollComponent::setScrollX(double x)
+{
   if (std::abs(scrollX - x) < 0.01)
     return; // No significant change
 
@@ -2550,7 +2792,8 @@ void PianoRollComponent::setScrollX(double x) {
   repaint();
 }
 
-void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi) {
+void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)
+{
   // Calculate center MIDI note
   float centerMidi = (minMidi + maxMidi) / 2.0f;
 
@@ -2574,22 +2817,26 @@ void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi) {
   repaint();
 }
 
-void PianoRollComponent::setEditMode(EditMode mode) {
+void PianoRollComponent::setEditMode(EditMode mode)
+{
   // Cancel active handler interaction if leaving its mode
   if (editMode == EditMode::Stretch && mode != EditMode::Stretch &&
-      stretchHandler_ && stretchHandler_->isActive()) {
+      stretchHandler_ && stretchHandler_->isActive())
+  {
     stretchHandler_->cancel();
   }
 
   editMode = mode;
 
   // Clear split guide when leaving split mode
-  if (mode != EditMode::Split && splitHandler_) {
+  if (mode != EditMode::Split && splitHandler_)
+  {
     splitHandler_->clearGuide();
   }
 
   // Change cursor based on mode
-  if (mode == EditMode::Draw) {
+  if (mode == EditMode::Draw)
+  {
     // Create a custom pen cursor
     // Simple pen icon: 16x16 pixels with pen tip at bottom-left
     juce::Image penImage(juce::Image::ARGB, 16, 16, true);
@@ -2606,12 +2853,15 @@ void PianoRollComponent::setEditMode(EditMode mode) {
 
     // Set hotspot at pen tip (bottom-left corner)
     setMouseCursor(juce::MouseCursor(penImage, 0, 14));
-  } else {
+  }
+  else
+  {
     setMouseCursor(juce::MouseCursor::NormalCursor);
   }
 
   // Update currentHandler_ based on the new mode
-  switch (mode) {
+  switch (mode)
+  {
   case EditMode::Select:
     currentHandler_ = selectHandler_.get();
     break;
@@ -2626,7 +2876,8 @@ void PianoRollComponent::setEditMode(EditMode mode) {
     break;
   }
 
-  if (mode != EditMode::Select) {
+  if (mode != EditMode::Select)
+  {
     hoveredPitchToolHandle = -1;
     if (pitchToolHandles)
       pitchToolHandles->setHoveredHandleIndex(-1);
@@ -2636,23 +2887,27 @@ void PianoRollComponent::setEditMode(EditMode mode) {
   repaint();
 }
 
-std::vector<Note *> PianoRollComponent::getSelectedNotes() const {
+std::vector<Note *> PianoRollComponent::getSelectedNotes() const
+{
   if (!project)
     return {};
 
   std::vector<Note *> selected;
-  for (auto &note : project->getNotes()) {
+  for (auto &note : project->getNotes())
+  {
     if (note.isSelected())
       selected.push_back(&note);
   }
   return selected;
 }
 
-void PianoRollComponent::updatePitchToolHandlesFromSelection() {
+void PianoRollComponent::updatePitchToolHandlesFromSelection()
+{
   if (!pitchToolHandles || !coordMapper)
     return;
 
-  if (!project || editMode != EditMode::Select) {
+  if (!project || editMode != EditMode::Select)
+  {
     pitchToolHandles->clear();
     hoveredPitchToolHandle = -1;
     pitchToolHandles->setHoveredHandleIndex(-1);
@@ -2661,17 +2916,20 @@ void PianoRollComponent::updatePitchToolHandlesFromSelection() {
 
   pitchToolHandles->updateHandles(getSelectedNotes(), *coordMapper);
   if (hoveredPitchToolHandle >=
-      static_cast<int>(pitchToolHandles->getHandles().size())) {
+      static_cast<int>(pitchToolHandles->getHandles().size()))
+  {
     hoveredPitchToolHandle = -1;
     pitchToolHandles->setHoveredHandleIndex(-1);
   }
 }
 
-Note *PianoRollComponent::findNoteAt(float x, float y) {
+Note *PianoRollComponent::findNoteAt(float x, float y)
+{
   if (!project)
     return nullptr;
 
-  for (auto &note : project->getNotes()) {
+  for (auto &note : project->getNotes())
+  {
     // Skip rest notes
     if (note.isRest())
       continue;
@@ -2681,7 +2939,8 @@ Note *PianoRollComponent::findNoteAt(float x, float y) {
     float noteY = midiToY(note.getAdjustedMidiNote());
     float noteH = pixelsPerSemitone;
 
-    if (x >= noteX && x < noteX + noteW && y >= noteY && y < noteY + noteH) {
+    if (x >= noteX && x < noteX + noteW && y >= noteY && y < noteY + noteH)
+    {
       return &note;
     }
   }
@@ -2689,8 +2948,10 @@ Note *PianoRollComponent::findNoteAt(float x, float y) {
   return nullptr;
 }
 
-void PianoRollComponent::updateScrollBars() {
-  if (project) {
+void PianoRollComponent::updateScrollBars()
+{
+  if (project)
+  {
     float totalWidth = project->getAudioData().getDuration() * pixelsPerSecond;
     float totalHeight = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
 
@@ -2705,8 +2966,10 @@ void PianoRollComponent::updateScrollBars() {
   }
 }
 
-void PianoRollComponent::updateBasePitchCacheIfNeeded() {
-  if (!project) {
+void PianoRollComponent::updateBasePitchCacheIfNeeded()
+{
+  if (!project)
+  {
     cachedBasePitch.clear();
     cachedNoteCount = 0;
     cachedTotalFrames = 0;
@@ -2719,8 +2982,10 @@ void PianoRollComponent::updateBasePitchCacheIfNeeded() {
 
   // Check if cache is valid
   size_t currentNoteCount = 0;
-  for (const auto &note : notes) {
-    if (!note.isRest()) {
+  for (const auto &note : notes)
+  {
+    if (!note.isRest())
+    {
       currentNoteCount++;
     }
   }
@@ -2730,20 +2995,25 @@ void PianoRollComponent::updateBasePitchCacheIfNeeded() {
   // more precise check would compare note positions/pitches, but that's
   // expensive
   if (cacheInvalidated || cachedNoteCount != currentNoteCount ||
-      cachedTotalFrames != totalFrames || cachedBasePitch.empty()) {
+      cachedTotalFrames != totalFrames || cachedBasePitch.empty())
+  {
     // Only regenerate if we have notes and frames
-    if (currentNoteCount > 0 && totalFrames > 0) {
+    if (currentNoteCount > 0 && totalFrames > 0)
+    {
       // Collect all notes
       std::vector<BasePitchCurve::NoteSegment> noteSegments;
       noteSegments.reserve(currentNoteCount);
-      for (const auto &note : notes) {
-        if (!note.isRest()) {
+      for (const auto &note : notes)
+      {
+        if (!note.isRest())
+        {
           noteSegments.push_back(
               {note.getStartFrame(), note.getEndFrame(), note.getMidiNote()});
         }
       }
 
-      if (!noteSegments.empty()) {
+      if (!noteSegments.empty())
+      {
         // Generate smoothed base pitch curve (expensive operation, cached)
         // This is only called when notes change, not on every repaint
         cachedBasePitch =
@@ -2751,13 +3021,17 @@ void PianoRollComponent::updateBasePitchCacheIfNeeded() {
         cachedNoteCount = currentNoteCount;
         cachedTotalFrames = totalFrames;
         cacheInvalidated = false; // Mark cache as valid
-      } else {
+      }
+      else
+      {
         cachedBasePitch.clear();
         cachedNoteCount = 0;
         cachedTotalFrames = 0;
         cacheInvalidated = false; // Mark as processed (even if empty)
       }
-    } else {
+    }
+    else
+    {
       cachedBasePitch.clear();
       cachedNoteCount = 0;
       cachedTotalFrames = 0;
@@ -2766,7 +3040,8 @@ void PianoRollComponent::updateBasePitchCacheIfNeeded() {
   }
 }
 
-void PianoRollComponent::reapplyBasePitchForNote(Note *note) {
+void PianoRollComponent::reapplyBasePitchForNote(Note *note)
+{
   if (!note || !project)
     return;
 
@@ -2776,7 +3051,8 @@ void PianoRollComponent::reapplyBasePitchForNote(Note *note) {
   int f0Size = static_cast<int>(audioData.f0.size());
 
   // Reapply base + delta from dense curves
-  for (int i = startFrame; i < endFrame && i < f0Size; ++i) {
+  for (int i = startFrame; i < endFrame && i < f0Size; ++i)
+  {
     float base = (i < static_cast<int>(audioData.basePitch.size()))
                      ? audioData.basePitch[static_cast<size_t>(i)]
                      : 0.0f;
@@ -2796,12 +3072,14 @@ void PianoRollComponent::reapplyBasePitchForNote(Note *note) {
   repaint();
 }
 
-void PianoRollComponent::cancelDrawing() {
+void PianoRollComponent::cancelDrawing()
+{
   if (drawHandler_)
     drawHandler_->cancel();
 }
 
-void PianoRollComponent::drawSelectionRect(juce::Graphics &g) {
+void PianoRollComponent::drawSelectionRect(juce::Graphics &g)
+{
   if (!boxSelector || !boxSelector->isSelecting())
     return;
 

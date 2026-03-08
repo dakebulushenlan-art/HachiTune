@@ -3,7 +3,6 @@
   "menu.edit": "编辑",
   "menu.view": "视图",
   "menu.settings": "设置...",
-
   "command.open_audio": "打开...",
   "command.open_audio.desp": "打开音频",
   "command.save_project": "保存项目",
@@ -38,7 +37,6 @@
   "command.toggle_draw.desp": "切换音高绘制模式",
   "command.exit_draw": "退出绘制模式",
   "command.exit_draw.desp": "退出音高绘制模式",
-
   "toolbar.play": "播放",
   "toolbar.pause": "暂停",
   "toolbar.stop": "停止",
@@ -126,6 +124,6 @@
   "dialog.midi_exported": "MIDI 已成功导出至:",
   "dialog.failed_write_midi": "无法写入 MIDI 文件至:",
   "dialog.no_notes_to_export": "没有可导出的音符。请先加载音频文件并进行分析。",
-  "error.some_error": "SOME 错误",
+  "error.game_error": "GAME 错误",
   "error.inference_failed": "推理失败"
 }

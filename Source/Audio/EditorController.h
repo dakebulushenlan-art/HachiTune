@@ -7,7 +7,7 @@
 #include "FCPEPitchDetector.h"
 #include "PitchDetectorType.h"
 #include "RMVPEPitchDetector.h"
-#include "SOMEDetector.h"
+#include "GAMEDetector.h"
 #include "Synthesis/IncrementalSynthesizer.h"
 #include "Vocoder.h"
 #include "../Models/Project.h"
@@ -19,7 +19,8 @@
 #include <memory>
 #include <thread>
 
-class EditorController {
+class EditorController
+{
 public:
   explicit EditorController(bool enableAudioDevice);
   ~EditorController();
@@ -30,20 +31,24 @@ public:
   AudioEngine *getAudioEngine() const { return audioEngine.get(); }
   Vocoder *getVocoder() const { return vocoder.get(); }
   AudioAnalyzer *getAudioAnalyzer() const { return audioAnalyzer.get(); }
-  IncrementalSynthesizer *getIncrementalSynth() const {
+  IncrementalSynthesizer *getIncrementalSynth() const
+  {
     return incrementalSynth.get();
   }
-  PlaybackController *getPlaybackController() const {
+  PlaybackController *getPlaybackController() const
+  {
     return playbackController.get();
   }
 
-  void setPitchDetectorType(PitchDetectorType type) {
+  void setPitchDetectorType(PitchDetectorType type)
+  {
     pitchDetectorType = type;
     if (audioAnalyzer)
       audioAnalyzer->setPitchDetectorType(type);
   }
 
-  void setDeviceConfig(const juce::String &deviceName, int gpuDeviceId) {
+  void setDeviceConfig(const juce::String &deviceName, int gpuDeviceId)
+  {
     device = deviceName;
     deviceId = gpuDeviceId;
   }
@@ -104,7 +109,7 @@ private:
   std::unique_ptr<AudioEngine> audioEngine;
   std::unique_ptr<FCPEPitchDetector> fcpePitchDetector;
   std::unique_ptr<RMVPEPitchDetector> rmvpePitchDetector;
-  std::unique_ptr<SOMEDetector> someDetector;
+  std::unique_ptr<GAMEDetector> gameDetector;
   std::unique_ptr<Vocoder> vocoder;
   std::unique_ptr<AudioAnalyzer> audioAnalyzer;
   std::unique_ptr<IncrementalSynthesizer> incrementalSynth;
@@ -114,7 +119,7 @@ private:
   juce::File melFilterbankPath;
   juce::File centTablePath;
   juce::File rmvpeModelPath;
-  juce::File someModelPath;
+  juce::File gameModelDir;
 
   PitchDetectorType pitchDetectorType = PitchDetectorType::RMVPE;
   juce::String device = "CPU";

@@ -16,7 +16,8 @@ enum class Language; // Forward declaration
 class SettingsComponent : public juce::Component,
                           public juce::ComboBox::Listener,
                           public juce::ChangeListener,
-                          public juce::Timer {
+                          public juce::Timer
+{
 public:
   SettingsComponent(SettingsManager *settingsManager,
                     juce::AudioDeviceManager *audioDeviceManager = nullptr);
@@ -46,8 +47,8 @@ public:
   std::function<void()> onSettingsChanged;
   std::function<void()> onLanguageChanged;
   std::function<void(PitchDetectorType)> onPitchDetectorChanged;
-  std::function<void(bool)> onShowSomeSegmentsDebugChanged;
-  std::function<void(bool)> onShowSomeValuesDebugChanged;
+  std::function<void(bool)> onShowSegmentsDebugChanged;
+  std::function<void(bool)> onShowGameValuesDebugChanged;
   std::function<void(bool)> onShowUvInterpolationDebugChanged;
   std::function<void(bool)> onShowActualF0DebugChanged;
   std::function<bool()> canChangeDevice;
@@ -60,17 +61,21 @@ public:
   static juce::StringArray getAvailableDevices();
 
 private:
-  class SettingsLookAndFeel : public DarkLookAndFeel {
+  class SettingsLookAndFeel : public DarkLookAndFeel
+  {
   public:
-    juce::Font getTextButtonFont(juce::TextButton &, int) override {
+    juce::Font getTextButtonFont(juce::TextButton &, int) override
+    {
       return AppFont::getFont(15.0f);
     }
 
-    juce::Font getLabelFont(juce::Label &) override {
+    juce::Font getLabelFont(juce::Label &) override
+    {
       return AppFont::getFont(15.0f);
     }
 
-    juce::Font getComboBoxFont(juce::ComboBox &) override {
+    juce::Font getComboBoxFont(juce::ComboBox &) override
+    {
       return AppFont::getFont(15.0f);
     }
 
@@ -79,7 +84,8 @@ private:
     void drawButtonBackground(juce::Graphics &g, juce::Button &button,
                               const juce::Colour &backgroundColour,
                               bool shouldDrawButtonAsHighlighted,
-                              bool shouldDrawButtonAsDown) override {
+                              bool shouldDrawButtonAsDown) override
+    {
       auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
       auto fill = backgroundColour;
 
@@ -100,7 +106,11 @@ private:
     }
   };
 
-  enum class SettingsTab { General, Audio };
+  enum class SettingsTab
+  {
+    General,
+    Audio
+  };
 
   void updateDeviceList();
   void updateGPUDeviceList(const juce::String &deviceType);
@@ -133,10 +143,10 @@ private:
 
   juce::Label pitchDetectorLabel;
   StyledComboBox pitchDetectorComboBox;
-  juce::Label someSegmentsDebugLabel;
-  juce::ToggleButton someSegmentsDebugToggle;
-  juce::Label someValuesDebugLabel;
-  juce::ToggleButton someValuesDebugToggle;
+  juce::Label gameChunksDebugLabel;
+  juce::ToggleButton segmentsDebugToggle;
+  juce::Label gameValuesDebugLabel;
+  juce::ToggleButton gameValuesDebugToggle;
   juce::Label uvInterpolationDebugLabel;
   juce::ToggleButton uvInterpolationDebugToggle;
   juce::Label actualF0DebugLabel;
@@ -168,8 +178,8 @@ private:
   juce::String lastConfirmedDevice = "CPU";
   int lastConfirmedGpuDeviceId = 0;
   PitchDetectorType pitchDetectorType = PitchDetectorType::RMVPE;
-  bool showSomeSegmentsDebug = false;
-  bool showSomeValuesDebug = false;
+  bool showSegmentsDebug = false;
+  bool showGameValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
   SettingsTab activeTab = SettingsTab::General;

@@ -1,5 +1,7 @@
 #include "RMVPEPitchDetector.h"
+#include "../Utils/AppLogger.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <thread>
 
@@ -8,28 +10,38 @@ RMVPEPitchDetector::RMVPEPitchDetector() = default;
 RMVPEPitchDetector::~RMVPEPitchDetector() = default;
 
 bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
-                                   GPUProvider provider, int deviceId) {
+                                   GPUProvider provider, int deviceId)
+{
 #ifdef HAVE_ONNXRUNTIME
-  try {
+  try
+  {
     // Initialize ONNX Runtime
     onnxEnv = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING,
                                          "RMVPEPitchDetector");
 
     Ort::SessionOptions sessionOptions;
-    if (provider == GPUProvider::CPU) {
+    sessionOptions.SetGraphOptimizationLevel(
+        GraphOptimizationLevel::ORT_ENABLE_ALL);
+    sessionOptions.EnableCpuMemArena();
+
+    if (provider == GPUProvider::CPU)
+    {
       const int numThreads = std::max(1u, std::thread::hardware_concurrency()) / 2;
       sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
-    } else {
+      sessionOptions.EnableMemPattern();
+    }
+    else
+    {
       sessionOptions.SetIntraOpNumThreads(1);
       sessionOptions.SetInterOpNumThreads(1);
     }
-    sessionOptions.SetGraphOptimizationLevel(
-        GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     // Configure execution provider based on GPU settings
 #if defined(_WIN32) && defined(USE_DIRECTML)
-    if (provider == GPUProvider::DirectML) {
-      try {
+    if (provider == GPUProvider::DirectML)
+    {
+      try
+      {
         const OrtApi &ortApi = Ort::GetApi();
         const OrtDmlApi *ortDmlApi = nullptr;
         Ort::ThrowOnError(ortApi.GetExecutionProviderApi(
@@ -41,28 +53,45 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
 
         Ort::ThrowOnError(ortDmlApi->SessionOptionsAppendExecutionProvider_DML(
             sessionOptions, deviceId));
-      } catch (const Ort::Exception &e) {
       }
-    } else
+      catch (const Ort::Exception &e)
+      {
+      }
+    }
+    else
 #endif
 #ifdef USE_CUDA
-        if (provider == GPUProvider::CUDA) {
-      try {
+        if (provider == GPUProvider::CUDA)
+    {
+      try
+      {
         OrtCUDAProviderOptions cudaOptions;
         cudaOptions.device_id = deviceId;
+        cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchDefault;
+        cudaOptions.arena_extend_strategy = 1;
         sessionOptions.AppendExecutionProvider_CUDA(cudaOptions);
-      } catch (const Ort::Exception &e) {
       }
-    } else
+      catch (const Ort::Exception &e)
+      {
+      }
+    }
+    else
 #endif
-        if (provider == GPUProvider::CoreML) {
-      try {
+        if (provider == GPUProvider::CoreML)
+    {
+      try
+      {
         sessionOptions.AppendExecutionProvider("CoreML",
-            {{"MLComputeUnits", "ALL"}});
-      } catch (const Ort::Exception &e) {
+                                               {{"MLComputeUnits", "ALL"}});
       }
-    } else {
-      if (provider != GPUProvider::CPU) {
+      catch (const Ort::Exception &e)
+      {
+      }
+    }
+    else
+    {
+      if (provider != GPUProvider::CPU)
+      {
       }
     }
 
@@ -87,12 +116,14 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
     inputNames.clear();
     outputNames.clear();
 
-    for (size_t i = 0; i < numInputs; ++i) {
+    for (size_t i = 0; i < numInputs; ++i)
+    {
       auto namePtr = onnxSession->GetInputNameAllocated(i, *allocator);
       inputNameStrings.push_back(namePtr.get());
     }
 
-    for (size_t i = 0; i < numOutputs; ++i) {
+    for (size_t i = 0; i < numOutputs; ++i)
+    {
       auto namePtr = onnxSession->GetOutputNameAllocated(i, *allocator);
       outputNameStrings.push_back(namePtr.get());
     }
@@ -106,10 +137,14 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
 
     loaded = true;
     return true;
-  } catch (const Ort::Exception &e) {
+  }
+  catch (const Ort::Exception &e)
+  {
     loaded = false;
     return false;
-  } catch (const std::exception &e) {
+  }
+  catch (const std::exception &e)
+  {
     loaded = false;
     return false;
   }
@@ -120,8 +155,10 @@ bool RMVPEPitchDetector::loadModel(const juce::File &modelPath,
 
 std::vector<float> RMVPEPitchDetector::resampleTo16k(const float *audio,
                                                      int numSamples,
-                                                     int srcRate) {
-  if (srcRate == SAMPLE_RATE) {
+                                                     int srcRate)
+{
+  if (srcRate == SAMPLE_RATE)
+  {
     return std::vector<float>(audio, audio + numSamples);
   }
 
@@ -131,15 +168,19 @@ std::vector<float> RMVPEPitchDetector::resampleTo16k(const float *audio,
 
   std::vector<float> resampled(outSamples);
 
-  for (int i = 0; i < outSamples; ++i) {
+  for (int i = 0; i < outSamples; ++i)
+  {
     double srcPos = i / ratio;
     int srcIdx = static_cast<int>(srcPos);
     double frac = srcPos - srcIdx;
 
-    if (srcIdx + 1 < numSamples) {
+    if (srcIdx + 1 < numSamples)
+    {
       resampled[i] = static_cast<float>(audio[srcIdx] * (1.0 - frac) +
                                         audio[srcIdx + 1] * frac);
-    } else if (srcIdx < numSamples) {
+    }
+    else if (srcIdx < numSamples)
+    {
       resampled[i] = audio[srcIdx];
     }
   }
@@ -149,26 +190,31 @@ std::vector<float> RMVPEPitchDetector::resampleTo16k(const float *audio,
 
 std::vector<float> RMVPEPitchDetector::decodeF0(const float *hidden,
                                                 int numFrames,
-                                                float threshold) {
+                                                float threshold)
+{
   // Decode hidden states to F0 values
   // This matches the Python decode function in export.py
   std::vector<float> f0(numFrames, 0.0f);
 
-  for (int t = 0; t < numFrames; ++t) {
+  for (int t = 0; t < numFrames; ++t)
+  {
     const float *frame = hidden + t * N_CLASS;
 
     // Find max value and index
     int center = 0;
     float maxVal = frame[0];
-    for (int i = 1; i < N_CLASS; ++i) {
-      if (frame[i] > maxVal) {
+    for (int i = 1; i < N_CLASS; ++i)
+    {
+      if (frame[i] > maxVal)
+      {
         maxVal = frame[i];
         center = i;
       }
     }
 
     // Check threshold (unvoiced detection)
-    if (maxVal < threshold) {
+    if (maxVal < threshold)
+    {
       f0[t] = 0.0f;
       continue;
     }
@@ -180,18 +226,22 @@ std::vector<float> RMVPEPitchDetector::decodeF0(const float *hidden,
     float weightedSum = 0.0f;
     float weightSum = 0.0f;
 
-    for (int i = start; i < end; ++i) {
+    for (int i = start; i < end; ++i)
+    {
       // idx_cents = idx * 20 + RMVPE_CONST
       float idxCents = i * 20.0f + RMVPE_CONST;
       weightedSum += frame[i] * idxCents;
       weightSum += frame[i];
     }
 
-    if (weightSum > 0.0f) {
+    if (weightSum > 0.0f)
+    {
       float cents = weightedSum / weightSum;
       // f0 = 10 * 2^(cents/1200)
       f0[t] = 10.0f * std::pow(2.0f, cents / 1200.0f);
-    } else {
+    }
+    else
+    {
       f0[t] = 0.0f;
     }
   }
@@ -201,13 +251,16 @@ std::vector<float> RMVPEPitchDetector::decodeF0(const float *hidden,
 
 std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
                                                  int numSamples, int sampleRate,
-                                                 float threshold) {
+                                                 float threshold)
+{
 #ifdef HAVE_ONNXRUNTIME
-  if (!loaded) {
+  if (!loaded)
+  {
     return {};
   }
 
-  try {
+  try
+  {
     // Step 1: Resample to 16kHz
     auto audio16k = resampleTo16k(audio, numSamples, sampleRate);
 
@@ -216,7 +269,8 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
     constexpr int MAX_CHUNK_SAMPLES = 16000 * 30;
     constexpr int OVERLAP_SAMPLES = 16000; // 1 second overlap
 
-    if (static_cast<int>(audio16k.size()) <= MAX_CHUNK_SAMPLES) {
+    if (static_cast<int>(audio16k.size()) <= MAX_CHUNK_SAMPLES)
+    {
       // Short audio: process directly
       return extractF0Chunk(audio16k.data(), static_cast<int>(audio16k.size()),
                             threshold);
@@ -227,7 +281,8 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
     int pos = 0;
     int totalSamples = static_cast<int>(audio16k.size());
 
-    while (pos < totalSamples) {
+    while (pos < totalSamples)
+    {
       int chunkEnd = std::min(pos + MAX_CHUNK_SAMPLES, totalSamples);
       int chunkSize = chunkEnd - pos;
 
@@ -236,13 +291,17 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
       if (chunkF0.empty())
         return {};
 
-      if (pos == 0) {
+      if (pos == 0)
+      {
         // First chunk: use all frames
         allF0 = std::move(chunkF0);
-      } else {
+      }
+      else
+      {
         // Subsequent chunks: skip overlap frames
         int overlapFrames = OVERLAP_SAMPLES / HOP_SIZE;
-        if (static_cast<int>(chunkF0.size()) > overlapFrames) {
+        if (static_cast<int>(chunkF0.size()) > overlapFrames)
+        {
           allF0.insert(allF0.end(), chunkF0.begin() + overlapFrames,
                        chunkF0.end());
         }
@@ -252,9 +311,13 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
     }
 
     return allF0;
-  } catch (const Ort::Exception &e) {
+  }
+  catch (const Ort::Exception &e)
+  {
     return {};
-  } catch (const std::exception &e) {
+  }
+  catch (const std::exception &e)
+  {
     return {};
   }
 #else
@@ -264,7 +327,8 @@ std::vector<float> RMVPEPitchDetector::extractF0(const float *audio,
 
 std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
                                                       int numSamples,
-                                                      float threshold) {
+                                                      float threshold)
+{
 #ifdef HAVE_ONNXRUNTIME
   if (!onnxSession || numSamples <= 0)
     return {};
@@ -285,9 +349,12 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
       memoryInfo, thresholdScratch.data(), thresholdScratch.size(),
       thresholdShapeScratch.data(), thresholdShapeScratch.size()));
 
+  auto t0 = std::chrono::high_resolution_clock::now();
   auto outputTensors = onnxSession->Run(
       runOptions, inputNames.data(), inputTensorScratch.data(),
       inputTensorScratch.size(), outputNames.data(), outputNames.size());
+  auto t1 = std::chrono::high_resolution_clock::now();
+  LOG("RMVPE chunk inference: " + juce::String(std::chrono::duration<double, std::milli>(t1 - t0).count(), 1) + " ms" + " (" + juce::String(numSamples) + " samples)");
 
   // Get output - f0 [1, n_frames]
   float *f0Data = outputTensors[0].GetTensorMutableData<float>();
@@ -302,13 +369,16 @@ std::vector<float> RMVPEPitchDetector::extractF0Chunk(const float *audio16k,
 
 std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
     const float *audio, int numSamples, int sampleRate, float threshold,
-    std::function<void(double)> progressCallback) {
+    std::function<void(double)> progressCallback)
+{
 #ifdef HAVE_ONNXRUNTIME
-  if (!loaded) {
+  if (!loaded)
+  {
     return {};
   }
 
-  try {
+  try
+  {
     if (progressCallback)
       progressCallback(0.1);
 
@@ -326,7 +396,8 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
     int pos = 0;
     const int totalSamples = static_cast<int>(audio16k.size());
 
-    while (pos < totalSamples) {
+    while (pos < totalSamples)
+    {
       const int chunkEnd = std::min(pos + MAX_CHUNK_SAMPLES, totalSamples);
       const int chunkSize = chunkEnd - pos;
 
@@ -334,18 +405,23 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
       if (chunkF0.empty())
         return {};
 
-      if (pos == 0) {
+      if (pos == 0)
+      {
         allF0 = std::move(chunkF0);
-      } else {
+      }
+      else
+      {
         const int overlapFrames = OVERLAP_SAMPLES / HOP_SIZE;
-        if (static_cast<int>(chunkF0.size()) > overlapFrames) {
+        if (static_cast<int>(chunkF0.size()) > overlapFrames)
+        {
           allF0.insert(allF0.end(), chunkF0.begin() + overlapFrames,
                        chunkF0.end());
         }
       }
 
       pos += MAX_CHUNK_SAMPLES - OVERLAP_SAMPLES;
-      if (progressCallback) {
+      if (progressCallback)
+      {
         const double processedRatio =
             totalSamples > 0
                 ? static_cast<double>(std::min(pos, totalSamples)) /
@@ -359,9 +435,13 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
       progressCallback(1.0);
 
     return allF0;
-  } catch (const Ort::Exception &e) {
+  }
+  catch (const Ort::Exception &e)
+  {
     return {};
-  } catch (const std::exception &e) {
+  }
+  catch (const std::exception &e)
+  {
     return {};
   }
 #else
@@ -369,7 +449,8 @@ std::vector<float> RMVPEPitchDetector::extractF0WithProgress(
 #endif
 }
 
-int RMVPEPitchDetector::getNumFrames(int numSamples, int sampleRate) const {
+int RMVPEPitchDetector::getNumFrames(int numSamples, int sampleRate) const
+{
   // Convert to 16kHz sample count
   int samples16k = static_cast<int>(
       numSamples * static_cast<double>(SAMPLE_RATE) / sampleRate);
@@ -377,11 +458,13 @@ int RMVPEPitchDetector::getNumFrames(int numSamples, int sampleRate) const {
   return samples16k / HOP_SIZE + 1;
 }
 
-float RMVPEPitchDetector::getTimeForFrame(int frameIndex) const {
+float RMVPEPitchDetector::getTimeForFrame(int frameIndex) const
+{
   return static_cast<float>(frameIndex * HOP_SIZE) / SAMPLE_RATE;
 }
 
-int RMVPEPitchDetector::getHopSizeForSampleRate(int sampleRate) const {
+int RMVPEPitchDetector::getHopSizeForSampleRate(int sampleRate) const
+{
   return static_cast<int>(HOP_SIZE * static_cast<double>(sampleRate) /
                           SAMPLE_RATE);
 }

@@ -11,14 +11,15 @@
 #include <climits>
 #include <cmath>
 
-EditorController::EditorController(bool enableAudioDevice) {
+EditorController::EditorController(bool enableAudioDevice)
+{
   project = std::make_unique<Project>();
   if (enableAudioDevice)
     audioEngine = std::make_unique<AudioEngine>();
 
   fcpePitchDetector = std::make_unique<FCPEPitchDetector>();
   rmvpePitchDetector = std::make_unique<RMVPEPitchDetector>();
-  someDetector = std::make_unique<SOMEDetector>();
+  gameDetector = std::make_unique<GAMEDetector>();
   vocoder = std::make_unique<Vocoder>();
   audioAnalyzer = std::make_unique<AudioAnalyzer>();
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
@@ -28,11 +29,11 @@ EditorController::EditorController(bool enableAudioDevice) {
   melFilterbankPath = PlatformPaths::getModelFile("mel_filterbank.bin");
   centTablePath = PlatformPaths::getModelFile("cent_table.bin");
   rmvpeModelPath = PlatformPaths::getModelFile("rmvpe.onnx");
-  someModelPath = PlatformPaths::getModelFile("some.onnx");
+  gameModelDir = PlatformPaths::getModelSubDir("GAME", "encoder.onnx");
 
   audioAnalyzer->setFCPEDetector(fcpePitchDetector.get());
   audioAnalyzer->setRMVPEDetector(rmvpePitchDetector.get());
-  audioAnalyzer->setSOMEDetector(someDetector.get());
+  audioAnalyzer->setGAMEDetector(gameDetector.get());
   audioAnalyzer->setPitchDetectorType(pitchDetectorType);
 
   incrementalSynth->setVocoder(vocoder.get());
@@ -40,7 +41,8 @@ EditorController::EditorController(bool enableAudioDevice) {
     playbackController->setAudioEngine(audioEngine.get());
 }
 
-EditorController::~EditorController() {
+EditorController::~EditorController()
+{
   if (modelReloadThread.joinable())
     modelReloadThread.join();
   cancelLoadingFlag = true;
@@ -53,12 +55,14 @@ EditorController::~EditorController() {
     renderThread.join();
 }
 
-void EditorController::setProject(std::unique_ptr<Project> newProject) {
+void EditorController::setProject(std::unique_ptr<Project> newProject)
+{
   project = std::move(newProject);
 }
 
 GPUProvider EditorController::getProviderFromDevice(
-    const juce::String &deviceName) const {
+    const juce::String &deviceName) const
+{
   if (deviceName == "CUDA")
     return GPUProvider::CUDA;
   if (deviceName == "DirectML")
@@ -70,7 +74,8 @@ GPUProvider EditorController::getProviderFromDevice(
   return GPUProvider::CPU;
 }
 
-void EditorController::reloadInferenceModels(bool async) {
+void EditorController::reloadInferenceModels(bool async)
+{
   auto provider = getProviderFromDevice(device);
   int resolvedDeviceId = deviceId < 0 ? 0 : deviceId;
 
@@ -78,7 +83,7 @@ void EditorController::reloadInferenceModels(bool async) {
   auto melPath = melFilterbankPath;
   auto centPath = centTablePath;
   auto rmvpePath = rmvpeModelPath;
-  auto somePath = someModelPath;
+  auto gamePath = gameModelDir;
 
   auto reloadTask = [device = device,
                      provider,
@@ -87,7 +92,8 @@ void EditorController::reloadInferenceModels(bool async) {
                      melPath,
                      centPath,
                      rmvpePath,
-                     somePath](EditorController *self) {
+                     gamePath](EditorController *self)
+  {
     if (!self)
       return;
 
@@ -95,10 +101,12 @@ void EditorController::reloadInferenceModels(bool async) {
     // with its own Ort::Env, so no shared state.
     std::thread fcpeThread;
     std::thread rmvpeThread;
-    std::thread someThread;
+    std::thread gameThread;
 
-    if (self->fcpePitchDetector && fcpePath.existsAsFile()) {
-      fcpeThread = std::thread([&]() {
+    if (self->fcpePitchDetector && fcpePath.existsAsFile())
+    {
+      fcpeThread = std::thread([&]()
+                               {
         LOG("EditorController: loading FCPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->fcpePitchDetector->loadModel(fcpePath, melPath, centPath,
@@ -106,14 +114,17 @@ void EditorController::reloadInferenceModels(bool async) {
           LOG("FCPE pitch detector loaded successfully");
         } else {
           LOG("Failed to load FCPE model");
-        }
-      });
-    } else if (self->fcpePitchDetector) {
+        } });
+    }
+    else if (self->fcpePitchDetector)
+    {
       LOG("FCPE model not found at: " + fcpePath.getFullPathName());
     }
 
-    if (self->rmvpePitchDetector && rmvpePath.existsAsFile()) {
-      rmvpeThread = std::thread([&]() {
+    if (self->rmvpePitchDetector && rmvpePath.existsAsFile())
+    {
+      rmvpeThread = std::thread([&]()
+                                {
         LOG("EditorController: loading RMVPE model (device " + device +
             ", id " + juce::String(resolvedDeviceId) + ")...");
         if (self->rmvpePitchDetector->loadModel(rmvpePath, provider,
@@ -121,25 +132,35 @@ void EditorController::reloadInferenceModels(bool async) {
           LOG("RMVPE pitch detector loaded successfully");
         } else {
           LOG("Failed to load RMVPE model");
-        }
-      });
-    } else if (self->rmvpePitchDetector) {
+        } });
+    }
+    else if (self->rmvpePitchDetector)
+    {
       LOG("RMVPE model not found at: " + rmvpePath.getFullPathName());
     }
 
-    if (self->someDetector && somePath.existsAsFile()) {
-      someThread = std::thread([&]() {
-        LOG("EditorController: loading SOME model (device " + device + ", id " +
-            juce::String(resolvedDeviceId) + ")...");
-        if (self->someDetector->loadModel(somePath, provider,
-                                          resolvedDeviceId)) {
-          LOG("SOME detector loaded successfully");
+    if (self->gameDetector && gamePath.isDirectory())
+    {
+      gameThread = std::thread([&]()
+                               {
+        LOG("EditorController: loading GAME models from " + gamePath.getFullPathName() +
+            " (device " + device + ", id " + juce::String(resolvedDeviceId) + ")...");
+        if (self->gameDetector->loadModels(gamePath, provider,
+                                           resolvedDeviceId)) {
+          LOG("GAME detector loaded successfully, isLoaded=" +
+              juce::String(self->gameDetector->isLoaded() ? "true" : "false"));
         } else {
-          LOG("Failed to load SOME model");
-        }
-      });
-    } else if (self->someDetector) {
-      LOG("SOME model not found at: " + somePath.getFullPathName());
+          LOG("Failed to load GAME models from " + gamePath.getFullPathName());
+        } });
+    }
+    else if (self->gameDetector)
+    {
+      LOG("GAME model directory not found: " + gamePath.getFullPathName() +
+          " isDirectory=" + juce::String(gamePath.isDirectory() ? "true" : "false"));
+    }
+    else
+    {
+      LOG("GAME detector not created (gameDetector is null)");
     }
 
     // Wait for all parallel loads to complete
@@ -147,11 +168,12 @@ void EditorController::reloadInferenceModels(bool async) {
       fcpeThread.join();
     if (rmvpeThread.joinable())
       rmvpeThread.join();
-    if (someThread.joinable())
-      someThread.join();
+    if (gameThread.joinable())
+      gameThread.join();
   };
 
-  if (!async) {
+  if (!async)
+  {
     reloadTask(this);
     return;
   }
@@ -162,13 +184,14 @@ void EditorController::reloadInferenceModels(bool async) {
   if (modelReloadThread.joinable())
     modelReloadThread.join();
 
-  modelReloadThread = std::thread([this, reloadTask]() mutable {
+  modelReloadThread = std::thread([this, reloadTask]() mutable
+                                  {
     reloadTask(this);
-    isReloadingModels = false;
-  });
+    isReloadingModels = false; });
 }
 
-bool EditorController::isInferenceBusy() const {
+bool EditorController::isInferenceBusy() const
+{
   if (audioAnalyzer && audioAnalyzer->isAnalyzing())
     return true;
   if (incrementalSynth && incrementalSynth->isSynthesizing())
@@ -178,7 +201,8 @@ bool EditorController::isInferenceBusy() const {
   return false;
 }
 
-void EditorController::requestCancelLoading() {
+void EditorController::requestCancelLoading()
+{
   cancelLoadingFlag = true;
 }
 
@@ -186,7 +210,8 @@ void EditorController::loadAudioFileAsync(
     const juce::File &file,
     const ProgressCallback &onProgress,
     const LoadCompleteCallback &onComplete,
-    const CancelCallback &onCancelled) {
+    const CancelCallback &onCancelled)
+{
   if (isLoadingAudio.load())
     return;
 
@@ -196,7 +221,8 @@ void EditorController::loadAudioFileAsync(
   if (loaderThread.joinable())
     loaderThread.join();
 
-  loaderThread = std::thread([this, file, onProgress, onComplete, onCancelled]() {
+  loaderThread = std::thread([this, file, onProgress, onComplete, onCancelled]()
+                             {
     auto updateProgress = [&](double p, const juce::String &msg) {
       if (onProgress)
         onProgress(p, msg);
@@ -307,31 +333,33 @@ void EditorController::loadAudioFileAsync(
           isLoadingAudio = false;
           if (onComplete)
             onComplete(original);
-        });
-  });
+        }); });
 }
 
 void EditorController::setHostAudioAsync(
     const juce::AudioBuffer<float> &buffer,
     double sampleRate,
     const ProgressCallback &onProgress,
-    const LoadCompleteCallback &onComplete) {
+    const LoadCompleteCallback &onComplete)
+{
   isLoadingAudio = true;
   cancelLoadingFlag.store(true);
-  if (loaderThread.joinable()) {
+  if (loaderThread.joinable())
+  {
     if (loaderJoinerThread.joinable())
       loaderJoinerThread.join();
     auto old = std::move(loaderThread);
-    loaderJoinerThread = std::thread([t = std::move(old)]() mutable {
+    loaderJoinerThread = std::thread([t = std::move(old)]() mutable
+                                     {
       if (t.joinable())
-        t.join();
-    });
+        t.join(); });
   }
   cancelLoadingFlag.store(false);
 
   const auto jobId = hostAnalysisJobId.fetch_add(1) + 1;
 
-  loaderThread = std::thread([this, buffer, sampleRate, onProgress, onComplete, jobId]() mutable {
+  loaderThread = std::thread([this, buffer, sampleRate, onProgress, onComplete, jobId]() mutable
+                             {
     if (cancelLoadingFlag.load() || hostAnalysisJobId.load() != jobId)
     {
       isLoadingAudio = false;
@@ -401,18 +429,19 @@ void EditorController::setHostAudioAsync(
           isLoadingAudio = false;
           if (onComplete)
             onComplete(original);
-        });
-  });
+        }); });
 }
 
-void EditorController::requestCancelRender() {
+void EditorController::requestCancelRender()
+{
   cancelRenderFlag = true;
 }
 
 void EditorController::renderProcessedAudioAsync(
     const Project &project,
     float globalPitchOffset,
-    const std::function<void(bool)> &onComplete) {
+    const std::function<void(bool)> &onComplete)
+{
   cancelRenderFlag = true;
   if (renderThread.joinable())
     renderThread.join();
@@ -428,24 +457,29 @@ void EditorController::renderProcessedAudioAsync(
       [this, f0Snapshot = std::move(f0Snapshot),
        voicedMaskSnapshot = std::move(voicedMaskSnapshot),
        melSpecSnapshot = std::move(melSpecSnapshot), globalPitchOffset, voc,
-       onComplete]() mutable {
+       onComplete]() mutable
+      {
         isRenderingFlag = true;
 
-        auto finishRendering = [this]() { isRenderingFlag = false; };
+        auto finishRendering = [this]()
+        { isRenderingFlag = false; };
 
         if (cancelRenderFlag.load())
           return finishRendering();
 
-        if (f0Snapshot.empty() || melSpecSnapshot.empty()) {
+        if (f0Snapshot.empty() || melSpecSnapshot.empty())
+        {
           if (onComplete)
-            juce::MessageManager::callAsync([onComplete]() { onComplete(false); });
+            juce::MessageManager::callAsync([onComplete]()
+                                            { onComplete(false); });
           return finishRendering();
         }
 
         if (voicedMaskSnapshot.size() < f0Snapshot.size())
           voicedMaskSnapshot.resize(f0Snapshot.size(), true);
 
-        for (size_t i = 0; i < f0Snapshot.size(); ++i) {
+        for (size_t i = 0; i < f0Snapshot.size(); ++i)
+        {
           if (cancelRenderFlag.load())
             return finishRendering();
           if (voicedMaskSnapshot[i] && f0Snapshot[i] > 0)
@@ -463,7 +497,8 @@ void EditorController::renderProcessedAudioAsync(
 
         if (onComplete)
           juce::MessageManager::callAsync(
-              [onComplete, ok = !synthesized.empty()]() { onComplete(ok); });
+              [onComplete, ok = !synthesized.empty()]()
+              { onComplete(ok); });
         finishRendering();
       });
 }
@@ -473,40 +508,47 @@ void EditorController::resynthesizeIncrementalAsync(
     const std::function<void(const juce::String &)> &onProgress,
     const std::function<void(bool)> &onComplete,
     std::atomic<bool> &pendingRerun,
-    bool isPluginMode) {
+    bool isPluginMode)
+{
   auto *synth = incrementalSynth.get();
-  if (!synth || !vocoder) {
+  if (!synth || !vocoder)
+  {
     if (onComplete)
       onComplete(false);
     return;
   }
 
-  if (synth->isSynthesizing()) {
+  if (synth->isSynthesizing())
+  {
     pendingRerun.store(true);
     synth->cancel();
     return;
   }
 
   auto &audioData = project.getAudioData();
-  if (audioData.melSpectrogram.empty() || audioData.f0.empty()) {
+  if (audioData.melSpectrogram.empty() || audioData.f0.empty())
+  {
     if (onComplete)
       onComplete(false);
     return;
   }
-  if (!vocoder->isLoaded()) {
+  if (!vocoder->isLoaded())
+  {
     if (onComplete)
       onComplete(false);
     return;
   }
 
-  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange()) {
+  if (!project.hasDirtyNotes() && !project.hasF0DirtyRange())
+  {
     if (onComplete)
       onComplete(false);
     return;
   }
 
   auto [dirtyStart, dirtyEnd] = project.getDirtyFrameRange();
-  if (dirtyStart < 0 || dirtyEnd < 0) {
+  if (dirtyStart < 0 || dirtyEnd < 0)
+  {
     if (onComplete)
       onComplete(false);
     return;
@@ -524,43 +566,52 @@ void EditorController::resynthesizeIncrementalAsync(
     audioEnginePtr = audioEngine.get();
 
   synth->synthesizeRegion(
-      [onProgress](const juce::String &message) {
+      [onProgress](const juce::String &message)
+      {
         if (onProgress)
           onProgress(message);
       },
       [this, projectPtr = &project, pending = &pendingRerun, onComplete,
-       audioEnginePtr, isPluginMode](bool success) {
-        if (!success) {
-          if (pending->exchange(false)) {
+       audioEnginePtr, isPluginMode](bool success)
+      {
+        if (!success)
+        {
+          if (pending->exchange(false))
+          {
             juce::MessageManager::callAsync([this, projectPtr, pending, onComplete,
-                                             audioEnginePtr, isPluginMode]() {
-              resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete,
-                                           *pending, isPluginMode);
-            });
-          } else if (onComplete) {
+                                             audioEnginePtr, isPluginMode]()
+                                            { resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete,
+                                                                           *pending, isPluginMode); });
+          }
+          else if (onComplete)
+          {
             onComplete(false);
           }
           return;
         }
 
-        if (audioEnginePtr && !isPluginMode) {
+        if (audioEnginePtr && !isPluginMode)
+        {
           auto &audioData = projectPtr->getAudioData();
-          try {
+          try
+          {
             audioEnginePtr->loadWaveform(audioData.waveform,
                                          audioData.sampleRate, true);
-          } catch (...) {
+          }
+          catch (...)
+          {
           }
         }
 
         if (onComplete)
           onComplete(true);
 
-        if (pending->exchange(false)) {
+        if (pending->exchange(false))
+        {
           juce::MessageManager::callAsync([this, projectPtr, pending, onComplete,
-                                           audioEnginePtr, isPluginMode]() {
-            resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete,
-                                         *pending, isPluginMode);
-          });
+                                           audioEnginePtr, isPluginMode]()
+                                          { resynthesizeIncrementalAsync(*projectPtr, nullptr, onComplete,
+                                                                         *pending, isPluginMode); });
         }
       });
 }
@@ -568,29 +619,30 @@ void EditorController::resynthesizeIncrementalAsync(
 void EditorController::analyzeAudio(
     Project &targetProject,
     const std::function<void(double, const juce::String &)> &onProgress,
-    std::function<void()> onComplete) {
+    std::function<void()> onComplete)
+{
   auto &audioData = targetProject.getAudioData();
   if (audioData.waveform.getNumSamples() == 0)
     return;
 
   auto showMissingModelAndAbort = [](const juce::String &modelName,
-                                     const juce::File &path) {
-    juce::MessageManager::callAsync([modelName, path]() {
-      juce::AlertWindow::showMessageBoxAsync(
-          juce::AlertWindow::WarningIcon, "Missing model file",
-          modelName + " was not found at:\n" + path.getFullPathName() +
-              "\n\nPlease install the required model files and try again.");
-    });
+                                     const juce::File &path)
+  {
+    juce::MessageManager::callAsync([modelName, path]()
+                                    { juce::AlertWindow::showMessageBoxAsync(
+                                          juce::AlertWindow::WarningIcon, "Missing model file",
+                                          modelName + " was not found at:\n" + path.getFullPathName() +
+                                              "\n\nPlease install the required model files and try again."); });
   };
   auto showModelLoadFailedAndAbort = [](const juce::String &modelName,
-                                        const juce::File &path) {
-    juce::MessageManager::callAsync([modelName, path]() {
-      juce::AlertWindow::showMessageBoxAsync(
-          juce::AlertWindow::WarningIcon, "Model load failed",
-          modelName + " exists but failed to load:\n" + path.getFullPathName() +
-              "\n\nPlease check inference device settings (CPU/CUDA/DirectML) "
-              "or model compatibility.");
-    });
+                                        const juce::File &path)
+  {
+    juce::MessageManager::callAsync([modelName, path]()
+                                    { juce::AlertWindow::showMessageBoxAsync(
+                                          juce::AlertWindow::WarningIcon, "Model load failed",
+                                          modelName + " exists but failed to load:\n" + path.getFullPathName() +
+                                              "\n\nPlease check inference device settings (CPU/CUDA/DirectML) "
+                                              "or model compatibility."); });
   };
 
   // Extract F0
@@ -606,29 +658,38 @@ void EditorController::analyzeAudio(
 
   onProgress(0.55, "Extracting pitch (F0)...");
 
-  if (pitchDetectorType == PitchDetectorType::RMVPE) {
-    if (!rmvpeModelPath.existsAsFile()) {
+  if (pitchDetectorType == PitchDetectorType::RMVPE)
+  {
+    if (!rmvpeModelPath.existsAsFile())
+    {
       showMissingModelAndAbort("rmvpe.onnx", rmvpeModelPath);
       return;
     }
-    if (!rmvpePitchDetector || !rmvpePitchDetector->isLoaded()) {
+    if (!rmvpePitchDetector || !rmvpePitchDetector->isLoaded())
+    {
       showModelLoadFailedAndAbort("rmvpe.onnx", rmvpeModelPath);
       return;
     }
-  } else if (pitchDetectorType == PitchDetectorType::FCPE) {
-    if (!fcpeModelPath.existsAsFile()) {
+  }
+  else if (pitchDetectorType == PitchDetectorType::FCPE)
+  {
+    if (!fcpeModelPath.existsAsFile())
+    {
       showMissingModelAndAbort("fcpe.onnx", fcpeModelPath);
       return;
     }
-    if (!fcpePitchDetector || !fcpePitchDetector->isLoaded()) {
+    if (!fcpePitchDetector || !fcpePitchDetector->isLoaded())
+    {
       showModelLoadFailedAndAbort("fcpe.onnx", fcpeModelPath);
       return;
     }
-    if (!melFilterbankPath.existsAsFile()) {
+    if (!melFilterbankPath.existsAsFile())
+    {
       showMissingModelAndAbort("mel_filterbank.bin", melFilterbankPath);
       return;
     }
-    if (!centTablePath.existsAsFile()) {
+    if (!centTablePath.existsAsFile())
+    {
       showMissingModelAndAbort("cent_table.bin", centTablePath);
       return;
     }
@@ -645,21 +706,24 @@ void EditorController::analyzeAudio(
                                                                       : "NO"));
 
   std::vector<float> extractedF0;
-  if (pitchDetectorType == PitchDetectorType::RMVPE) {
+  if (pitchDetectorType == PitchDetectorType::RMVPE)
+  {
     extractedF0 = rmvpePitchDetector->extractF0(samples, numSamples,
                                                 audioData.sampleRate);
-  } else if (pitchDetectorType == PitchDetectorType::FCPE) {
+  }
+  else if (pitchDetectorType == PitchDetectorType::FCPE)
+  {
     extractedF0 =
         fcpePitchDetector->extractF0(samples, numSamples, audioData.sampleRate);
   }
 
-  if (extractedF0.empty() || targetFrames <= 0) {
-    juce::MessageManager::callAsync([]() {
-      juce::AlertWindow::showMessageBoxAsync(
-          juce::AlertWindow::WarningIcon, "Inference failed",
-          "Failed to extract pitch (F0). Please check your model installation "
-          "and settings.");
-    });
+  if (extractedF0.empty() || targetFrames <= 0)
+  {
+    juce::MessageManager::callAsync([]()
+                                    { juce::AlertWindow::showMessageBoxAsync(
+                                          juce::AlertWindow::WarningIcon, "Inference failed",
+                                          "Failed to extract pitch (F0). Please check your model installation "
+                                          "and settings."); });
     return;
   }
 
@@ -671,37 +735,51 @@ void EditorController::analyzeAudio(
         static_cast<double>(HOP_SIZE) /
         static_cast<double>(std::max(1, audioData.sampleRate));
 
-    for (int i = 0; i < targetFrames; ++i) {
+    for (int i = 0; i < targetFrames; ++i)
+    {
       double vocoderTime = i * vocoderFrameTime;
       double neuralFramePos = vocoderTime / neuralFrameTime;
       int srcIdx = static_cast<int>(neuralFramePos);
       double frac = neuralFramePos - srcIdx;
 
-      if (srcIdx + 1 < static_cast<int>(extractedF0.size())) {
+      if (srcIdx + 1 < static_cast<int>(extractedF0.size()))
+      {
         float f0_a = extractedF0[srcIdx];
         float f0_b = extractedF0[srcIdx + 1];
 
-        if (f0_a > 0.0f && f0_b > 0.0f) {
+        if (f0_a > 0.0f && f0_b > 0.0f)
+        {
           float logF0_a = std::log(f0_a);
           float logF0_b = std::log(f0_b);
           float logF0_interp = logF0_a * (1.0 - frac) + logF0_b * frac;
           audioData.f0[i] = std::exp(logF0_interp);
-        } else if (f0_a > 0.0f) {
+        }
+        else if (f0_a > 0.0f)
+        {
           audioData.f0[i] = f0_a;
-        } else if (f0_b > 0.0f) {
+        }
+        else if (f0_b > 0.0f)
+        {
           audioData.f0[i] = f0_b;
-        } else {
+        }
+        else
+        {
           audioData.f0[i] = 0.0f;
         }
-      } else if (srcIdx < static_cast<int>(extractedF0.size())) {
+      }
+      else if (srcIdx < static_cast<int>(extractedF0.size()))
+      {
         audioData.f0[i] = extractedF0[srcIdx];
-      } else {
+      }
+      else
+      {
         audioData.f0[i] = extractedF0.back() > 0.0f ? extractedF0.back() : 0.0f;
       }
     }
 
     audioData.voicedMask.resize(audioData.f0.size());
-    for (size_t i = 0; i < audioData.f0.size(); ++i) {
+    for (size_t i = 0; i < audioData.f0.size(); ++i)
+    {
       audioData.voicedMask[i] = audioData.f0[i] > 0;
     }
 
@@ -712,10 +790,12 @@ void EditorController::analyzeAudio(
       const int vadNumSamples = audioData.waveform.getNumSamples();
       const int vadNumFrames = static_cast<int>(audioData.f0.size());
       audioData.vadMask.resize(vadNumFrames);
-      for (int vi = 0; vi < vadNumFrames; ++vi) {
+      for (int vi = 0; vi < vadNumFrames; ++vi)
+      {
         int ss = vi * HOP_SIZE;
         int se = std::min(ss + HOP_SIZE, vadNumSamples);
-        if (ss >= vadNumSamples) {
+        if (ss >= vadNumSamples)
+        {
           audioData.vadMask[vi] = false;
           continue;
         }
@@ -736,20 +816,24 @@ void EditorController::analyzeAudio(
   onProgress(0.75, TR("progress.loading_vocoder"));
   auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");
 
-  if (!modelPath.existsAsFile() && !vocoder->isLoaded()) {
+  if (!modelPath.existsAsFile() && !vocoder->isLoaded())
+  {
     showMissingModelAndAbort("pc_nsf_hifigan.onnx", modelPath);
     return;
   }
 
-  if (modelPath.existsAsFile() && !vocoder->isLoaded()) {
-    if (vocoder->loadModel(modelPath)) {
-    } else {
-      juce::MessageManager::callAsync([modelPath]() {
-        juce::AlertWindow::showMessageBoxAsync(
-            juce::AlertWindow::WarningIcon, "Inference failed",
-            "Failed to load vocoder model at:\n" + modelPath.getFullPathName() +
-                "\n\nPlease check your model installation and try again.");
-      });
+  if (modelPath.existsAsFile() && !vocoder->isLoaded())
+  {
+    if (vocoder->loadModel(modelPath))
+    {
+    }
+    else
+    {
+      juce::MessageManager::callAsync([modelPath]()
+                                      { juce::AlertWindow::showMessageBoxAsync(
+                                            juce::AlertWindow::WarningIcon, "Inference failed",
+                                            "Failed to load vocoder model at:\n" + modelPath.getFullPathName() +
+                                                "\n\nPlease check your model installation and try again."); });
       return;
     }
   }
@@ -765,11 +849,13 @@ void EditorController::analyzeAudio(
 
 void EditorController::analyzeAudioAsync(
     const std::function<void(Project &)> &onProjectReady,
-    const std::function<void()> &onProjectChanged) {
+    const std::function<void()> &onProjectChanged)
+{
   if (loaderThread.joinable())
     loaderThread.join();
 
-  loaderThread = std::thread([this, onProjectReady, onProjectChanged]() {
+  loaderThread = std::thread([this, onProjectReady, onProjectChanged]()
+                             {
     if (!project)
       return;
 
@@ -800,17 +886,18 @@ void EditorController::analyzeAudioAsync(
         onProjectReady(*project);
       if (onProjectChanged)
         onProjectChanged();
-    });
-  });
+    }); });
 }
 
 void EditorController::segmentIntoNotesAsync(
     const std::function<void(Project &)> &onProjectReady,
-    const std::function<void()> &onNotesChanged) {
+    const std::function<void()> &onNotesChanged)
+{
   if (loaderThread.joinable())
     loaderThread.join();
 
-  loaderThread = std::thread([this, onProjectReady, onNotesChanged]() {
+  loaderThread = std::thread([this, onProjectReady, onNotesChanged]()
+                             {
     if (!project)
       return;
 
@@ -828,107 +915,146 @@ void EditorController::segmentIntoNotesAsync(
         onProjectReady(*project);
       if (onNotesChanged)
         onNotesChanged();
-    });
-  });
+    }); });
 }
 
 void EditorController::segmentIntoNotes(Project &targetProject,
-                                        std::function<void()> onStreamingUpdate) {
+                                        std::function<void()> onStreamingUpdate)
+{
   auto &audioData = targetProject.getAudioData();
   auto &notes = targetProject.getNotes();
   notes.clear();
-  audioData.someChunkRanges.clear();
-  audioData.someDebugChunks.clear();
+  audioData.segmentChunkRanges.clear();
+  audioData.segmentDebugChunks.clear();
 
   if (audioData.f0.empty())
     return;
 
-  if (!someDetector || !someDetector->isLoaded()) {
-    juce::MessageManager::callAsync([path = someModelPath]() {
-      juce::AlertWindow::showMessageBoxAsync(
-          juce::AlertWindow::WarningIcon, "Missing model file",
-          "some.onnx was not found at:\n" + path.getFullPathName() +
-              "\n\nPlease install the required model files and try again.");
-    });
+  if (!gameDetector || !gameDetector->isLoaded())
+  {
+    auto searchedPath = gameModelDir.getFullPathName();
+    auto bundlePath = PlatformPaths::getModelsDirectory().getChildFile("GAME").getFullPathName();
+
+    juce::String detail = "GAME models were not found.\n\n"
+                          "Searched path: " +
+                          searchedPath + "\n"
+                                         "Bundle path: " +
+                          bundlePath + "\n"
+                                       "gameDetector: " +
+                          juce::String(gameDetector ? "created" : "null") + "\n"
+                                                                            "isLoaded: " +
+                          juce::String(gameDetector ? (gameDetector->isLoaded() ? "true" : "false") : "N/A") + "\n"
+                                                                                                               "isDirectory: " +
+                          juce::String(gameModelDir.isDirectory() ? "true" : "false") + "\n\n"
+                                                                                        "Required files: encoder.onnx, segmenter.onnx, estimator.onnx, bd2dur.onnx, config.json\n\n";
+
+    // List which files exist / missing
+    for (auto *name : {"encoder.onnx", "segmenter.onnx", "estimator.onnx", "bd2dur.onnx", "config.json"})
+    {
+      auto f = gameModelDir.getChildFile(name);
+      detail += juce::String(name) + ": " + (f.existsAsFile() ? "OK" : "MISSING") + "\n";
+    }
+
+    juce::MessageManager::callAsync([detail]()
+                                    { juce::AlertWindow::showMessageBoxAsync(
+                                          juce::AlertWindow::WarningIcon, TR("error.game_error"), detail); });
     return;
   }
 
-  if (someDetector && someDetector->isLoaded() &&
-      audioData.waveform.getNumSamples() > 0) {
+  if (gameDetector && gameDetector->isLoaded() &&
+      audioData.waveform.getNumSamples() > 0)
+  {
 
     const float *samples = audioData.waveform.getReadPointer(0);
     int numSamples = audioData.waveform.getNumSamples();
     const int f0Size = static_cast<int>(audioData.f0.size());
 
-    someDetector->detectNotesStreaming(
-        samples, numSamples, SOMEDetector::SAMPLE_RATE,
-        [&](const std::vector<SOMEDetector::NoteEvent> &chunkNotes) {
-          for (const auto &someNote : chunkNotes) {
-            if (someNote.isRest)
-              continue;
+    auto gameNotes = gameDetector->detectNotesWithProgress(
+        samples, numSamples, GAMEDetector::SAMPLE_RATE, nullptr);
 
-            int f0Start = someNote.startFrame;
-            int f0End = someNote.endFrame;
+    // Build debug chunks from actual GAME slicer chunk ranges
+    {
+      const auto &slicerChunks = gameDetector->getLastChunkRanges();
+      for (int ci = 0; ci < static_cast<int>(slicerChunks.size()); ++ci)
+      {
+        const auto &sc = slicerChunks[ci];
+        int chunkStartFrame = sc.startSample / GAMEDetector::HOP_SIZE;
+        int chunkEndFrame = (sc.endSample + GAMEDetector::HOP_SIZE - 1) / GAMEDetector::HOP_SIZE;
+        chunkStartFrame = std::max(0, std::min(chunkStartFrame, f0Size));
+        chunkEndFrame = std::max(chunkStartFrame, std::min(chunkEndFrame, f0Size));
 
-            f0Start = std::max(0, std::min(f0Start, f0Size - 1));
-            f0End = std::max(f0Start + 1, std::min(f0End, f0Size));
+        audioData.segmentChunkRanges.emplace_back(chunkStartFrame, chunkEndFrame);
 
-            if (f0End - f0Start < 3)
-              continue;
+        AudioData::SegmentDebugChunk dbgChunk;
+        dbgChunk.chunkIndex = ci;
+        dbgChunk.startFrame = chunkStartFrame;
+        dbgChunk.endFrame = chunkEndFrame;
+        dbgChunk.shortRestThreshold = 0;
 
-            Note note(f0Start, f0End, someNote.midiNote);
-            std::vector<float> f0Values(audioData.f0.begin() + f0Start,
-                                        audioData.f0.begin() + f0End);
-            note.setF0Values(std::move(f0Values));
-            notes.push_back(note);
-          }
+        for (const auto &gameNote : gameNotes)
+        {
+          if (gameNote.startFrame < chunkStartFrame || gameNote.startFrame >= chunkEndFrame)
+            continue;
+          AudioData::SegmentDebugEvent ev;
+          ev.startFrame = gameNote.startFrame;
+          ev.endFrame = gameNote.endFrame;
+          ev.attachedStartFrame = gameNote.startFrame;
+          ev.midiNote = gameNote.midiNote;
+          ev.isRest = gameNote.isRest;
+          ev.durationSeconds = static_cast<float>(gameNote.endFrame - gameNote.startFrame) *
+                               GAMEDetector::HOP_SIZE / static_cast<float>(GAMEDetector::SAMPLE_RATE);
+          ev.durationFrames = gameNote.endFrame - gameNote.startFrame;
+          dbgChunk.events.push_back(ev);
+        }
+        audioData.segmentDebugChunks.push_back(std::move(dbgChunk));
+      }
 
-          if (onStreamingUpdate) {
-            juce::MessageManager::callAsync(onStreamingUpdate);
-          }
-        },
-        nullptr,
-        [&](const std::vector<SOMEDetector::ChunkRange> &chunkRanges) {
-          audioData.someChunkRanges = chunkRanges;
-          if (onStreamingUpdate) {
-            juce::MessageManager::callAsync(onStreamingUpdate);
-          }
-        },
-        [&](const SOMEDetector::DebugChunk &debugChunk) {
-          AudioData::SomeDebugChunk chunk;
-          chunk.chunkIndex = debugChunk.chunkIndex;
-          chunk.startFrame = debugChunk.startFrame;
-          chunk.endFrame = debugChunk.endFrame;
-          chunk.shortRestThreshold = debugChunk.shortRestThreshold;
-          chunk.events.reserve(debugChunk.events.size());
-          for (const auto &ev : debugChunk.events) {
-            AudioData::SomeDebugEvent out;
-            out.startFrame = ev.startFrame;
-            out.endFrame = ev.endFrame;
-            out.attachedStartFrame = ev.attachedStartFrame;
-            out.midiNote = ev.midiNote;
-            out.isRest = ev.isRest;
-            out.durationSeconds = ev.durationSeconds;
-            out.durationFrames = ev.durationFrames;
-            chunk.events.push_back(out);
-          }
-          audioData.someDebugChunks.push_back(std::move(chunk));
-          if (onStreamingUpdate) {
-            juce::MessageManager::callAsync(onStreamingUpdate);
-          }
-        });
+      // Fallback: if no chunks (shouldn't happen), use full range
+      if (audioData.segmentChunkRanges.empty())
+        audioData.segmentChunkRanges.emplace_back(0, f0Size);
+    }
 
-    // VAD + SOME rest guided boundary refinement:
+    for (const auto &gameNote : gameNotes)
+    {
+      if (gameNote.isRest)
+        continue;
+
+      int f0Start = gameNote.startFrame;
+      int f0End = gameNote.endFrame;
+
+      f0Start = std::max(0, std::min(f0Start, f0Size - 1));
+      f0End = std::max(f0Start + 1, std::min(f0End, f0Size));
+
+      if (f0End - f0Start < 3)
+        continue;
+
+      Note note(f0Start, f0End, gameNote.midiNote);
+      std::vector<float> f0Values(audioData.f0.begin() + f0Start,
+                                  audioData.f0.begin() + f0End);
+      note.setF0Values(std::move(f0Values));
+      notes.push_back(note);
+    }
+
+    if (onStreamingUpdate)
+    {
+      juce::MessageManager::callAsync(onStreamingUpdate);
+    }
+
+    // VAD + GAME rest-guided boundary refinement:
     // expand note heads/tails into energetic consonant regions so note lengths
     // better cover pre/post-consonants.
-    if (!notes.empty() && !audioData.vadMask.empty()) {
-      struct RestRange {
+    if (!notes.empty() && !audioData.vadMask.empty())
+    {
+      struct RestRange
+      {
         int start = 0;
         int end = 0;
       };
       std::vector<RestRange> rests;
-      for (const auto &chunk : audioData.someDebugChunks) {
-        for (const auto &ev : chunk.events) {
+      for (const auto &chunk : audioData.segmentDebugChunks)
+      {
+        for (const auto &ev : chunk.events)
+        {
           if (!ev.isRest)
             continue;
           if (ev.endFrame <= ev.startFrame)
@@ -937,7 +1063,8 @@ void EditorController::segmentIntoNotes(Project &targetProject,
         }
       }
 
-      auto vadRatioInRange = [&](int s, int e) -> float {
+      auto vadRatioInRange = [&](int s, int e) -> float
+      {
         if (e <= s || audioData.vadMask.empty())
           return 0.0f;
         s = std::max(0, s);
@@ -945,22 +1072,24 @@ void EditorController::segmentIntoNotes(Project &targetProject,
         if (e <= s)
           return 0.0f;
         int voiced = 0;
-        for (int i = s; i < e; ++i) {
+        for (int i = s; i < e; ++i)
+        {
           if (audioData.vadMask[static_cast<size_t>(i)])
             ++voiced;
         }
         return static_cast<float>(voiced) / static_cast<float>(e - s);
       };
 
-      constexpr int kMaxHeadFrames = 14;     // ~162ms
-      constexpr int kMaxTailFrames = 10;     // ~116ms
-      constexpr int kRestBridgeGap = 4;      // allow tiny gap
-      constexpr int kMaxRestAttach = 18;     // max attached rest length
+      constexpr int kMaxHeadFrames = 14;       // ~162ms
+      constexpr int kMaxTailFrames = 10;       // ~116ms
+      constexpr int kRestBridgeGap = 4;        // allow tiny gap
+      constexpr int kMaxRestAttach = 18;       // max attached rest length
       constexpr float kVadAttachRatio = 0.30f; // energetic enough to attach
 
       const int f0Size = static_cast<int>(audioData.f0.size());
 
-      for (size_t ni = 0; ni < notes.size(); ++ni) {
+      for (size_t ni = 0; ni < notes.size(); ++ni)
+      {
         auto &note = notes[ni];
         int start = note.getStartFrame();
         int end = note.getEndFrame();
@@ -977,7 +1106,8 @@ void EditorController::segmentIntoNotes(Project &targetProject,
         // 1) Plain VAD backward/forward expansion.
         int newStart = start;
         for (int i = start - 1; i >= std::max(prevEnd, start - kMaxHeadFrames);
-             --i) {
+             --i)
+        {
           if (i >= 0 && i < static_cast<int>(audioData.vadMask.size()) &&
               audioData.vadMask[static_cast<size_t>(i)])
             newStart = i;
@@ -986,7 +1116,8 @@ void EditorController::segmentIntoNotes(Project &targetProject,
         }
 
         int newEnd = end;
-        for (int i = end; i < std::min(nextStart, end + kMaxTailFrames); ++i) {
+        for (int i = end; i < std::min(nextStart, end + kMaxTailFrames); ++i)
+        {
           if (i >= 0 && i < static_cast<int>(audioData.vadMask.size()) &&
               audioData.vadMask[static_cast<size_t>(i)])
             newEnd = i + 1;
@@ -995,25 +1126,30 @@ void EditorController::segmentIntoNotes(Project &targetProject,
         }
 
         // 2) Rest-guided attach (front/back) gated by VAD ratio.
-        for (const auto &rr : rests) {
+        for (const auto &rr : rests)
+        {
           const int restLen = rr.end - rr.start;
           if (restLen <= 0 || restLen > kMaxRestAttach)
             continue;
 
           // Front rest -> note head
-          if (rr.end <= start && start - rr.end <= kRestBridgeGap) {
+          if (rr.end <= start && start - rr.end <= kRestBridgeGap)
+          {
             const int candStart = std::max(prevEnd, rr.start);
             if (candStart < newStart &&
-                vadRatioInRange(candStart, start) >= kVadAttachRatio) {
+                vadRatioInRange(candStart, start) >= kVadAttachRatio)
+            {
               newStart = std::max(candStart, start - kMaxHeadFrames);
             }
           }
 
           // Back rest -> note tail
-          if (rr.start >= end && rr.start - end <= kRestBridgeGap) {
+          if (rr.start >= end && rr.start - end <= kRestBridgeGap)
+          {
             const int candEnd = std::min(nextStart, rr.end);
             if (candEnd > newEnd &&
-                vadRatioInRange(end, candEnd) >= kVadAttachRatio) {
+                vadRatioInRange(end, candEnd) >= kVadAttachRatio)
+            {
               newEnd = std::min(candEnd, end + kMaxTailFrames);
             }
           }
@@ -1036,22 +1172,24 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
     juce::Thread::sleep(100);
 
-
     if (!audioData.f0.empty())
       PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
 
     return;
   }
 
-  auto finalizeNote = [&](int start, int end) {
+  auto finalizeNote = [&](int start, int end)
+  {
     if (end - start < 5)
       return;
 
     float midiSum = 0.0f;
     int midiCount = 0;
-    for (int j = start; j < end; ++j) {
+    for (int j = start; j < end; ++j)
+    {
       if (j < static_cast<int>(audioData.voicedMask.size()) &&
-          audioData.voicedMask[j] && audioData.f0[j] > 0) {
+          audioData.voicedMask[j] && audioData.f0[j] > 0)
+      {
         midiSum += freqToMidi(audioData.f0[j]);
         midiCount++;
       }
@@ -1079,41 +1217,52 @@ void EditorController::segmentIntoNotes(Project &targetProject,
   int pitchChangeStart = 0;
   int unvoicedCount = 0;
 
-  for (size_t i = 0; i < audioData.f0.size(); ++i) {
+  for (size_t i = 0; i < audioData.f0.size(); ++i)
+  {
     bool voiced = i < audioData.voicedMask.size() && audioData.voicedMask[i];
 
-    if (voiced && !inNote) {
+    if (voiced && !inNote)
+    {
       inNote = true;
       noteStart = static_cast<int>(i);
       currentMidiNote =
           static_cast<int>(std::round(freqToMidi(audioData.f0[i])));
       pitchChangeCount = 0;
       unvoicedCount = 0;
-    } else if (voiced && inNote) {
+    }
+    else if (voiced && inNote)
+    {
       unvoicedCount = 0;
 
       float currentMidi = freqToMidi(audioData.f0[i]);
       int quantizedMidi = static_cast<int>(std::round(currentMidi));
 
       if (quantizedMidi != currentMidiNote &&
-          std::abs(currentMidi - currentMidiNote) > pitchSplitThreshold) {
+          std::abs(currentMidi - currentMidiNote) > pitchSplitThreshold)
+      {
         if (pitchChangeCount == 0)
           pitchChangeStart = static_cast<int>(i);
         pitchChangeCount++;
 
-        if (pitchChangeCount >= minFramesForSplit) {
+        if (pitchChangeCount >= minFramesForSplit)
+        {
           finalizeNote(noteStart, pitchChangeStart);
 
           noteStart = pitchChangeStart;
           currentMidiNote = quantizedMidi;
           pitchChangeCount = 0;
         }
-      } else {
+      }
+      else
+      {
         pitchChangeCount = 0;
       }
-    } else if (!voiced && inNote) {
+    }
+    else if (!voiced && inNote)
+    {
       unvoicedCount++;
-      if (unvoicedCount > maxUnvoicedGap) {
+      if (unvoicedCount > maxUnvoicedGap)
+      {
         finalizeNote(noteStart, static_cast<int>(i) - unvoicedCount);
         inNote = false;
         pitchChangeCount = 0;
@@ -1122,7 +1271,8 @@ void EditorController::segmentIntoNotes(Project &targetProject,
     }
   }
 
-  if (inNote) {
+  if (inNote)
+  {
     finalizeNote(noteStart, static_cast<int>(audioData.f0.size()));
   }
 

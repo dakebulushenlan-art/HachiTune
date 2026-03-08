@@ -12,18 +12,21 @@ SelectHandler::SelectHandler(PianoRollComponent &owner)
     : InteractionHandler(owner) {}
 
 bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
-                              float worldY) {
+                              float worldY)
+{
   auto *project = owner_.project;
   if (!project)
     return false;
 
   // Pitch tool controller interaction
-  if (owner_.pitchToolController && owner_.pitchToolHandles) {
+  if (owner_.pitchToolController && owner_.pitchToolHandles)
+  {
     juce::MouseEvent adjustedEvent =
         e.withNewPosition(juce::Point<float>(worldX, worldY));
     if (owner_.pitchToolController->mouseDown(
             adjustedEvent, *owner_.pitchToolHandles,
-            owner_.getSelectedNotes(), *owner_.coordMapper)) {
+            owner_.getSelectedNotes(), *owner_.coordMapper))
+    {
       return true;
     }
   }
@@ -31,9 +34,11 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   // Delta pitch scale/offset handle drag start
   {
     auto selectedNotes = project->getSelectedNotes();
-    if (!selectedNotes.empty()) {
+    if (!selectedNotes.empty())
+    {
       auto getScaleHandleBounds = [](float x, float y, float w,
-                                     float h) -> juce::Rectangle<float> {
+                                     float h) -> juce::Rectangle<float>
+      {
         constexpr float localOutlinePadding = 2.0f;
         constexpr float localHandleWidth = 18.0f;
         constexpr float localHandleHeight = 10.0f;
@@ -50,7 +55,8 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
       };
       auto getOffsetHandleBounds =
           [&getScaleHandleBounds](float x, float y, float w,
-                                  float h) -> juce::Rectangle<float> {
+                                  float h) -> juce::Rectangle<float>
+      {
         constexpr float localHandleSpacing = 6.0f;
         auto scaleBounds = getScaleHandleBounds(x, y, w, h);
         return {scaleBounds.getRight() + localHandleSpacing,
@@ -58,9 +64,15 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
                 scaleBounds.getHeight()};
       };
 
-      enum class DeltaHandleHit { None, Scale, Offset };
+      enum class DeltaHandleHit
+      {
+        None,
+        Scale,
+        Offset
+      };
       DeltaHandleHit hitHandle = DeltaHandleHit::None;
-      for (auto *selected : selectedNotes) {
+      for (auto *selected : selectedNotes)
+      {
         if (!selected || selected->isRest())
           continue;
         const float x =
@@ -80,33 +92,39 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
             baseGridCenterY + pitchOffsetPixels - h * 0.5f;
         const auto scaleBounds = getScaleHandleBounds(x, y, w, h);
         const auto offsetBounds = getOffsetHandleBounds(x, y, w, h);
-        if (scaleBounds.expanded(2.0f, 2.0f).contains(worldX, worldY)) {
+        if (scaleBounds.expanded(2.0f, 2.0f).contains(worldX, worldY))
+        {
           hitHandle = DeltaHandleHit::Scale;
           break;
         }
-        if (offsetBounds.expanded(2.0f, 2.0f).contains(worldX, worldY)) {
+        if (offsetBounds.expanded(2.0f, 2.0f).contains(worldX, worldY))
+        {
           hitHandle = DeltaHandleHit::Offset;
           break;
         }
       }
 
-      if (hitHandle == DeltaHandleHit::Scale) {
+      if (hitHandle == DeltaHandleHit::Scale)
+      {
         deltaScaleFactor = 1.0f;
         if (initDeltaDrag(worldY, isDeltaScaleDragging,
                           deltaScaleDragStartY, deltaScaleTargetNotes,
                           deltaScaleEdits, deltaScaleMinFrame,
-                          deltaScaleMaxFrame)) {
+                          deltaScaleMaxFrame))
+        {
           owner_.repaint();
           return true;
         }
       }
 
-      if (hitHandle == DeltaHandleHit::Offset) {
+      if (hitHandle == DeltaHandleHit::Offset)
+      {
         deltaOffsetSemitones = 0.0f;
         if (initDeltaDrag(worldY, isDeltaOffsetDragging,
                           deltaOffsetDragStartY, deltaOffsetTargetNotes,
                           deltaOffsetEdits, deltaOffsetMinFrame,
-                          deltaOffsetMaxFrame)) {
+                          deltaOffsetMaxFrame))
+        {
           owner_.repaint();
           return true;
         }
@@ -117,16 +135,20 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   // Check if clicking on a note
   Note *note = owner_.findNoteAt(worldX, worldY);
 
-  if (note) {
+  if (note)
+  {
     // Check if clicking on an already selected note (for multi-note drag)
     auto selectedNotes = project->getSelectedNotes();
     bool clickedOnSelected =
         note->isSelected() && selectedNotes.size() > 1;
 
-    if (clickedOnSelected) {
+    if (clickedOnSelected)
+    {
       // Start multi-note drag
       owner_.pitchEditor->startMultiNoteDrag(selectedNotes, worldY);
-    } else {
+    }
+    else
+    {
       // Single note selection and drag
       project->deselectAllNotes();
       note->setSelected(true);
@@ -142,7 +164,8 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
       int numFrames = endFrame - startFrame;
 
       std::vector<float> delta(numFrames, 0.0f);
-      for (int i = 0; i < numFrames; ++i) {
+      for (int i = 0; i < numFrames; ++i)
+      {
         int globalFrame = startFrame + i;
         if (globalFrame >= 0 &&
             globalFrame <
@@ -177,7 +200,9 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     }
 
     owner_.repaint();
-  } else {
+  }
+  else
+  {
     // Clicked on empty area - start box selection
     project->deselectAllNotes();
     owner_.updatePitchToolHandlesFromSelection();
@@ -189,7 +214,8 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
 }
 
 bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
-                              float worldY) {
+                              float worldY)
+{
   auto *project = owner_.project;
   if (!project)
     return false;
@@ -201,16 +227,19 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
 
   // Pitch tool drag
   if (owner_.pitchToolController &&
-      owner_.pitchToolController->isDragging()) {
+      owner_.pitchToolController->isDragging())
+  {
     juce::MouseEvent adjustedEvent =
         e.withNewPosition(juce::Point<float>(worldX, worldY));
     auto selectedNotes = owner_.getSelectedNotes();
     if (owner_.pitchToolController->mouseDrag(
-            adjustedEvent, selectedNotes, *owner_.coordMapper)) {
+            adjustedEvent, selectedNotes, *owner_.coordMapper))
+    {
       owner_.updatePitchToolHandlesFromSelection();
       if (owner_.onPitchEdited)
         owner_.onPitchEdited();
-      if (shouldRepaint) {
+      if (shouldRepaint)
+      {
         owner_.repaint();
         owner_.lastDragRepaintTime = now;
       }
@@ -219,16 +248,19 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   }
 
   // Delta scale drag
-  if (isDeltaScaleDragging) {
+  if (isDeltaScaleDragging)
+  {
     float deltaY = deltaScaleDragStartY - worldY;
     float newFactor =
         juce::jlimit(0.0f, 4.0f, 1.0f + deltaY * 0.01f);
 
-    if (std::abs(newFactor - deltaScaleFactor) > 0.0001f) {
+    if (std::abs(newFactor - deltaScaleFactor) > 0.0001f)
+    {
       deltaScaleFactor = newFactor;
       auto &audioData = project->getAudioData();
 
-      for (auto &edit : deltaScaleEdits) {
+      for (auto &edit : deltaScaleEdits)
+      {
         if (edit.idx < 0 ||
             edit.idx >=
                 static_cast<int>(audioData.deltaPitch.size()))
@@ -240,18 +272,24 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
             newDelta;
 
         float newF0 = edit.oldF0;
-        if (!edit.oldVoiced) {
+        if (!edit.oldVoiced)
+        {
           newF0 = 0.0f;
-        } else {
+        }
+        else
+        {
           float baseMidi = 0.0f;
           bool hasBase = false;
           if (edit.idx >= 0 &&
               edit.idx <
-                  static_cast<int>(audioData.basePitch.size())) {
+                  static_cast<int>(audioData.basePitch.size()))
+          {
             baseMidi =
                 audioData.basePitch[static_cast<size_t>(edit.idx)];
             hasBase = true;
-          } else if (edit.oldF0 > 0.0f) {
+          }
+          else if (edit.oldF0 > 0.0f)
+          {
             baseMidi = freqToMidi(edit.oldF0) - edit.oldDelta;
             hasBase = true;
           }
@@ -265,7 +303,8 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
       }
     }
 
-    if (shouldRepaint) {
+    if (shouldRepaint)
+    {
       owner_.repaint();
       owner_.lastDragRepaintTime = now;
     }
@@ -273,12 +312,14 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   }
 
   // Delta offset drag
-  if (isDeltaOffsetDragging) {
+  if (isDeltaOffsetDragging)
+  {
     deltaOffsetSemitones =
         (deltaOffsetDragStartY - worldY) / owner_.pixelsPerSemitone;
     auto &audioData = project->getAudioData();
 
-    for (auto &edit : deltaOffsetEdits) {
+    for (auto &edit : deltaOffsetEdits)
+    {
       if (edit.idx < 0 ||
           edit.idx >=
               static_cast<int>(audioData.deltaPitch.size()))
@@ -289,18 +330,24 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
       audioData.deltaPitch[static_cast<size_t>(edit.idx)] = newDelta;
 
       float newF0 = edit.oldF0;
-      if (!edit.oldVoiced) {
+      if (!edit.oldVoiced)
+      {
         newF0 = 0.0f;
-      } else {
+      }
+      else
+      {
         float baseMidi = 0.0f;
         bool hasBase = false;
         if (edit.idx >= 0 &&
             edit.idx <
-                static_cast<int>(audioData.basePitch.size())) {
+                static_cast<int>(audioData.basePitch.size()))
+        {
           baseMidi =
               audioData.basePitch[static_cast<size_t>(edit.idx)];
           hasBase = true;
-        } else if (edit.oldF0 > 0.0f) {
+        }
+        else if (edit.oldF0 > 0.0f)
+        {
           baseMidi = freqToMidi(edit.oldF0) - edit.oldDelta;
           hasBase = true;
         }
@@ -313,7 +360,8 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
       edit.newF0 = newF0;
     }
 
-    if (shouldRepaint) {
+    if (shouldRepaint)
+    {
       owner_.repaint();
       owner_.lastDragRepaintTime = now;
     }
@@ -321,9 +369,11 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   }
 
   // Box selection
-  if (owner_.boxSelector->isSelecting()) {
+  if (owner_.boxSelector->isSelecting())
+  {
     owner_.boxSelector->updateSelection(worldX, worldY);
-    if (shouldRepaint) {
+    if (shouldRepaint)
+    {
       owner_.repaint();
       owner_.lastDragRepaintTime = now;
     }
@@ -331,10 +381,12 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   }
 
   // Multi-note drag
-  if (owner_.pitchEditor->isDraggingMultiNotes()) {
+  if (owner_.pitchEditor->isDraggingMultiNotes())
+  {
     owner_.pitchEditor->updateMultiNoteDrag(worldY);
     owner_.updatePitchToolHandlesFromSelection();
-    if (shouldRepaint) {
+    if (shouldRepaint)
+    {
       owner_.repaint();
       owner_.lastDragRepaintTime = now;
     }
@@ -342,10 +394,12 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
   }
 
   // Single note drag
-  if (isDragging && draggedNote) {
+  if (isDragging && draggedNote)
+  {
     float deltaY = dragStartY - worldY;
     float deltaSemitones = deltaY / owner_.pixelsPerSemitone;
-    if (owner_.snapToSemitoneDrag) {
+    if (owner_.snapToSemitoneDrag)
+    {
       const float targetMidi = originalMidiNote + deltaSemitones;
       const float snappedMidi = ScaleUtils::snapMidiToSemitone(
           targetMidi, owner_.pitchReferenceHz);
@@ -359,7 +413,8 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
     // Update handle positions to follow notes during drag
     owner_.updatePitchToolHandlesFromSelection();
 
-    if (shouldRepaint) {
+    if (shouldRepaint)
+    {
       owner_.repaint();
       owner_.lastDragRepaintTime = now;
     }
@@ -370,16 +425,19 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
 }
 
 bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
-                            float worldY) {
+                            float worldY)
+{
   auto *project = owner_.project;
   if (!project)
     return false;
 
   // Pitch tool mouseUp
   if (owner_.pitchToolController &&
-      owner_.pitchToolController->isDragging()) {
+      owner_.pitchToolController->isDragging())
+  {
     auto *ownerPtr = &owner_;
-    auto onRangeChanged = [ownerPtr](int startFrame, int endFrame) {
+    auto onRangeChanged = [ownerPtr](int startFrame, int endFrame)
+    {
       if (ownerPtr->onReinterpolateUV)
         ownerPtr->onReinterpolateUV(startFrame, endFrame);
     };
@@ -395,14 +453,17 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   }
 
   // Delta scale commit
-  if (isDeltaScaleDragging) {
+  if (isDeltaScaleDragging)
+  {
     const bool hasChange =
         std::abs(deltaScaleFactor - 1.0f) >= 0.001f;
     auto &audioData = project->getAudioData();
 
-    if (!hasChange) {
+    if (!hasChange)
+    {
       // No meaningful change: restore global arrays from captured old values
-      for (const auto &edit : deltaScaleEdits) {
+      for (const auto &edit : deltaScaleEdits)
+      {
         if (edit.idx >= 0 &&
             edit.idx <
                 static_cast<int>(audioData.deltaPitch.size()))
@@ -412,7 +473,9 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
             edit.idx < static_cast<int>(audioData.f0.size()))
           audioData.f0[static_cast<size_t>(edit.idx)] = edit.oldF0;
       }
-    } else if (!deltaScaleTargetNotes.empty()) {
+    }
+    else if (!deltaScaleTargetNotes.empty())
+    {
       // Capture old per-note params BEFORE updating
       std::vector<TransformParams> oldParams;
       oldParams.reserve(deltaScaleTargetNotes.size());
@@ -420,8 +483,10 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
         oldParams.push_back(note ? TransformParams::fromNote(*note) : TransformParams{});
 
       // Update per-note deltaScale/deltaOffset
-      for (auto *note : deltaScaleTargetNotes) {
-        if (!note) continue;
+      for (auto *note : deltaScaleTargetNotes)
+      {
+        if (!note)
+          continue;
         note->setDeltaScale(note->getDeltaScale() * deltaScaleFactor);
         note->setDeltaOffset(note->getDeltaOffset() * deltaScaleFactor);
         note->markDirty();
@@ -445,9 +510,11 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       project->setF0DirtyRange(smoothStart, smoothEnd);
 
       // Create undo action using PitchToolAction (saves per-note params)
-      if (owner_.undoManager) {
+      if (owner_.undoManager)
+      {
         auto *ownerPtr = &owner_;
-        auto onRangeChanged = [ownerPtr](int startFrame, int endFrame) {
+        auto onRangeChanged = [ownerPtr](int startFrame, int endFrame)
+        {
           if (ownerPtr->onPitchEditFinished)
             ownerPtr->onPitchEditFinished();
         };
@@ -475,14 +542,17 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   }
 
   // Delta offset commit
-  if (isDeltaOffsetDragging) {
+  if (isDeltaOffsetDragging)
+  {
     const bool hasChange =
         std::abs(deltaOffsetSemitones) >= 0.001f;
     auto &audioData = project->getAudioData();
 
-    if (!hasChange) {
+    if (!hasChange)
+    {
       // No meaningful change: restore global arrays from captured old values
-      for (const auto &edit : deltaOffsetEdits) {
+      for (const auto &edit : deltaOffsetEdits)
+      {
         if (edit.idx >= 0 &&
             edit.idx <
                 static_cast<int>(audioData.deltaPitch.size()))
@@ -492,7 +562,9 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
             edit.idx < static_cast<int>(audioData.f0.size()))
           audioData.f0[static_cast<size_t>(edit.idx)] = edit.oldF0;
       }
-    } else if (!deltaOffsetTargetNotes.empty()) {
+    }
+    else if (!deltaOffsetTargetNotes.empty())
+    {
       // Capture old per-note params BEFORE updating
       std::vector<TransformParams> oldParams;
       oldParams.reserve(deltaOffsetTargetNotes.size());
@@ -500,8 +572,10 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
         oldParams.push_back(note ? TransformParams::fromNote(*note) : TransformParams{});
 
       // Update per-note deltaOffset
-      for (auto *note : deltaOffsetTargetNotes) {
-        if (!note) continue;
+      for (auto *note : deltaOffsetTargetNotes)
+      {
+        if (!note)
+          continue;
         note->setDeltaOffset(note->getDeltaOffset() + deltaOffsetSemitones);
         note->markDirty();
       }
@@ -524,9 +598,11 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       project->setF0DirtyRange(smoothStart, smoothEnd);
 
       // Create undo action using PitchToolAction (saves per-note params)
-      if (owner_.undoManager) {
+      if (owner_.undoManager)
+      {
         auto *ownerPtr = &owner_;
-        auto onRangeChanged = [ownerPtr](int startFrame, int endFrame) {
+        auto onRangeChanged = [ownerPtr](int startFrame, int endFrame)
+        {
           if (ownerPtr->onPitchEditFinished)
             ownerPtr->onPitchEditFinished();
         };
@@ -554,10 +630,12 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   }
 
   // Box selection end
-  if (owner_.boxSelector->isSelecting()) {
+  if (owner_.boxSelector->isSelecting())
+  {
     auto notesInRect = owner_.boxSelector->getNotesInRect(
         project, owner_.coordMapper.get());
-    for (auto *note : notesInRect) {
+    for (auto *note : notesInRect)
+    {
       note->setSelected(true);
     }
     owner_.boxSelector->endSelection();
@@ -567,16 +645,19 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   }
 
   // Multi-note drag end
-  if (owner_.pitchEditor->isDraggingMultiNotes()) {
+  if (owner_.pitchEditor->isDraggingMultiNotes())
+  {
     owner_.pitchEditor->endMultiNoteDrag();
     owner_.repaint();
     return true;
   }
 
   // Single note drag end
-  if (isDragging && draggedNote) {
+  if (isDragging && draggedNote)
+  {
     float newOffset = draggedNote->getPitchOffset();
-    if (owner_.snapToSemitoneDrag) {
+    if (owner_.snapToSemitoneDrag)
+    {
       const float snappedMidi = ScaleUtils::snapMidiToSemitone(
           originalMidiNote + newOffset, owner_.pitchReferenceHz);
       newOffset = snappedMidi - originalMidiNote;
@@ -587,7 +668,8 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
     constexpr float CHANGE_THRESHOLD = 0.001f;
     bool hasChange = std::abs(newOffset) >= CHANGE_THRESHOLD;
 
-    if (hasChange) {
+    if (hasChange)
+    {
       int startFrame = draggedNote->getStartFrame();
       int endFrame = draggedNote->getEndFrame();
       auto &audioData = project->getAudioData();
@@ -597,21 +679,25 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       const float finalMidiNote = originalMidiNote + newOffset;
       draggedNote->setMidiNote(finalMidiNote);
       draggedNote->setPitchOffset(0.0f);
+      draggedNote->markSynthDirty();
 
       // Find adjacent notes to expand dirty range
       const auto &notes = project->getNotes();
       int expandedStart = startFrame;
       int expandedEnd = endFrame;
-      for (const auto &note : notes) {
+      for (const auto &note : notes)
+      {
         if (&note == draggedNote)
           continue;
         if (note.getEndFrame() > startFrame - 30 &&
-            note.getEndFrame() <= startFrame) {
+            note.getEndFrame() <= startFrame)
+        {
           expandedStart =
               std::min(expandedStart, note.getStartFrame());
         }
         if (note.getStartFrame() < endFrame + 30 &&
-            note.getStartFrame() >= endFrame) {
+            note.getStartFrame() >= endFrame)
+        {
           expandedEnd =
               std::max(expandedEnd, note.getEndFrame());
         }
@@ -627,9 +713,11 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       project->setF0DirtyRange(smoothStart, smoothEnd);
 
       // Create undo action
-      if (owner_.undoManager) {
+      if (owner_.undoManager)
+      {
         std::vector<F0FrameEdit> f0Edits;
-        for (int i = startFrame; i < endFrame && i < f0Size; ++i) {
+        for (int i = startFrame; i < endFrame && i < f0Size; ++i)
+        {
           int localIdx = i - startFrame;
           F0FrameEdit edit;
           edit.idx = i;
@@ -649,8 +737,10 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
             draggedNote, &audioData.f0, originalMidiNote,
             finalMidiNote, std::move(f0Edits),
             [ownerPtr, capturedExpandedStart, capturedExpandedEnd,
-             capturedF0Size](Note *n) {
-              if (ownerPtr->project) {
+             capturedF0Size](Note *n)
+            {
+              if (ownerPtr->project)
+              {
                 PitchCurveProcessor::rebuildBaseFromNotes(
                     *ownerPtr->project);
                 ownerPtr->invalidateBasePitchCache();
@@ -659,9 +749,10 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
                 int smoothEnd = std::min(capturedF0Size,
                                          capturedExpandedEnd + 60);
                 ownerPtr->project->setF0DirtyRange(smoothStart,
-                                                    smoothEnd);
-                if (n) {
-                  n->clearDirty();
+                                                   smoothEnd);
+                if (n)
+                {
+                  n->markSynthDirty();
                 }
               }
             });
@@ -673,7 +764,9 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
       owner_.repaint();
       if (owner_.onPitchEditFinished)
         owner_.onPitchEditFinished();
-    } else {
+    }
+    else
+    {
       // No meaningful change: reset and repaint
       restoreDragBasePreview();
       draggedNote->setPitchOffset(0.0f);
@@ -692,19 +785,24 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
 }
 
 void SelectHandler::mouseMove(const juce::MouseEvent &e, float worldX,
-                              float worldY) {
+                              float worldY)
+{
   // Pitch tool handle hover
   if (owner_.pitchToolHandles && !owner_.pitchToolHandles->isEmpty() &&
       e.y >= PianoRollComponent::headerHeight &&
-      e.x >= PianoRollComponent::pianoKeysWidth) {
+      e.x >= PianoRollComponent::pianoKeysWidth)
+  {
     int hitIndex = owner_.pitchToolHandles->hitTest(e.position.x,
                                                     e.position.y);
-    if (hitIndex != owner_.hoveredPitchToolHandle) {
+    if (hitIndex != owner_.hoveredPitchToolHandle)
+    {
       owner_.hoveredPitchToolHandle = hitIndex;
       owner_.pitchToolHandles->setHoveredHandleIndex(hitIndex);
       owner_.repaint();
     }
-  } else if (owner_.hoveredPitchToolHandle != -1) {
+  }
+  else if (owner_.hoveredPitchToolHandle != -1)
+  {
     owner_.hoveredPitchToolHandle = -1;
     if (owner_.pitchToolHandles)
       owner_.pitchToolHandles->setHoveredHandleIndex(-1);
@@ -713,17 +811,20 @@ void SelectHandler::mouseMove(const juce::MouseEvent &e, float worldX,
 }
 
 void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
-                                     float worldX, float worldY) {
+                                     float worldX, float worldY)
+{
   auto *project = owner_.project;
   if (!project)
     return;
 
   // Check if double-clicking on a pitch tool handle
   if (owner_.pitchToolHandles &&
-      !project->getSelectedNotes().empty()) {
+      !project->getSelectedNotes().empty())
+  {
     int hitIndex =
         owner_.pitchToolHandles->hitTest(worldX, worldY);
-    if (hitIndex >= 0) {
+    if (hitIndex >= 0)
+    {
       const auto &handle =
           owner_.pitchToolHandles->getHandle(hitIndex);
 
@@ -731,14 +832,17 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
       if (handle.type ==
               PitchToolHandles::HandleType::SmoothLeft ||
           handle.type ==
-              PitchToolHandles::HandleType::SmoothRight) {
+              PitchToolHandles::HandleType::SmoothRight)
+      {
         auto selectedNotes = project->getSelectedNotes();
-        if (!selectedNotes.empty()) {
+        if (!selectedNotes.empty())
+        {
 
           // Capture old params
           std::vector<TransformParams> oldParams;
           oldParams.reserve(selectedNotes.size());
-          for (auto *note : selectedNotes) {
+          for (auto *note : selectedNotes)
+          {
             if (note)
               oldParams.push_back(TransformParams::fromNote(*note));
             else
@@ -746,15 +850,19 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           }
 
           // Apply toggle
-          for (auto *note : selectedNotes) {
+          for (auto *note : selectedNotes)
+          {
             if (!note)
               continue;
             if (handle.type ==
-                PitchToolHandles::HandleType::SmoothLeft) {
+                PitchToolHandles::HandleType::SmoothLeft)
+            {
               int current = note->getSmoothLeftFrames();
               note->setSmoothLeftFrames(
                   current != 0 ? 0 : 1);
-            } else {
+            }
+            else
+            {
               int current = note->getSmoothRightFrames();
               note->setSmoothRightFrames(
                   current != 0 ? 0 : 1);
@@ -765,7 +873,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           // Capture new params
           std::vector<TransformParams> newParams;
           newParams.reserve(selectedNotes.size());
-          for (auto *note : selectedNotes) {
+          for (auto *note : selectedNotes)
+          {
             if (note)
               newParams.push_back(TransformParams::fromNote(*note));
             else
@@ -773,10 +882,12 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           }
 
           // Register undo
-          if (owner_.undoManager) {
+          if (owner_.undoManager)
+          {
             auto action = std::make_unique<PitchToolAction>(
                 project, selectedNotes, oldParams, newParams,
-                [this](int, int) { rebuildAndNotify(); });
+                [this](int, int)
+                { rebuildAndNotify(); });
             owner_.undoManager->addAction(std::move(action));
           }
 
@@ -786,8 +897,10 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           // Mark dirty range
           int minFrame = std::numeric_limits<int>::max();
           int maxFrame = std::numeric_limits<int>::min();
-          for (const auto *note : selectedNotes) {
-            if (note) {
+          for (const auto *note : selectedNotes)
+          {
+            if (note)
+            {
               minFrame =
                   std::min(minFrame, note->getStartFrame());
               maxFrame =
@@ -809,7 +922,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
 
       // ReduceVariance: Toggle variance scale between 0 and 1
       if (handle.type ==
-          PitchToolHandles::HandleType::ReduceVariance) {
+          PitchToolHandles::HandleType::ReduceVariance)
+      {
         auto selectedNotes = project->getSelectedNotes();
 
         float currentScale =
@@ -817,14 +931,17 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         float newScale =
             (std::abs(currentScale - 1.0f) < 0.001f) ? 0.0f : 1.0f;
 
-        if (owner_.undoManager) {
+        if (owner_.undoManager)
+        {
           std::vector<float> oldScales;
           std::vector<float> newScales;
           oldScales.reserve(selectedNotes.size());
           newScales.reserve(selectedNotes.size());
 
-          for (auto *note : selectedNotes) {
-            if (note) {
+          for (auto *note : selectedNotes)
+          {
+            if (note)
+            {
               oldScales.push_back(note->getVarianceScale());
               newScales.push_back(newScale);
             }
@@ -833,12 +950,15 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           auto action = std::make_unique<MultiNoteFloatPropertyAction>(
               selectedNotes, oldScales, newScales,
               &Note::setVarianceScale, "Toggle Variance Scale",
-              [this]() { rebuildAndNotify(); });
+              [this]()
+              { rebuildAndNotify(); });
           owner_.undoManager->addAction(std::move(action));
         }
 
-        for (auto *note : selectedNotes) {
-          if (note) {
+        for (auto *note : selectedNotes)
+        {
+          if (note)
+          {
             note->setVarianceScale(newScale);
             note->markDirty();
           }
@@ -850,17 +970,21 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
 
       // TiltLeft: Reset tiltLeft to 0
       if (handle.type ==
-          PitchToolHandles::HandleType::TiltLeft) {
+          PitchToolHandles::HandleType::TiltLeft)
+      {
         auto selectedNotes = project->getSelectedNotes();
 
-        if (owner_.undoManager) {
+        if (owner_.undoManager)
+        {
           std::vector<float> oldTilts;
           std::vector<float> oldMidiNotes;
           oldTilts.reserve(selectedNotes.size());
           oldMidiNotes.reserve(selectedNotes.size());
 
-          for (auto *note : selectedNotes) {
-            if (note) {
+          for (auto *note : selectedNotes)
+          {
+            if (note)
+            {
               oldTilts.push_back(note->getTiltLeft());
               oldMidiNotes.push_back(note->getMidiNote());
             }
@@ -869,12 +993,15 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           auto action = std::make_unique<TiltResetAction>(
               selectedNotes, TiltResetAction::TiltSide::Left,
               oldTilts, oldMidiNotes,
-              [this]() { rebuildAndNotify(); });
+              [this]()
+              { rebuildAndNotify(); });
           owner_.undoManager->addAction(std::move(action));
         }
 
-        for (auto *note : selectedNotes) {
-          if (note) {
+        for (auto *note : selectedNotes)
+        {
+          if (note)
+          {
             const float oldTiltMean =
                 (note->getTiltLeft() + note->getTiltRight()) /
                 2.0f;
@@ -895,17 +1022,21 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
 
       // TiltRight: Reset tiltRight to 0
       if (handle.type ==
-          PitchToolHandles::HandleType::TiltRight) {
+          PitchToolHandles::HandleType::TiltRight)
+      {
         auto selectedNotes = project->getSelectedNotes();
 
-        if (owner_.undoManager) {
+        if (owner_.undoManager)
+        {
           std::vector<float> oldTilts;
           std::vector<float> oldMidiNotes;
           oldTilts.reserve(selectedNotes.size());
           oldMidiNotes.reserve(selectedNotes.size());
 
-          for (auto *note : selectedNotes) {
-            if (note) {
+          for (auto *note : selectedNotes)
+          {
+            if (note)
+            {
               oldTilts.push_back(note->getTiltRight());
               oldMidiNotes.push_back(note->getMidiNote());
             }
@@ -914,12 +1045,15 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           auto action = std::make_unique<TiltResetAction>(
               selectedNotes, TiltResetAction::TiltSide::Right,
               oldTilts, oldMidiNotes,
-              [this]() { rebuildAndNotify(); });
+              [this]()
+              { rebuildAndNotify(); });
           owner_.undoManager->addAction(std::move(action));
         }
 
-        for (auto *note : selectedNotes) {
-          if (note) {
+        for (auto *note : selectedNotes)
+        {
+          if (note)
+          {
             const float oldTiltMean =
                 (note->getTiltLeft() + note->getTiltRight()) /
                 2.0f;
@@ -943,14 +1077,17 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
   // Check if double-clicking on a note
   Note *note = owner_.findNoteAt(worldX, worldY);
 
-  if (note) {
-    auto snapForDoubleClick = [&owner_ = owner_](float midi) {
+  if (note)
+  {
+    auto snapForDoubleClick = [&owner_ = owner_](float midi)
+    {
       const bool hasActiveScale =
           owner_.selectedScaleMode != ScaleMode::None &&
           owner_.selectedScaleMode != ScaleMode::Chromatic &&
           owner_.selectedScaleRootNote >= 0;
 
-      switch (owner_.doubleClickSnapMode) {
+      switch (owner_.doubleClickSnapMode)
+      {
       case DoubleClickSnapMode::NearestSemitone:
         return ScaleUtils::snapMidiToSemitone(
             midi, owner_.pitchReferenceHz);
@@ -973,9 +1110,11 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
       }
     };
 
-    if (note->isSelected()) {
+    if (note->isSelected())
+    {
       auto selectedNotes = project->getSelectedNotes();
-      if (selectedNotes.size() > 1) {
+      if (selectedNotes.size() > 1)
+      {
         std::vector<Note *> notesToSnap;
         std::vector<float> oldMidis;
         std::vector<float> oldOffsets;
@@ -986,7 +1125,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         oldOffsets.reserve(selectedNotes.size());
         newMidis.reserve(selectedNotes.size());
 
-        for (auto *selected : selectedNotes) {
+        for (auto *selected : selectedNotes)
+        {
           if (!selected || selected->isRest())
             continue;
 
@@ -1004,18 +1144,22 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
           newMidis.push_back(snappedMidi);
         }
 
-        if (!notesToSnap.empty()) {
-          if (owner_.undoManager) {
+        if (!notesToSnap.empty())
+        {
+          if (owner_.undoManager)
+          {
             auto action =
                 std::make_unique<MultiNoteSnapToSemitoneAction>(
                     notesToSnap, oldMidis, oldOffsets, newMidis,
-                    [this](const std::vector<Note *> &) {
+                    [this](const std::vector<Note *> &)
+                    {
                       rebuildAndNotify();
                     });
             owner_.undoManager->addAction(std::move(action));
           }
 
-          for (size_t i = 0; i < notesToSnap.size(); ++i) {
+          for (size_t i = 0; i < notesToSnap.size(); ++i)
+          {
             notesToSnap[i]->setMidiNote(newMidis[i]);
             notesToSnap[i]->setPitchOffset(0.0f);
             notesToSnap[i]->markDirty();
@@ -1033,12 +1177,15 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
     float adjustedMidi = oldMidi + oldOffset;
     float snappedMidi = snapForDoubleClick(adjustedMidi);
 
-    if (std::abs(snappedMidi - adjustedMidi) > 0.001f) {
-      if (owner_.undoManager) {
+    if (std::abs(snappedMidi - adjustedMidi) > 0.001f)
+    {
+      if (owner_.undoManager)
+      {
         auto action =
             std::make_unique<NoteSnapToSemitoneAction>(
                 note, oldMidi, oldOffset, snappedMidi,
-                [this](Note *) { rebuildAndNotify(); });
+                [this](Note *)
+                { rebuildAndNotify(); });
         owner_.undoManager->addAction(std::move(action));
       }
 
@@ -1050,7 +1197,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
   }
 }
 
-bool SelectHandler::isActive() const {
+bool SelectHandler::isActive() const
+{
   return isDragging || isDeltaScaleDragging || isDeltaOffsetDragging ||
          (owner_.pitchToolController &&
           owner_.pitchToolController->isDragging()) ||
@@ -1058,8 +1206,10 @@ bool SelectHandler::isActive() const {
          owner_.pitchEditor->isDraggingMultiNotes();
 }
 
-void SelectHandler::cancel() {
-  if (isDragging && draggedNote) {
+void SelectHandler::cancel()
+{
+  if (isDragging && draggedNote)
+  {
     restoreDragBasePreview();
     draggedNote->setPitchOffset(0.0f);
     isDragging = false;
@@ -1070,11 +1220,14 @@ void SelectHandler::cancel() {
     dragBasePitchSnapshot.clear();
     dragF0Snapshot.clear();
   }
-  if (isDeltaScaleDragging) {
+  if (isDeltaScaleDragging)
+  {
     auto *project = owner_.project;
-    if (project) {
+    if (project)
+    {
       auto &audioData = project->getAudioData();
-      for (const auto &edit : deltaScaleEdits) {
+      for (const auto &edit : deltaScaleEdits)
+      {
         if (edit.idx >= 0 &&
             edit.idx <
                 static_cast<int>(audioData.deltaPitch.size()))
@@ -1089,11 +1242,14 @@ void SelectHandler::cancel() {
     deltaScaleTargetNotes.clear();
     deltaScaleEdits.clear();
   }
-  if (isDeltaOffsetDragging) {
+  if (isDeltaOffsetDragging)
+  {
     auto *project = owner_.project;
-    if (project) {
+    if (project)
+    {
       auto &audioData = project->getAudioData();
-      for (const auto &edit : deltaOffsetEdits) {
+      for (const auto &edit : deltaOffsetEdits)
+      {
         if (edit.idx >= 0 &&
             edit.idx <
                 static_cast<int>(audioData.deltaPitch.size()))
@@ -1113,7 +1269,8 @@ void SelectHandler::cancel() {
 
 // --- Private helpers ---
 
-void SelectHandler::rebuildAndNotify() {
+void SelectHandler::rebuildAndNotify()
+{
   PitchCurveProcessor::rebuildBaseFromNotes(*owner_.project);
   if (owner_.onPitchEdited)
     owner_.onPitchEdited();
@@ -1129,7 +1286,8 @@ bool SelectHandler::initDeltaDrag(
     std::vector<Note *> &targetNotesOut,
     std::vector<F0FrameEdit> &editsOut,
     int &minFrameOut,
-    int &maxFrameOut) {
+    int &maxFrameOut)
+{
 
   auto *project = owner_.project;
   if (!project)
@@ -1148,7 +1306,8 @@ bool SelectHandler::initDeltaDrag(
 
   auto selectedNotes = project->getSelectedNotes();
   std::unordered_set<int> seenFrames;
-  for (auto *selected : selectedNotes) {
+  for (auto *selected : selectedNotes)
+  {
     if (!selected || selected->isRest())
       continue;
     targetNotesOut.push_back(selected);
@@ -1157,7 +1316,8 @@ bool SelectHandler::initDeltaDrag(
     const int endFrame = std::min(
         selected->getEndFrame(),
         static_cast<int>(audioData.deltaPitch.size()));
-    for (int frame = startFrame; frame < endFrame; ++frame) {
+    for (int frame = startFrame; frame < endFrame; ++frame)
+    {
       if (!seenFrames.insert(frame).second)
         continue;
       F0FrameEdit edit;
@@ -1178,7 +1338,8 @@ bool SelectHandler::initDeltaDrag(
     }
   }
 
-  if (editsOut.empty()) {
+  if (editsOut.empty())
+  {
     isDraggingOut = false;
     targetNotesOut.clear();
     return false;
@@ -1187,7 +1348,8 @@ bool SelectHandler::initDeltaDrag(
   return true;
 }
 
-void SelectHandler::prepareDragBasePreview() {
+void SelectHandler::prepareDragBasePreview()
+{
   auto *project = owner_.project;
   if (!project || !draggedNote)
     return;
@@ -1199,10 +1361,12 @@ void SelectHandler::prepareDragBasePreview() {
   auto range = computeBasePitchPreviewRange(
       project->getNotes(),
       static_cast<int>(audioData.basePitch.size()),
-      [this](const Note &note) { return &note == draggedNote; });
+      [this](const Note &note)
+      { return &note == draggedNote; });
 
   if (range.startFrame < 0 ||
-      range.endFrame <= range.startFrame || range.weights.empty()) {
+      range.endFrame <= range.startFrame || range.weights.empty())
+  {
     return;
   }
 
@@ -1214,7 +1378,8 @@ void SelectHandler::prepareDragBasePreview() {
   dragBasePitchSnapshot.resize(static_cast<size_t>(count));
   dragF0Snapshot.resize(static_cast<size_t>(count));
 
-  for (int i = 0; i < count; ++i) {
+  for (int i = 0; i < count; ++i)
+  {
     const int frame = dragPreviewStartFrame + i;
     dragBasePitchSnapshot[static_cast<size_t>(i)] =
         audioData.basePitch[static_cast<size_t>(frame)];
@@ -1225,7 +1390,8 @@ void SelectHandler::prepareDragBasePreview() {
   lastDragPitchOffset = 0.0f;
 }
 
-void SelectHandler::applyDragBasePreview(float pitchOffsetSemitones) {
+void SelectHandler::applyDragBasePreview(float pitchOffsetSemitones)
+{
   if (std::abs(pitchOffsetSemitones - lastDragPitchOffset) < 0.0001f)
     return;
 
@@ -1246,7 +1412,8 @@ void SelectHandler::applyDragBasePreview(float pitchOffsetSemitones) {
   if (audioData.baseF0.size() < audioData.basePitch.size())
     audioData.baseF0.resize(audioData.basePitch.size(), 0.0f);
 
-  for (int i = 0; i < count; ++i) {
+  for (int i = 0; i < count; ++i)
+  {
     const int frame = dragPreviewStartFrame + i;
     const float baseMidi =
         dragBasePitchSnapshot[static_cast<size_t>(i)] +
@@ -1261,16 +1428,20 @@ void SelectHandler::applyDragBasePreview(float pitchOffsetSemitones) {
             ? audioData.deltaPitch[static_cast<size_t>(frame)]
             : 0.0f;
     if (frame < static_cast<int>(audioData.voicedMask.size()) &&
-        !audioData.voicedMask[static_cast<size_t>(frame)]) {
+        !audioData.voicedMask[static_cast<size_t>(frame)])
+    {
       audioData.f0[static_cast<size_t>(frame)] = 0.0f;
-    } else {
+    }
+    else
+    {
       audioData.f0[static_cast<size_t>(frame)] =
           midiToFreq(baseMidi + deltaMidi);
     }
   }
 }
 
-void SelectHandler::restoreDragBasePreview() {
+void SelectHandler::restoreDragBasePreview()
+{
   auto *project = owner_.project;
   if (!project || dragPreviewStartFrame < 0 ||
       dragPreviewEndFrame <= dragPreviewStartFrame ||
@@ -1283,7 +1454,8 @@ void SelectHandler::restoreDragBasePreview() {
       static_cast<size_t>(dragPreviewEndFrame))
     return;
 
-  for (int i = 0; i < count; ++i) {
+  for (int i = 0; i < count; ++i)
+  {
     const int frame = dragPreviewStartFrame + i;
     audioData.basePitch[static_cast<size_t>(frame)] =
         dragBasePitchSnapshot[static_cast<size_t>(i)];

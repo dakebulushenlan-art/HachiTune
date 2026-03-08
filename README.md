@@ -6,19 +6,21 @@
 
 ## Overview
 
-HachiTune is a standalone app and audio plugin for editing vocal pitch in a piano roll. It analyzes audio with neural pitch detectors, segments notes, and resynthesizes edits with a neural vocoder. The plugin supports both ARA hosts and a non-ARA capture workflow.
-It can significantly improve the problem of distortion after adjustment
+HachiTune is a standalone app and audio plugin for editing vocal pitch in a piano roll. It analyzes audio using neural pitch detectors (RMVPE / FCPE), segments notes with the GAME model, and resynthesizes edits in real time through a neural vocoder (PC-NSF-HiFiGAN). Edits are previewed instantly with minimal latency and exported as audio or MIDI. The plugin supports both ARA hosts and a non-ARA capture workflow.
 
 ## Features
 
-- Piano roll editing for pitch, timing, and note parameters
+- Piano roll editing with select, draw, split, and stretch modes
+- Note timing stretch with absorb (zero-sum) and ripple (shift subsequent) modes
 - Neural pitch detection (RMVPE default, FCPE optional)
-- SOME-based note segmentation with F0 fallback
-- Real-time preview with neural vocoder resynthesis
-- Export audio and MIDI
-- Standalone app plus VST3/AU plugins (AAX optional)
-- GPU acceleration via CUDA or DirectML on Windows; CoreML path on macOS
-- Multi-language UI
+- GAME-based note segmentation with D3PM diffusion model
+- Pitch curve editing with per-note delta, scale, offset, tilt, and variance controls
+- Real-time incremental vocoder resynthesis (PC-NSF-HiFiGAN)
+- Undo/redo for all editing operations
+- Export audio (WAV) and MIDI
+- Standalone app plus VST3/AU plugins (AAX optional, ARA supported)
+- GPU acceleration via CUDA or DirectML on Windows; CoreML on macOS
+- Multi-language UI (English, Japanese, Chinese Simplified, Chinese Traditional)
 
 ## Requirements
 
@@ -39,9 +41,9 @@ It can significantly improve the problem of distortion after adjustment
 The build expects required model files in `Resources/models` and will fail if any are missing:
 
 - `pc_nsf_hifigan.onnx` (vocoder)
-- `rmvpe.onnx`
-- `fcpe.onnx`
-- `some.onnx`
+- `rmvpe.onnx` (pitch detection)
+- `fcpe.onnx` (pitch detection, optional)
+- `GAME/` (note segmentation: `encoder.onnx`, `estimator.onnx`, `segmenter.onnx`, `dur2bd.onnx`, `bd2dur.onnx`, `config.json`)
 - `cent_table.bin`
 - `mel_filterbank.bin`
 
@@ -74,7 +76,7 @@ cmake --build build --config Release
 - `-DUSE_ASIO=ON` Enable ASIO support (Windows)
 - `-DUSE_BUNDLED_CUDA_RUNTIME=ON` Bundle CUDA redistributables (Windows)
 - `-DUSE_BUNDLED_DIRECTML_RUNTIME=ON` Bundle DirectML runtime (Windows)
-- `-DONNXRUNTIME_VERSION=1.17.3` Override ONNX Runtime version
+- `-DONNXRUNTIME_VERSION=1.24.3` Override ONNX Runtime version
 
 Notes:
 - CUDA and DirectML cannot be enabled at the same time.
@@ -89,10 +91,11 @@ Notes:
 ## Usage
 
 1. Open an audio file (WAV/MP3/FLAC/OGG).
-2. Analyze to extract pitch and notes.
-3. Edit notes and pitch curves in the piano roll.
-4. Preview changes in real time.
-5. Export audio or MIDI.
+2. Analyze to detect pitch and segment notes.
+3. Edit notes in the piano roll — adjust pitch, timing, and expression.
+4. Use stretch mode to fine-tune note boundaries (absorb or ripple).
+5. Preview changes in real time via the neural vocoder.
+6. Export the edited audio or MIDI.
 
 ### Plugin modes
 
@@ -104,20 +107,30 @@ Notes:
 ```
 HachiTune/
   Source/
-    Audio/        # Audio engine, pitch detection, vocoder
-    Models/       # Project and note data
-    UI/           # UI components
-    Utils/        # Utilities, localization, undo
-    Plugin/       # VST3/AU/AAX/ARA integration
+    Audio/        # Audio engine, pitch detection, synthesis, vocoder
+    Models/       # Project, note, and audio data models
+    UI/           # Piano roll, toolbar, and UI components
+    Utils/        # Resampling, localization, mel spectrogram utilities
+    Undo/         # Undo/redo action system
+    Plugin/       # VST3/AU/AAX/ARA plugin integration
   Resources/
-    models/       # Required ONNX + data files
-    lang/         # Localization JSON
+    models/       # ONNX models and data files
+    lang/         # Localization JSON (en, ja, zh, zh-TW)
     fonts/        # UI fonts
+    svg/          # Toolbar icons
   third_party/
-    JUCE/         # JUCE submodule
-    ARA_SDK/      # ARA SDK submodule (optional)
+    JUCE/         # JUCE framework (submodule)
+    ARA_SDK/      # ARA SDK (submodule, optional)
   CMakeLists.txt
 ```
+
+## Acknowledgements
+
+This project uses the following models from the open-source community:
+
+- [GAME](https://github.com/openvpi/GAME) — Note segmentation model by [OpenVPI](https://github.com/openvpi)
+- [PC-NSF-HiFiGAN](https://github.com/openvpi/vocoders) — Neural vocoder by [OpenVPI](https://github.com/openvpi)
+- [RMVPE](https://github.com/yxlllc/RMVPE) — Robust pitch estimation model by [yxlllc](https://github.com/yxlllc)
 
 ## License
 

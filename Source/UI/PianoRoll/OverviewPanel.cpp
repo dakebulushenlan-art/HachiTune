@@ -72,9 +72,9 @@ void OverviewPanel::paint(juce::Graphics &g) {
     g.drawLine(x, y1, x, y2);
   }
 
-  if (showSomeSegmentsDebug && totalTime > 0.0) {
+  if (showSegmentsDebug && totalTime > 0.0) {
     g.setColour(juce::Colours::orange.withAlpha(0.16f));
-    for (const auto &range : audioData.someChunkRanges) {
+    for (const auto &range : audioData.segmentChunkRanges) {
       const int startFrame = std::max(0, range.first);
       const int endFrame = std::max(startFrame, range.second);
       if (endFrame <= startFrame)
@@ -96,7 +96,7 @@ void OverviewPanel::paint(juce::Graphics &g) {
     }
 
     g.setColour(juce::Colours::orange.withAlpha(0.75f));
-    for (const auto &range : audioData.someChunkRanges) {
+    for (const auto &range : audioData.segmentChunkRanges) {
       const int startFrame = std::max(0, range.first);
       const int endFrame = std::max(startFrame, range.second);
       if (endFrame <= startFrame)

@@ -16,7 +16,7 @@ option(USE_BUNDLED_DIRECTML_RUNTIME "Bundle DirectML runtime DLL (Windows only)"
 option(USE_ASIO "Enable ASIO support (Windows only)" OFF)
 set(CUDA_REDIST_URL "" CACHE STRING "Optional URL to download CUDA runtime redistributable zip")
 set(DIRECTML_REDIST_URL "" CACHE STRING "Optional URL to download DirectML redistributable zip")
-set(ONNXRUNTIME_VERSION "1.17.3" CACHE STRING "ONNX Runtime version")
+set(ONNXRUNTIME_VERSION "1.24.3" CACHE STRING "ONNX Runtime version")
 
 # Check that CUDA and DirectML are not both enabled
 if(USE_CUDA AND USE_DIRECTML)
@@ -62,15 +62,12 @@ else()
     # Detect platform and set download URL
     if(WIN32)
         if(USE_CUDA)
-            # CUDA requires CUDA-specific ONNX Runtime build
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-gpu-cuda12-${ONNXRUNTIME_VERSION}.zip")
-            message(STATUS "Downloading ONNX Runtime GPU CUDA12 package (Windows)")
+            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-gpu_cuda13-${ONNXRUNTIME_VERSION}.zip")
+            message(STATUS "Downloading ONNX Runtime GPU CUDA13 package (Windows)")
         elseif(USE_DIRECTML)
-            # DirectML uses the NuGet package (NuGet packages are ZIP files)
             set(ONNXRUNTIME_URL "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/${ONNXRUNTIME_VERSION}")
             message(STATUS "Downloading ONNX Runtime DirectML package from NuGet (Windows)")
         else()
-            # CPU-only package
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip")
             message(STATUS "Downloading ONNX Runtime CPU package (Windows)")
         endif()
@@ -78,13 +75,11 @@ else()
         if(USE_GPU)
             message(WARNING "GPU acceleration is not supported on macOS, falling back to CPU")
         endif()
-        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz")
-        else()
-            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-x86_64-${ONNXRUNTIME_VERSION}.tgz")
-        endif()
+        set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz")
     else()
-        if(USE_GPU)
+        if(USE_CUDA)
+            set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu_cuda13-${ONNXRUNTIME_VERSION}.tgz")
+        elseif(USE_GPU)
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}.tgz")
         else()
             set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz")
@@ -602,11 +597,67 @@ set(MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources/models")
 set(REQUIRED_MODELS
     pc_nsf_hifigan.onnx
     fcpe.onnx
-    some.onnx
     rmvpe.onnx
     cent_table.bin
     mel_filterbank.bin
 )
+
+# Check required GAME models
+set(GAME_DIR "${MODELS_DIR}/GAME")
+set(REQUIRED_GAME_MODELS
+    encoder.onnx
+    segmenter.onnx
+    estimator.onnx
+    bd2dur.onnx
+    dur2bd.onnx
+    config.json
+)
+
+# Auto-download GAME models if missing
+set(GAME_MODELS_MISSING FALSE)
+foreach(GMODEL ${REQUIRED_GAME_MODELS})
+    if(NOT EXISTS "${GAME_DIR}/${GMODEL}")
+        set(GAME_MODELS_MISSING TRUE)
+        break()
+    endif()
+endforeach()
+
+if(GAME_MODELS_MISSING)
+    message(STATUS "GAME models not found, downloading...")
+    set(GAME_ZIP_URL "https://github.com/openvpi/GAME/releases/download/v1.0.2/GAME-1.0-small-onnx.zip")
+    set(GAME_ZIP_PATH "${CMAKE_BINARY_DIR}/GAME-1.0-small-onnx.zip")
+    set(GAME_EXTRACT_DIR "${CMAKE_BINARY_DIR}/_game_extract")
+
+    file(DOWNLOAD "${GAME_ZIP_URL}" "${GAME_ZIP_PATH}"
+         STATUS GAME_DL_STATUS
+         SHOW_PROGRESS)
+    list(GET GAME_DL_STATUS 0 GAME_DL_CODE)
+    if(NOT GAME_DL_CODE EQUAL 0)
+        message(FATAL_ERROR "Failed to download GAME models: ${GAME_DL_STATUS}")
+    endif()
+
+    file(MAKE_DIRECTORY "${GAME_EXTRACT_DIR}")
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E tar xf "${GAME_ZIP_PATH}"
+        WORKING_DIRECTORY "${GAME_EXTRACT_DIR}"
+        RESULT_VARIABLE GAME_EXTRACT_RESULT)
+    if(NOT GAME_EXTRACT_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to extract GAME models")
+    endif()
+
+    # Find and copy extracted files into Resources/models/GAME
+    file(MAKE_DIRECTORY "${GAME_DIR}")
+    file(GLOB_RECURSE GAME_EXTRACTED_FILES "${GAME_EXTRACT_DIR}/*.onnx" "${GAME_EXTRACT_DIR}/config.json")
+    foreach(GFILE ${GAME_EXTRACTED_FILES})
+        get_filename_component(GNAME "${GFILE}" NAME)
+        file(COPY "${GFILE}" DESTINATION "${GAME_DIR}")
+    endforeach()
+
+    # Clean up
+    file(REMOVE "${GAME_ZIP_PATH}")
+    file(REMOVE_RECURSE "${GAME_EXTRACT_DIR}")
+    message(STATUS "GAME models downloaded and extracted to ${GAME_DIR}")
+endif()
 
 # Check required models
 foreach(MODEL ${REQUIRED_MODELS})
@@ -614,10 +665,15 @@ foreach(MODEL ${REQUIRED_MODELS})
         message(FATAL_ERROR "Required model not found: ${MODELS_DIR}/${MODEL}")
     endif()
 endforeach()
+foreach(GMODEL ${REQUIRED_GAME_MODELS})
+    if(NOT EXISTS "${GAME_DIR}/${GMODEL}")
+        message(FATAL_ERROR "Required GAME model not found: ${GAME_DIR}/${GMODEL}")
+    endif()
+endforeach()
 message(STATUS "All required models found")
 
 # Copy all files from models directory to targets
-file(GLOB ALL_MODEL_FILES "${MODELS_DIR}/*")
+file(GLOB ALL_MODEL_FILES "${MODELS_DIR}/*.onnx" "${MODELS_DIR}/*.bin")
 foreach(MODEL_PATH ${ALL_MODEL_FILES})
     get_filename_component(MODEL_NAME "${MODEL_PATH}" NAME)
     if(APPLE)
@@ -637,6 +693,30 @@ foreach(MODEL_PATH ${ALL_MODEL_FILES})
         add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODEL_PATH}" "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/${MODEL_NAME}")
+    endif()
+endforeach()
+
+# Copy GAME model subdirectory
+file(GLOB GAME_MODEL_FILES "${GAME_DIR}/*")
+foreach(GFILE_PATH ${GAME_MODEL_FILES})
+    get_filename_component(GFILE_NAME "${GFILE_PATH}" NAME)
+    if(APPLE)
+        add_custom_command(TARGET HachiTune POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/GAME/${GFILE_NAME}")
+        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/GAME/${GFILE_NAME}")
+        add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/GAME/${GFILE_NAME}")
+    else()
+        add_custom_command(TARGET HachiTune POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTune>/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_FILE_DIR:HachiTune>/models/GAME/${GFILE_NAME}")
+        add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/GAME"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GFILE_PATH}" "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/GAME/${GFILE_NAME}")
     endif()
 endforeach()
 

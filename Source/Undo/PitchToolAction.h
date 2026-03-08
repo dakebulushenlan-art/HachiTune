@@ -17,10 +17,10 @@ class PitchToolAction : public UndoableAction
 {
 public:
     PitchToolAction(
-        Project* project,
-        std::vector<Note*> affectedNotes,
-        const std::vector<TransformParams>& oldParams,
-        const std::vector<TransformParams>& newParams,
+        Project *project,
+        std::vector<Note *> affectedNotes,
+        const std::vector<TransformParams> &oldParams,
+        const std::vector<TransformParams> &newParams,
         std::function<void(int, int)> onRangeChanged = nullptr)
         : project(project),
           notes(std::move(affectedNotes)),
@@ -41,12 +41,16 @@ public:
     juce::String getName() const override { return "Apply Pitch Tool"; }
 
 private:
-    void applyParams(const std::vector<TransformParams>& params)
+    void applyParams(const std::vector<TransformParams> &params)
     {
         for (size_t i = 0; i < notes.size(); ++i)
         {
             if (notes[i] && i < params.size())
+            {
                 params[i].applyToNote(*notes[i]);
+                notes[i]->markDirty();
+                notes[i]->markSynthDirty();
+            }
         }
 
         if (project)
@@ -57,7 +61,7 @@ private:
             {
                 int minFrame = std::numeric_limits<int>::max();
                 int maxFrame = std::numeric_limits<int>::min();
-                for (const auto* note : notes)
+                for (const auto *note : notes)
                 {
                     minFrame = std::min(minFrame, note->getStartFrame());
                     maxFrame = std::max(maxFrame, note->getEndFrame());
@@ -70,7 +74,7 @@ private:
         {
             int minFrame = notes[0]->getStartFrame();
             int maxFrame = notes[0]->getEndFrame();
-            for (const auto* note : notes)
+            for (const auto *note : notes)
             {
                 minFrame = std::min(minFrame, note->getStartFrame());
                 maxFrame = std::max(maxFrame, note->getEndFrame());
@@ -79,8 +83,8 @@ private:
         }
     }
 
-    Project* project;
-    std::vector<Note*> notes;
+    Project *project;
+    std::vector<Note *> notes;
     std::vector<TransformParams> oldParams;
     std::vector<TransformParams> newParams;
     std::function<void(int, int)> onRangeChanged;

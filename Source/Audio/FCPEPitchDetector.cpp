@@ -1,10 +1,13 @@
 #include "FCPEPitchDetector.h"
+#include "../Utils/AppLogger.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <numeric>
 #include <thread>
 
-FCPEPitchDetector::FCPEPitchDetector() {
+FCPEPitchDetector::FCPEPitchDetector()
+{
   initMelFilterbank();
   initHannWindow();
   initCentTable();
@@ -12,7 +15,8 @@ FCPEPitchDetector::FCPEPitchDetector() {
 
 FCPEPitchDetector::~FCPEPitchDetector() = default;
 
-void FCPEPitchDetector::initMelFilterbank() {
+void FCPEPitchDetector::initMelFilterbank()
+{
   // Create mel filterbank matching librosa's implementation (Slaney
   // normalization)
   const int numBins = N_FFT / 2 + 1; // 513
@@ -20,11 +24,13 @@ void FCPEPitchDetector::initMelFilterbank() {
   // Hz to Mel conversion (HTK formula used by librosa by default when htk=False
   // is NOT used) Actually librosa uses Slaney by default, but the mel function
   // with htk=False uses HTK For compatibility with FCPE, we use the HTK formula
-  auto hzToMel = [](float hz) -> float {
+  auto hzToMel = [](float hz) -> float
+  {
     return 2595.0f * std::log10(1.0f + hz / 700.0f);
   };
 
-  auto melToHz = [](float mel) -> float {
+  auto melToHz = [](float mel) -> float
+  {
     return 700.0f * (std::pow(10.0f, mel / 2595.0f) - 1.0f);
   };
 
@@ -33,19 +39,22 @@ void FCPEPitchDetector::initMelFilterbank() {
 
   // Create mel points (N_MELS + 2 for triangular filters)
   std::vector<float> melPoints(N_MELS + 2);
-  for (int i = 0; i <= N_MELS + 1; ++i) {
+  for (int i = 0; i <= N_MELS + 1; ++i)
+  {
     melPoints[i] = melMin + (melMax - melMin) * i / (N_MELS + 1);
   }
 
   // Convert to Hz
   std::vector<float> hzPoints(N_MELS + 2);
-  for (int i = 0; i <= N_MELS + 1; ++i) {
+  for (int i = 0; i <= N_MELS + 1; ++i)
+  {
     hzPoints[i] = melToHz(melPoints[i]);
   }
 
   // Create filterbank with Slaney normalization (sparse representation)
   melFilterbank.resize(N_MELS);
-  for (int m = 0; m < N_MELS; ++m) {
+  for (int m = 0; m < N_MELS; ++m)
+  {
     float fLow = hzPoints[m];
     float fCenter = hzPoints[m + 1];
     float fHigh = hzPoints[m + 2];
@@ -57,54 +66,67 @@ void FCPEPitchDetector::initMelFilterbank() {
     int firstBin = numBins;
     int lastBin = -1;
 
-    for (int k = 0; k < numBins; ++k) {
+    for (int k = 0; k < numBins; ++k)
+    {
       float freq = static_cast<float>(k) * FCPE_SAMPLE_RATE / N_FFT;
-      if (freq >= fLow && freq <= fHigh) {
-        if (k < firstBin) firstBin = k;
-        if (k > lastBin)  lastBin = k;
+      if (freq >= fLow && freq <= fHigh)
+      {
+        if (k < firstBin)
+          firstBin = k;
+        if (k > lastBin)
+          lastBin = k;
       }
     }
 
-    MelBand& band = melFilterbank[m];
-    if (lastBin < firstBin) {
+    MelBand &band = melFilterbank[m];
+    if (lastBin < firstBin)
+    {
       band.startBin = 0;
       band.endBin = 0;
       continue;
     }
 
     band.startBin = firstBin;
-    band.endBin = lastBin + 1;  // exclusive
+    band.endBin = lastBin + 1; // exclusive
     band.weights.resize(band.endBin - band.startBin, 0.0f);
 
-    for (int k = firstBin; k <= lastBin; ++k) {
+    for (int k = firstBin; k <= lastBin; ++k)
+    {
       float freq = static_cast<float>(k) * FCPE_SAMPLE_RATE / N_FFT;
 
-      if (freq >= fLow && freq < fCenter) {
+      if (freq >= fLow && freq < fCenter)
+      {
         band.weights[k - firstBin] = enorm * (freq - fLow) / (fCenter - fLow);
-      } else if (freq >= fCenter && freq <= fHigh) {
+      }
+      else if (freq >= fCenter && freq <= fHigh)
+      {
         band.weights[k - firstBin] = enorm * (fHigh - freq) / (fHigh - fCenter);
       }
     }
   }
 }
 
-void FCPEPitchDetector::initHannWindow() {
+void FCPEPitchDetector::initHannWindow()
+{
   // Create Hann window (numpy.hanning style - symmetric)
   hannWindow.resize(WIN_SIZE);
-  for (int i = 0; i < WIN_SIZE; ++i) {
+  for (int i = 0; i < WIN_SIZE; ++i)
+  {
     hannWindow[i] =
         0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * i /
                                 (WIN_SIZE - 1)));
   }
 }
 
-void FCPEPitchDetector::initCentTable() {
+void FCPEPitchDetector::initCentTable()
+{
   // Create cent table matching PyTorch model
   centTable.resize(OUT_DIMS);
   float centMin = f0ToCent(F0_MIN);
   float centMax = f0ToCent(F0_MAX);
 
-  for (int i = 0; i < OUT_DIMS; ++i) {
+  for (int i = 0; i < OUT_DIMS; ++i)
+  {
     centTable[i] = centMin + (centMax - centMin) * i / (OUT_DIMS - 1);
   }
 }
@@ -112,31 +134,40 @@ void FCPEPitchDetector::initCentTable() {
 bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
                                   const juce::File &melFilterbankPath,
                                   const juce::File &centTablePath,
-                                  GPUProvider provider, int deviceId) {
+                                  GPUProvider provider, int deviceId)
+{
 #ifdef HAVE_ONNXRUNTIME
-  try {
+  try
+  {
     // Load mel filterbank from file if provided (dense binary → sparse)
-    if (melFilterbankPath.existsAsFile()) {
+    if (melFilterbankPath.existsAsFile())
+    {
       juce::FileInputStream stream(melFilterbankPath);
-      if (stream.openedOk()) {
+      if (stream.openedOk())
+      {
         const int numBins = N_FFT / 2 + 1;
         std::vector<float> data(N_MELS * numBins);
         stream.read(data.data(), data.size() * sizeof(float));
 
         melFilterbank.resize(N_MELS);
-        for (int m = 0; m < N_MELS; ++m) {
+        for (int m = 0; m < N_MELS; ++m)
+        {
           // Find non-zero bounds
           int firstBin = numBins;
           int lastBin = -1;
-          for (int k = 0; k < numBins; ++k) {
-            if (data[m * numBins + k] != 0.0f) {
-              if (k < firstBin) firstBin = k;
+          for (int k = 0; k < numBins; ++k)
+          {
+            if (data[m * numBins + k] != 0.0f)
+            {
+              if (k < firstBin)
+                firstBin = k;
               lastBin = k;
             }
           }
 
-          MelBand& band = melFilterbank[m];
-          if (lastBin < firstBin) {
+          MelBand &band = melFilterbank[m];
+          if (lastBin < firstBin)
+          {
             band.startBin = 0;
             band.endBin = 0;
             continue;
@@ -145,7 +176,8 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
           band.startBin = firstBin;
           band.endBin = lastBin + 1;
           band.weights.resize(band.endBin - band.startBin);
-          for (int k = firstBin; k <= lastBin; ++k) {
+          for (int k = firstBin; k <= lastBin; ++k)
+          {
             band.weights[k - firstBin] = data[m * numBins + k];
           }
         }
@@ -153,9 +185,11 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
     }
 
     // Load cent table from file if provided
-    if (centTablePath.existsAsFile()) {
+    if (centTablePath.existsAsFile())
+    {
       juce::FileInputStream stream(centTablePath);
-      if (stream.openedOk()) {
+      if (stream.openedOk())
+      {
         centTable.resize(OUT_DIMS);
         stream.read(centTable.data(), centTable.size() * sizeof(float));
       }
@@ -166,21 +200,29 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
                                          "FCPEPitchDetector");
 
     Ort::SessionOptions sessionOptions;
-    if (provider == GPUProvider::CPU) {
+    sessionOptions.SetGraphOptimizationLevel(
+        GraphOptimizationLevel::ORT_ENABLE_ALL);
+    sessionOptions.EnableCpuMemArena();
+
+    if (provider == GPUProvider::CPU)
+    {
       const int numThreads =
           std::max(1u, std::thread::hardware_concurrency()) / 2;
       sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
-    } else {
+      sessionOptions.EnableMemPattern();
+    }
+    else
+    {
       sessionOptions.SetIntraOpNumThreads(1);
       sessionOptions.SetInterOpNumThreads(1);
     }
-    sessionOptions.SetGraphOptimizationLevel(
-        GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     // Configure execution provider based on GPU settings
 #if defined(_WIN32) && defined(USE_DIRECTML)
-    if (provider == GPUProvider::DirectML) {
-      try {
+    if (provider == GPUProvider::DirectML)
+    {
+      try
+      {
         const OrtApi &ortApi = Ort::GetApi();
         const OrtDmlApi *ortDmlApi = nullptr;
         Ort::ThrowOnError(ortApi.GetExecutionProviderApi(
@@ -192,29 +234,46 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
 
         Ort::ThrowOnError(ortDmlApi->SessionOptionsAppendExecutionProvider_DML(
             sessionOptions, deviceId));
-      } catch (const Ort::Exception &e) {
       }
-    } else
+      catch (const Ort::Exception &e)
+      {
+      }
+    }
+    else
 #endif
 #ifdef USE_CUDA
-        if (provider == GPUProvider::CUDA) {
-      try {
+        if (provider == GPUProvider::CUDA)
+    {
+      try
+      {
         OrtCUDAProviderOptions cudaOptions;
         cudaOptions.device_id = deviceId;
+        cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchDefault;
+        cudaOptions.arena_extend_strategy = 1;
         sessionOptions.AppendExecutionProvider_CUDA(cudaOptions);
-      } catch (const Ort::Exception &e) {
       }
-    } else
+      catch (const Ort::Exception &e)
+      {
+      }
+    }
+    else
 #endif
-        if (provider == GPUProvider::CoreML) {
-      try {
+        if (provider == GPUProvider::CoreML)
+    {
+      try
+      {
         sessionOptions.AppendExecutionProvider("CoreML",
-            {{"MLComputeUnits", "ALL"}});
-      } catch (const Ort::Exception &e) {
+                                               {{"MLComputeUnits", "ALL"}});
       }
-    } else {
+      catch (const Ort::Exception &e)
+      {
+      }
+    }
+    else
+    {
       // CPU fallback - do nothing, CPU is default
-      if (provider != GPUProvider::CPU) {
+      if (provider != GPUProvider::CPU)
+      {
       }
     }
 
@@ -239,12 +298,14 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
     inputNames.clear();
     outputNames.clear();
 
-    for (size_t i = 0; i < numInputs; ++i) {
+    for (size_t i = 0; i < numInputs; ++i)
+    {
       auto namePtr = onnxSession->GetInputNameAllocated(i, *allocator);
       inputNameStrings.push_back(namePtr.get());
     }
 
-    for (size_t i = 0; i < numOutputs; ++i) {
+    for (size_t i = 0; i < numOutputs; ++i)
+    {
       auto namePtr = onnxSession->GetOutputNameAllocated(i, *allocator);
       outputNameStrings.push_back(namePtr.get());
     }
@@ -258,10 +319,14 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
 
     loaded = true;
     return true;
-  } catch (const Ort::Exception &e) {
+  }
+  catch (const Ort::Exception &e)
+  {
     loaded = false;
     return false;
-  } catch (const std::exception &e) {
+  }
+  catch (const std::exception &e)
+  {
     loaded = false;
     return false;
   }
@@ -272,8 +337,10 @@ bool FCPEPitchDetector::loadModel(const juce::File &modelPath,
 
 std::vector<float> FCPEPitchDetector::resampleTo16k(const float *audio,
                                                     int numSamples,
-                                                    int srcRate) {
-  if (srcRate == FCPE_SAMPLE_RATE) {
+                                                    int srcRate)
+{
+  if (srcRate == FCPE_SAMPLE_RATE)
+  {
     return std::vector<float>(audio, audio + numSamples);
   }
 
@@ -284,15 +351,19 @@ std::vector<float> FCPEPitchDetector::resampleTo16k(const float *audio,
 
   std::vector<float> resampled(outSamples);
 
-  for (int i = 0; i < outSamples; ++i) {
+  for (int i = 0; i < outSamples; ++i)
+  {
     double srcPos = i / ratio;
     int srcIdx = static_cast<int>(srcPos);
     double frac = srcPos - srcIdx;
 
-    if (srcIdx + 1 < numSamples) {
+    if (srcIdx + 1 < numSamples)
+    {
       resampled[i] = static_cast<float>(audio[srcIdx] * (1.0 - frac) +
                                         audio[srcIdx + 1] * frac);
-    } else if (srcIdx < numSamples) {
+    }
+    else if (srcIdx < numSamples)
+    {
       resampled[i] = audio[srcIdx];
     }
   }
@@ -301,7 +372,8 @@ std::vector<float> FCPEPitchDetector::resampleTo16k(const float *audio,
 }
 
 std::vector<std::vector<float>>
-FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
+FCPEPitchDetector::extractMel(const std::vector<float> &audio)
+{
   const int numBins = N_FFT / 2 + 1;
 
   // Pad audio (same as PyTorch FCPE)
@@ -312,12 +384,14 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
   std::vector<float> paddedAudio;
 
   // Reflect padding if possible, otherwise zero padding
-  if (padRight < static_cast<int>(audio.size())) {
+  if (padRight < static_cast<int>(audio.size()))
+  {
     // Reflect padding
     paddedAudio.reserve(padLeft + audio.size() + padRight);
 
     // Left reflection
-    for (int i = padLeft; i > 0; --i) {
+    for (int i = padLeft; i > 0; --i)
+    {
       paddedAudio.push_back(
           audio[std::min(i, static_cast<int>(audio.size()) - 1)]);
     }
@@ -327,13 +401,16 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
 
     // Right reflection
     int audioSize = static_cast<int>(audio.size());
-    for (int i = 0; i < padRight; ++i) {
+    for (int i = 0; i < padRight; ++i)
+    {
       int idx = audioSize - 2 - i;
       if (idx < 0)
         idx = 0;
       paddedAudio.push_back(audio[idx]);
     }
-  } else {
+  }
+  else
+  {
     // Zero padding
     paddedAudio.resize(padLeft + audio.size() + padRight, 0.0f);
     std::copy(audio.begin(), audio.end(), paddedAudio.begin() + padLeft);
@@ -353,14 +430,16 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
   std::vector<float> mag(numBins, 0.0f);
   juce::dsp::FFT fft(static_cast<int>(std::log2(N_FFT)));
 
-  for (int frame = 0; frame < numFrames; ++frame) {
+  for (int frame = 0; frame < numFrames; ++frame)
+  {
     int start = frame * HOP_SIZE;
 
     // Apply window and prepare FFT input
     std::fill(fftBuffer.begin(), fftBuffer.end(), 0.0f);
     for (int i = 0;
          i < WIN_SIZE && start + i < static_cast<int>(paddedAudio.size());
-         ++i) {
+         ++i)
+    {
       fftBuffer[i] = paddedAudio[start + i] * hannWindow[i];
     }
 
@@ -368,17 +447,20 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
     fft.performRealOnlyForwardTransform(fftBuffer.data());
 
     // Compute magnitude spectrum
-    for (int k = 0; k < numBins; ++k) {
+    for (int k = 0; k < numBins; ++k)
+    {
       float real = fftBuffer[k * 2];
       float imag = fftBuffer[k * 2 + 1];
       mag[k] = std::sqrt(real * real + imag * imag + 1e-9f);
     }
 
     // Apply sparse mel filterbank
-    for (int m = 0; m < N_MELS; ++m) {
-      const auto& band = melFilterbank[m];
+    for (int m = 0; m < N_MELS; ++m)
+    {
+      const auto &band = melFilterbank[m];
       float sum = 0.0f;
-      for (int k = band.startBin; k < band.endBin; ++k) {
+      for (int k = band.startBin; k < band.endBin; ++k)
+      {
         sum += mag[k] * band.weights[k - band.startBin];
       }
 
@@ -392,24 +474,29 @@ FCPEPitchDetector::extractMel(const std::vector<float> &audio) {
 
 std::vector<float> FCPEPitchDetector::decodeF0(const float *latent,
                                                int numFrames,
-                                               float threshold) {
+                                               float threshold)
+{
   std::vector<float> f0(numFrames, 0.0f);
 
-  for (int t = 0; t < numFrames; ++t) {
+  for (int t = 0; t < numFrames; ++t)
+  {
     const float *frame = latent + static_cast<size_t>(t) * OUT_DIMS;
 
     // Find max index and confidence
     int maxIdx = 0;
     float maxVal = frame[0];
-    for (int i = 1; i < OUT_DIMS; ++i) {
-      if (frame[i] > maxVal) {
+    for (int i = 1; i < OUT_DIMS; ++i)
+    {
+      if (frame[i] > maxVal)
+      {
         maxVal = frame[i];
         maxIdx = i;
       }
     }
 
     // Check confidence threshold
-    if (maxVal <= threshold) {
+    if (maxVal <= threshold)
+    {
       f0[t] = 0.0f;
       continue;
     }
@@ -421,15 +508,19 @@ std::vector<float> FCPEPitchDetector::decodeF0(const float *latent,
     float weightedSum = 0.0f;
     float weightSum = 0.0f;
 
-    for (int i = localStart; i <= localEnd; ++i) {
+    for (int i = localStart; i <= localEnd; ++i)
+    {
       weightedSum += centTable[i] * frame[i];
       weightSum += frame[i];
     }
 
-    if (weightSum > 1e-9f) {
+    if (weightSum > 1e-9f)
+    {
       float cent = weightedSum / weightSum;
       f0[t] = centToF0(cent);
-    } else {
+    }
+    else
+    {
       f0[t] = 0.0f;
     }
   }
@@ -439,20 +530,24 @@ std::vector<float> FCPEPitchDetector::decodeF0(const float *latent,
 
 std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
                                                 int numSamples, int sampleRate,
-                                                float threshold) {
+                                                float threshold)
+{
 #ifdef HAVE_ONNXRUNTIME
-  if (!loaded) {
+  if (!loaded)
+  {
     return {};
   }
 
-  try {
+  try
+  {
     // Step 1: Resample to 16kHz
     auto audio16k = resampleTo16k(audio, numSamples, sampleRate);
 
     // Step 2: Extract mel spectrogram
     auto mel = extractMel(audio16k);
 
-    if (mel.empty()) {
+    if (mel.empty())
+    {
       return {};
     }
 
@@ -460,8 +555,10 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
     int numFrames = static_cast<int>(mel.size());
     melInputScratch.resize(static_cast<size_t>(numFrames) * N_MELS);
 
-    for (int t = 0; t < numFrames; ++t) {
-      for (int m = 0; m < N_MELS; ++m) {
+    for (int t = 0; t < numFrames; ++t)
+    {
+      for (int m = 0; m < N_MELS; ++m)
+      {
         melInputScratch[static_cast<size_t>(t) * N_MELS + m] = mel[t][m];
       }
     }
@@ -478,25 +575,33 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
         inputShapeScratch.data(), inputShapeScratch.size()));
 
     // Step 4: Run inference
+    auto t0 = std::chrono::high_resolution_clock::now();
     auto outputTensors = onnxSession->Run(runOptions, inputNames.data(),
                                           inputTensorScratch.data(),
                                           inputTensorScratch.size(),
                                           outputNames.data(), 1);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    LOG("FCPE inference: " + juce::String(std::chrono::duration<double, std::milli>(t1 - t0).count(), 1) + " ms");
 
     // Step 5: Get output [1, T, OUT_DIMS]
     float *outputData = outputTensors[0].GetTensorMutableData<float>();
     const size_t outputCount =
         outputTensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
-    if (outputCount < static_cast<size_t>(OUT_DIMS)) {
+    if (outputCount < static_cast<size_t>(OUT_DIMS))
+    {
       return {};
     }
     const int outFrames = static_cast<int>(outputCount / OUT_DIMS);
 
     // Step 6: Decode to F0
     return decodeF0(outputData, outFrames, threshold);
-  } catch (const Ort::Exception &e) {
+  }
+  catch (const Ort::Exception &e)
+  {
     return {};
-  } catch (const std::exception &e) {
+  }
+  catch (const std::exception &e)
+  {
     return {};
   }
 #else
@@ -506,13 +611,16 @@ std::vector<float> FCPEPitchDetector::extractF0(const float *audio,
 
 std::vector<float> FCPEPitchDetector::extractF0WithProgress(
     const float *audio, int numSamples, int sampleRate, float threshold,
-    std::function<void(double)> progressCallback) {
+    std::function<void(double)> progressCallback)
+{
 #ifdef HAVE_ONNXRUNTIME
-  if (!loaded) {
+  if (!loaded)
+  {
     return {};
   }
 
-  try {
+  try
+  {
     if (progressCallback)
       progressCallback(0.1);
 
@@ -525,7 +633,8 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
     // Step 2: Extract mel spectrogram
     auto mel = extractMel(audio16k);
 
-    if (mel.empty()) {
+    if (mel.empty())
+    {
       return {};
     }
 
@@ -536,8 +645,10 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
     int numFrames = static_cast<int>(mel.size());
     melInputScratch.resize(static_cast<size_t>(numFrames) * N_MELS);
 
-    for (int t = 0; t < numFrames; ++t) {
-      for (int m = 0; m < N_MELS; ++m) {
+    for (int t = 0; t < numFrames; ++t)
+    {
+      for (int m = 0; m < N_MELS; ++m)
+      {
         melInputScratch[static_cast<size_t>(t) * N_MELS + m] = mel[t][m];
       }
     }
@@ -557,10 +668,13 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
       progressCallback(0.6);
 
     // Step 4: Run inference
+    auto t0 = std::chrono::high_resolution_clock::now();
     auto outputTensors = onnxSession->Run(runOptions, inputNames.data(),
                                           inputTensorScratch.data(),
                                           inputTensorScratch.size(),
                                           outputNames.data(), 1);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    LOG("FCPE inference (progress): " + juce::String(std::chrono::duration<double, std::milli>(t1 - t0).count(), 1) + " ms");
 
     if (progressCallback)
       progressCallback(0.8);
@@ -569,7 +683,8 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
     float *outputData = outputTensors[0].GetTensorMutableData<float>();
     const size_t outputCount =
         outputTensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
-    if (outputCount < static_cast<size_t>(OUT_DIMS)) {
+    if (outputCount < static_cast<size_t>(OUT_DIMS))
+    {
       return {};
     }
     const int outFrames = static_cast<int>(outputCount / OUT_DIMS);
@@ -584,9 +699,13 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
       progressCallback(1.0);
 
     return result;
-  } catch (const Ort::Exception &e) {
+  }
+  catch (const Ort::Exception &e)
+  {
     return {};
-  } catch (const std::exception &e) {
+  }
+  catch (const std::exception &e)
+  {
     return {};
   }
 #else
@@ -594,7 +713,8 @@ std::vector<float> FCPEPitchDetector::extractF0WithProgress(
 #endif
 }
 
-int FCPEPitchDetector::getNumFrames(int numSamples, int sampleRate) const {
+int FCPEPitchDetector::getNumFrames(int numSamples, int sampleRate) const
+{
   // Convert to 16kHz sample count
   int samples16k = static_cast<int>(
       numSamples * static_cast<double>(FCPE_SAMPLE_RATE) / sampleRate);
@@ -608,11 +728,13 @@ int FCPEPitchDetector::getNumFrames(int numSamples, int sampleRate) const {
   return 1 + (paddedLen - WIN_SIZE) / HOP_SIZE;
 }
 
-float FCPEPitchDetector::getTimeForFrame(int frameIndex) const {
+float FCPEPitchDetector::getTimeForFrame(int frameIndex) const
+{
   return static_cast<float>(frameIndex * HOP_SIZE) / FCPE_SAMPLE_RATE;
 }
 
-int FCPEPitchDetector::getHopSizeForSampleRate(int sampleRate) const {
+int FCPEPitchDetector::getHopSizeForSampleRate(int sampleRate) const
+{
   return static_cast<int>(HOP_SIZE * static_cast<double>(sampleRate) /
                           FCPE_SAMPLE_RATE);
 }
