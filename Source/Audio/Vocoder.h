@@ -22,7 +22,8 @@
  * PC-NSF-HiFiGAN Vocoder wrapper using ONNX Runtime.
  * Converts mel spectrogram + F0 to waveform with pitch control.
  */
-class Vocoder {
+class Vocoder
+{
 public:
   Vocoder();
   ~Vocoder();
@@ -92,7 +93,8 @@ public:
   bool reloadModel();
 
 private:
-  struct AsyncTask {
+  struct AsyncTask
+  {
     std::vector<std::vector<float>> mel;
     std::vector<float> f0;
     std::function<void(std::vector<float>)> callback;
@@ -149,6 +151,12 @@ private:
   std::vector<int64_t> f0ShapeScratch;
   std::vector<Ort::Value> inputTensorScratch;
   std::vector<Ort::Value> outputTensorScratch;
+
+  // Single-chunk ONNX inference (caller must hold inferenceMutex).
+  // Returns empty vector on failure.
+  std::vector<float> inferChunkLocked(const std::vector<std::vector<float>> &mel,
+                                      const std::vector<float> &f0,
+                                      size_t numFrames);
 
   // Create session options based on current settings
   Ort::SessionOptions createSessionOptions();
