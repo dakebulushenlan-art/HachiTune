@@ -17,7 +17,8 @@ enum class StretchMode;
  *
  * Manages boundary detection, drag state, delta/voiced/mel resampling.
  */
-class StretchHandler : public InteractionHandler {
+class StretchHandler : public InteractionHandler
+{
 public:
   explicit StretchHandler(PianoRollComponent &owner);
 
@@ -36,7 +37,8 @@ public:
   // Accessors for rendering
   int getHoveredBoundaryIndex() const { return hoveredStretchBoundaryIndex; }
 
-  struct StretchBoundary {
+  struct StretchBoundary
+  {
     Note *left = nullptr;  // Note to the left of this boundary (nullptr if free left edge)
     Note *right = nullptr; // Note to the right of this boundary (nullptr if free right edge)
     int frame = 0;
@@ -46,7 +48,8 @@ public:
    * State captured at drag start and updated during drag.
    * Holds all original data needed for resampling and undo.
    */
-  struct StretchDragState {
+  struct StretchDragState
+  {
     bool active = false;
     bool changed = false;
     StretchMode mode{}; // Effective mode for this drag (locked at start)
@@ -90,9 +93,9 @@ public:
     // Original positions of ripple notes (for undo)
     std::vector<int> originalRippleStarts;
     std::vector<int> originalRippleEnds;
-    // Per-note voicedMask for each ripple note (for restoring after shift)
+    // Per-note data for each ripple note (for writing at shifted positions)
+    std::vector<std::vector<float>> rippleDeltaData;
     std::vector<std::vector<bool>> rippleVoicedData;
-    // Per-note mel for each ripple note (for restoring after shift)
     std::vector<std::vector<std::vector<float>>> rippleMelData;
     // The frame delta applied to ripple notes
     int rippleDelta = 0;

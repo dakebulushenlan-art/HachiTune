@@ -67,6 +67,14 @@ public:
         return frameIndex * HOP_SIZE;
     }
 
+    // Chunk ranges from the last detectNotes call (sample-based, model sample rate)
+    struct ChunkRange
+    {
+        int startSample;
+        int endSample;
+    };
+    const std::vector<ChunkRange> &getLastChunkRanges() const { return lastChunkRanges; }
+
 private:
     bool loaded = false;
 
@@ -93,12 +101,8 @@ private:
     int maxChunkSamples() const { return MAX_ENCODER_FRAMES * samplesPerEncoderFrame(); }
 
     // RMS-based silence detection for chunking
-    struct ChunkRange
-    {
-        int startSample;
-        int endSample;
-    };
     std::vector<ChunkRange> findSilenceChunks(const std::vector<float> &waveform) const;
+    std::vector<ChunkRange> lastChunkRanges;
 
     // Run full pipeline on a single chunk, return NoteEvents with frame offsets relative to chunk start
     std::vector<NoteEvent> processChunk(const std::vector<float> &waveform, int chunkStartSample,

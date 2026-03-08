@@ -332,6 +332,7 @@ std::vector<GAMEDetector::NoteEvent> GAMEDetector::detectNotesWithProgress(
 
     // 2. Find chunk boundaries at silence points
     auto chunks = findSilenceChunks(waveform);
+    lastChunkRanges = chunks;
 
     LOG("GAME: split audio into " + juce::String(static_cast<int>(chunks.size())) +
         " chunks (total " + juce::String(static_cast<int>(waveform.size())) + " samples)");
@@ -369,85 +370,157 @@ std::vector<GAMEDetector::ChunkRange>
 GAMEDetector::findSilenceChunks(const std::vector<float> &waveform) const
 {
     const int totalSamples = static_cast<int>(waveform.size());
-    const int maxChunk = maxChunkSamples();
+    if (totalSamples == 0)
+        return {};
 
-    // If short enough, single chunk
-    if (totalSamples <= maxChunk)
+    // Slicer parameters (matching Python Slicer defaults, units: ms)
+    //   threshold  = -40 dB   (RMS silence threshold)
+    //   min_length = 1000 ms  (minimum voiced chunk length)
+    //   min_interval = 200 ms (minimum silence gap to split on)
+    //   max_sil_kept = 100 ms (silence padding kept at chunk boundaries)
+    constexpr float thresholdDb = -40.0f;
+    constexpr int minLengthMs = 1000;
+    constexpr int minIntervalMs = 200;
+    constexpr int maxSilKeptMs = 100;
+
+    const float threshold = std::pow(10.0f, thresholdDb / 20.0f);
+    const int hop = samplesPerEncoderFrame(); // 441
+    const int numHops = (totalSamples + hop - 1) / hop;
+    const int minLenHops = minLengthMs * modelSampleRate / (1000 * hop);
+    const int minIntHops = minIntervalMs * modelSampleRate / (1000 * hop);
+    const int maxSilHops = maxSilKeptMs * modelSampleRate / (1000 * hop);
+
+    // 1. Compute RMS per hop window
+    std::vector<float> rms(numHops, 0.0f);
+    for (int w = 0; w < numHops; ++w)
     {
-        return {{0, totalSamples}};
-    }
-
-    // Compute RMS energy per hop-sized window
-    const int rmsHop = samplesPerEncoderFrame(); // 441 samples = 1 encoder frame
-    const int numWindows = (totalSamples + rmsHop - 1) / rmsHop;
-    std::vector<float> rmsEnergy(numWindows, 0.0f);
-
-    for (int w = 0; w < numWindows; ++w)
-    {
-        int start = w * rmsHop;
-        int end = std::min(start + rmsHop, totalSamples);
+        int s = w * hop;
+        int e = std::min(s + hop, totalSamples);
         double sum = 0.0;
-        for (int i = start; i < end; ++i)
+        for (int i = s; i < e; ++i)
             sum += static_cast<double>(waveform[i]) * waveform[i];
-        rmsEnergy[w] = static_cast<float>(std::sqrt(sum / (end - start)));
+        rms[w] = static_cast<float>(std::sqrt(sum / (e - s)));
     }
 
-    // Find silence threshold (adaptive: 10th percentile of RMS)
-    std::vector<float> sortedRms = rmsEnergy;
-    std::sort(sortedRms.begin(), sortedRms.end());
-    float silenceThreshold = sortedRms[static_cast<size_t>(numWindows * 0.1)];
-    silenceThreshold = std::max(silenceThreshold * 2.0f, 0.01f);
-
-    // Build chunks: scan for best silence point near maxChunk boundaries
-    std::vector<ChunkRange> chunks;
-    int currentStart = 0;
-
-    while (currentStart < totalSamples)
+    // 2. Find silence intervals (contiguous silent hops >= minIntHops)
+    struct Interval
     {
-        int remaining = totalSamples - currentStart;
-        if (remaining <= maxChunk)
+        int start;
+        int end;
+    };
+    std::vector<Interval> silences;
+    {
+        int silStart = -1;
+        for (int w = 0; w <= numHops; ++w)
         {
-            chunks.push_back({currentStart, totalSamples});
-            break;
-        }
-
-        // Look for silence in range [maxChunk * 0.5, maxChunk] from currentStart
-        int searchStart = currentStart + maxChunk / 2;
-        int searchEnd = currentStart + maxChunk;
-        int searchStartWindow = searchStart / rmsHop;
-        int searchEndWindow = std::min(searchEnd / rmsHop, numWindows);
-
-        // Find the quietest window in the search range
-        int bestWindow = -1;
-        float bestRms = std::numeric_limits<float>::max();
-        for (int w = searchStartWindow; w < searchEndWindow; ++w)
-        {
-            if (rmsEnergy[w] < bestRms)
+            bool silent = (w < numHops) && (rms[w] < threshold);
+            if (silent && silStart < 0)
+                silStart = w;
+            if (!silent && silStart >= 0)
             {
-                bestRms = rmsEnergy[w];
-                bestWindow = w;
+                if (w - silStart >= minIntHops)
+                    silences.push_back({silStart, w});
+                silStart = -1;
             }
         }
+    }
 
-        int splitSample;
-        if (bestWindow >= 0 && bestRms <= silenceThreshold)
+    // 3. Build voiced segments from gaps between silence intervals
+    struct VoicedSeg
+    {
+        int startHop;
+        int endHop;
+    };
+    std::vector<VoicedSeg> voiced;
+    {
+        int prevEnd = 0;
+        for (const auto &sil : silences)
         {
-            // Split at the middle of the quiet window
-            splitSample = bestWindow * rmsHop + rmsHop / 2;
+            if (sil.start > prevEnd)
+                voiced.push_back({prevEnd, sil.start});
+            prevEnd = sil.end;
+        }
+        if (prevEnd < numHops)
+            voiced.push_back({prevEnd, numHops});
+    }
+
+    // No silence found → treat as single segment
+    if (voiced.empty())
+        return {{0, totalSamples}};
+
+    // 4. Merge short segments with neighbours
+    for (size_t vi = 0; vi + 1 < voiced.size();)
+    {
+        if (voiced[vi].endHop - voiced[vi].startHop < minLenHops)
+        {
+            voiced[vi].endHop = voiced[vi + 1].endHop;
+            voiced.erase(voiced.begin() + static_cast<ptrdiff_t>(vi) + 1);
         }
         else
         {
-            // No silence found — find the local minimum RMS as fallback
-            splitSample = (bestWindow >= 0) ? bestWindow * rmsHop + rmsHop / 2
-                                            : currentStart + maxChunk;
+            ++vi;
         }
-        splitSample = std::min(splitSample, totalSamples);
-
-        chunks.push_back({currentStart, splitSample});
-        currentStart = splitSample;
+    }
+    if (voiced.size() > 1 &&
+        voiced.back().endHop - voiced.back().startHop < minLenHops)
+    {
+        voiced[voiced.size() - 2].endHop = voiced.back().endHop;
+        voiced.pop_back();
     }
 
-    return chunks;
+    // 5. Convert to sample ranges with max_sil_kept padding
+    std::vector<ChunkRange> padded;
+    for (const auto &seg : voiced)
+    {
+        int startSample = std::max(0, seg.startHop - maxSilHops) * hop;
+        int endSample = std::min(totalSamples, (seg.endHop + maxSilHops) * hop);
+        padded.push_back({startSample, endSample});
+    }
+
+    // 6. Further split chunks that exceed the encoder frame limit
+    const int maxChunk = maxChunkSamples();
+    std::vector<ChunkRange> result;
+    for (const auto &chunk : padded)
+    {
+        if (chunk.endSample - chunk.startSample <= maxChunk)
+        {
+            result.push_back(chunk);
+            continue;
+        }
+
+        int currentStart = chunk.startSample;
+        while (currentStart < chunk.endSample)
+        {
+            int remaining = chunk.endSample - currentStart;
+            if (remaining <= maxChunk)
+            {
+                result.push_back({currentStart, chunk.endSample});
+                break;
+            }
+
+            // Find quietest hop in [maxChunk/2 .. maxChunk] from currentStart
+            int searchStartW = (currentStart + maxChunk / 2) / hop;
+            int searchEndW = std::min((currentStart + maxChunk) / hop, numHops);
+            int bestW = -1;
+            float bestRms = std::numeric_limits<float>::max();
+            for (int w = searchStartW; w < searchEndW; ++w)
+            {
+                if (rms[w] < bestRms)
+                {
+                    bestRms = rms[w];
+                    bestW = w;
+                }
+            }
+
+            int splitSample = (bestW >= 0) ? bestW * hop + hop / 2
+                                           : currentStart + maxChunk;
+            splitSample = std::min(splitSample, chunk.endSample);
+            result.push_back({currentStart, splitSample});
+            currentStart = splitSample;
+        }
+    }
+
+    return result;
 }
 
 std::vector<GAMEDetector::NoteEvent>
@@ -556,6 +629,7 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
     int64_t language = 0;
     int64_t radiusVal = static_cast<int64_t>(segRadius);
     float tVal = 0.0f;
+    int64_t tShape[] = {1};
 
     const int totalSteps = supportsLoop ? numD3PMSteps : 1;
     const int boundariesIdx = [&]()
@@ -594,7 +668,7 @@ GAMEDetector::processChunk(const std::vector<float> &chunkWaveform, int chunkSta
                 memInfo, &radiusVal, 1, nullptr, 0));
         else if (name == "t")
             segInputs.emplace_back(Ort::Value::CreateTensor<float>(
-                memInfo, &tVal, 1, nullptr, 0));
+                memInfo, &tVal, 1, tShape, 1));
         else if (name == "language")
             segInputs.emplace_back(Ort::Value::CreateTensor<int64_t>(
                 memInfo, &language, 1, langShape, 1));

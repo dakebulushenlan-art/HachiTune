@@ -972,31 +972,46 @@ void EditorController::segmentIntoNotes(Project &targetProject,
     auto gameNotes = gameDetector->detectNotesWithProgress(
         samples, numSamples, GAMEDetector::SAMPLE_RATE, nullptr);
 
-    // Build a single debug chunk for the whole audio
+    // Build debug chunks from actual GAME slicer chunk ranges
     {
-      AudioData::SegmentDebugChunk chunk;
-      chunk.chunkIndex = 0;
-      chunk.startFrame = 0;
-      chunk.endFrame = f0Size;
-      chunk.shortRestThreshold = 0;
-
-      for (const auto &gameNote : gameNotes)
+      const auto &slicerChunks = gameDetector->getLastChunkRanges();
+      for (int ci = 0; ci < static_cast<int>(slicerChunks.size()); ++ci)
       {
-        AudioData::SegmentDebugEvent ev;
-        ev.startFrame = gameNote.startFrame;
-        ev.endFrame = gameNote.endFrame;
-        ev.attachedStartFrame = gameNote.startFrame;
-        ev.midiNote = gameNote.midiNote;
-        ev.isRest = gameNote.isRest;
-        ev.durationSeconds = static_cast<float>(gameNote.endFrame - gameNote.startFrame) *
-                             GAMEDetector::HOP_SIZE / static_cast<float>(GAMEDetector::SAMPLE_RATE);
-        ev.durationFrames = gameNote.endFrame - gameNote.startFrame;
-        chunk.events.push_back(ev);
-      }
-      audioData.segmentDebugChunks.push_back(std::move(chunk));
+        const auto &sc = slicerChunks[ci];
+        int chunkStartFrame = sc.startSample / GAMEDetector::HOP_SIZE;
+        int chunkEndFrame = (sc.endSample + GAMEDetector::HOP_SIZE - 1) / GAMEDetector::HOP_SIZE;
+        chunkStartFrame = std::max(0, std::min(chunkStartFrame, f0Size));
+        chunkEndFrame = std::max(chunkStartFrame, std::min(chunkEndFrame, f0Size));
 
-      // Single chunk range = entire audio
-      audioData.segmentChunkRanges.emplace_back(0, f0Size);
+        audioData.segmentChunkRanges.emplace_back(chunkStartFrame, chunkEndFrame);
+
+        AudioData::SegmentDebugChunk dbgChunk;
+        dbgChunk.chunkIndex = ci;
+        dbgChunk.startFrame = chunkStartFrame;
+        dbgChunk.endFrame = chunkEndFrame;
+        dbgChunk.shortRestThreshold = 0;
+
+        for (const auto &gameNote : gameNotes)
+        {
+          if (gameNote.startFrame < chunkStartFrame || gameNote.startFrame >= chunkEndFrame)
+            continue;
+          AudioData::SegmentDebugEvent ev;
+          ev.startFrame = gameNote.startFrame;
+          ev.endFrame = gameNote.endFrame;
+          ev.attachedStartFrame = gameNote.startFrame;
+          ev.midiNote = gameNote.midiNote;
+          ev.isRest = gameNote.isRest;
+          ev.durationSeconds = static_cast<float>(gameNote.endFrame - gameNote.startFrame) *
+                               GAMEDetector::HOP_SIZE / static_cast<float>(GAMEDetector::SAMPLE_RATE);
+          ev.durationFrames = gameNote.endFrame - gameNote.startFrame;
+          dbgChunk.events.push_back(ev);
+        }
+        audioData.segmentDebugChunks.push_back(std::move(dbgChunk));
+      }
+
+      // Fallback: if no chunks (shouldn't happen), use full range
+      if (audioData.segmentChunkRanges.empty())
+        audioData.segmentChunkRanges.emplace_back(0, f0Size);
     }
 
     for (const auto &gameNote : gameNotes)

@@ -31,17 +31,19 @@ class SplitHandler;
 /**
  * Edit mode for the piano roll.
  */
-enum class EditMode {
-  Select, // Normal selection and dragging
+enum class EditMode
+{
+  Select,  // Normal selection and dragging
   Stretch, // Stretch note timing
-  Draw,   // Pitch drawing mode
-  Split   // Note splitting mode
+  Draw,    // Pitch drawing mode
+  Split    // Note splitting mode
 };
 
 /**
  * Stretch sub-mode: determines behavior when stretching notes.
  */
-enum class StretchMode {
+enum class StretchMode
+{
   Absorb, // Adjacent note absorbs the length change (zero-sum, total timeline unchanged)
   Ripple  // Subsequent notes shift to accommodate the length change (timeline grows/shrinks)
 };
@@ -52,7 +54,8 @@ enum class StretchMode {
  */
 class PianoRollComponent : public juce::Component,
                            public juce::ScrollBar::Listener,
-                           public juce::KeyListener {
+                           public juce::KeyListener
+{
   // Interaction handlers need access to private members
   friend class LoopDragHandler;
   friend class SelectHandler;
@@ -135,11 +138,16 @@ public:
   EditMode getEditMode() const { return editMode; }
 
   // Stretch sub-mode (Absorb vs Ripple)
-  void setStretchMode(StretchMode mode) { stretchMode = mode; repaint(); }
+  void setStretchMode(StretchMode mode)
+  {
+    stretchMode = mode;
+    repaint();
+  }
   StretchMode getStretchMode() const { return stretchMode; }
 
   // Get effective stretch mode (accounts for Alt modifier override)
-  StretchMode getEffectiveStretchMode(const juce::ModifierKeys &mods) const {
+  StretchMode getEffectiveStretchMode(const juce::ModifierKeys &mods) const
+  {
     if (mods.isAltDown())
       return stretchMode == StretchMode::Absorb ? StretchMode::Ripple : StretchMode::Absorb;
     return stretchMode;
@@ -150,27 +158,33 @@ public:
   void cancelDrawing();
 
   // View settings
-  void setShowDeltaPitch(bool show) {
+  void setShowDeltaPitch(bool show)
+  {
     showDeltaPitch = show;
     repaint();
   }
-  void setShowBasePitch(bool show) {
+  void setShowBasePitch(bool show)
+  {
     showBasePitch = show;
     repaint();
   }
-  void setShowSegmentsDebug(bool show) {
+  void setShowSegmentsDebug(bool show)
+  {
     showSegmentsDebug = show;
     repaint();
   }
-  void setShowSomeValuesDebug(bool show) {
-    showSomeValuesDebug = show;
+  void setShowGameValuesDebug(bool show)
+  {
+    showGameValuesDebug = show;
     repaint();
   }
-  void setShowUvInterpolationDebug(bool show) {
+  void setShowUvInterpolationDebug(bool show)
+  {
     showUvInterpolationDebug = show;
     repaint();
   }
-  void setShowActualF0Debug(bool show) {
+  void setShowActualF0Debug(bool show)
+  {
     showActualF0Debug = show;
     repaint();
   }
@@ -190,7 +204,11 @@ public:
       onReinterpolateUV; // Called to re-infer UV regions (startFrame, endFrame)
 
 private:
-  enum class NoteRenderPass { Body, Overlay };
+  enum class NoteRenderPass
+  {
+    Body,
+    Overlay
+  };
 
   void drawBackgroundWaveform(juce::Graphics &g,
                               const juce::Rectangle<int> &visibleArea);
@@ -203,8 +221,8 @@ private:
   void drawPianoKeys(juce::Graphics &g);
   void drawSelectionRect(juce::Graphics &g); // Box selection rectangle
   void drawLoopOverlay(juce::Graphics &g);
-  void drawSomeSegmentDebugOverlay(juce::Graphics &g);
-  void drawSomeValuesDebugOverlay(juce::Graphics &g);
+  void drawGameChunksDebugOverlay(juce::Graphics &g);
+  void drawGameValuesDebugOverlay(juce::Graphics &g);
   void drawStretchGuides(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
 
@@ -261,7 +279,7 @@ private:
   bool showDeltaPitch = true;
   bool showBasePitch = false;
   bool showSegmentsDebug = false;
-  bool showSomeValuesDebug = false;
+  bool showGameValuesDebug = false;
   bool showUvInterpolationDebug = false;
   bool showActualF0Debug = false;
   bool showScaleColors = true;
@@ -306,11 +324,13 @@ private:
   bool cacheInvalidated = true; // Start invalidated, force first calculation
 
 public:
-  void invalidateWaveformCache() {
+  void invalidateWaveformCache()
+  {
     cachedScrollX = -1.0;
   }
 
-  void invalidateBasePitchCache() {
+  void invalidateBasePitchCache()
+  {
     cacheInvalidated = true;
     cachedNoteCount = 0;
     cachedBasePitch.clear();

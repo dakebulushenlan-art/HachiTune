@@ -1,23 +1,27 @@
 #include "SettingsManager.h"
 #include "../../Utils/AppLogger.h"
 
-SettingsManager::SettingsManager() {
+SettingsManager::SettingsManager()
+{
   loadSettings();
   loadConfig();
 }
 
-juce::File SettingsManager::getSettingsFile() {
+juce::File SettingsManager::getSettingsFile()
+{
   return juce::File::getSpecialLocation(
              juce::File::userApplicationDataDirectory)
       .getChildFile("HachiTune")
       .getChildFile("settings.xml");
 }
 
-juce::File SettingsManager::getConfigFile() {
+juce::File SettingsManager::getConfigFile()
+{
   return PlatformPaths::getConfigFile("config.json");
 }
 
-void SettingsManager::loadSettings() {
+void SettingsManager::loadSettings()
+{
   auto configFile = getConfigFile();
   if (configFile.existsAsFile())
     return;
@@ -43,10 +47,12 @@ void SettingsManager::loadSettings() {
   saveConfig();
 }
 
-void SettingsManager::applySettings() {
+void SettingsManager::applySettings()
+{
   loadConfig();
 
-  if (vocoder) {
+  if (vocoder)
+  {
     vocoder->setExecutionDevice(device);
     vocoder->setExecutionDeviceId(gpuDeviceId);
     if (vocoder->isLoaded())
@@ -57,23 +63,28 @@ void SettingsManager::applySettings() {
     onSettingsChanged();
 }
 
-void SettingsManager::loadConfig() {
+void SettingsManager::loadConfig()
+{
   auto configFile = getConfigFile();
 
-  if (configFile.existsAsFile()) {
+  if (configFile.existsAsFile())
+  {
     auto configText = configFile.loadFileAsString();
     auto config = juce::JSON::parse(configText);
 
-    if (config.isObject()) {
+    if (config.isObject())
+    {
       auto configObj = config.getDynamicObject();
-      if (configObj) {
+      if (configObj)
+      {
         if (configObj->hasProperty("device"))
           device = configObj->getProperty("device").toString();
 
         if (configObj->hasProperty("threads"))
           threads = static_cast<int>(configObj->getProperty("threads"));
 
-        if (configObj->hasProperty("pitchDetector")) {
+        if (configObj->hasProperty("pitchDetector"))
+        {
           auto pitchDetectorStr =
               configObj->getProperty("pitchDetector").toString();
           pitchDetectorType = stringToPitchDetectorType(pitchDetectorStr);
@@ -89,11 +100,14 @@ void SettingsManager::loadConfig() {
         if (lastFile.isNotEmpty())
           lastFilePath = juce::File(lastFile);
 
-        if (configObj->hasProperty("recentFiles")) {
+        if (configObj->hasProperty("recentFiles"))
+        {
           auto recentVar = configObj->getProperty("recentFiles");
-          if (recentVar.isArray()) {
+          if (recentVar.isArray())
+          {
             recentFiles.clear();
-            for (int i = 0; i < recentVar.size(); ++i) {
+            for (int i = 0; i < recentVar.size(); ++i)
+            {
               auto path = recentVar[i].toString();
               if (path.isNotEmpty())
                 recentFiles.add(path);
@@ -115,8 +129,12 @@ void SettingsManager::loadConfig() {
         if (configObj->hasProperty("showSegmentsDebug"))
           showSegmentsDebug =
               static_cast<bool>(configObj->getProperty("showSegmentsDebug"));
-        if (configObj->hasProperty("showSomeValuesDebug"))
-          showSomeValuesDebug =
+        if (configObj->hasProperty("showGameValuesDebug"))
+          showGameValuesDebug =
+              static_cast<bool>(configObj->getProperty("showGameValuesDebug"));
+        // Backward compatibility: read old key name
+        else if (configObj->hasProperty("showSomeValuesDebug"))
+          showGameValuesDebug =
               static_cast<bool>(configObj->getProperty("showSomeValuesDebug"));
         if (configObj->hasProperty("showUvInterpolationDebug"))
           showUvInterpolationDebug =
@@ -135,7 +153,8 @@ void SettingsManager::loadConfig() {
   }
 }
 
-void SettingsManager::saveConfig() {
+void SettingsManager::saveConfig()
+{
   auto configFile = getConfigFile();
 
   juce::DynamicObject::Ptr config = new juce::DynamicObject();
@@ -150,7 +169,8 @@ void SettingsManager::saveConfig() {
   if (lastFilePath.existsAsFile())
     config->setProperty("lastFile", lastFilePath.getFullPathName());
 
-  if (!recentFiles.isEmpty()) {
+  if (!recentFiles.isEmpty())
+  {
     juce::Array<juce::var> recentArray;
     for (const auto &path : recentFiles)
       recentArray.add(path);
@@ -162,7 +182,7 @@ void SettingsManager::saveConfig() {
   config->setProperty("showDeltaPitch", showDeltaPitch);
   config->setProperty("showBasePitch", showBasePitch);
   config->setProperty("showSegmentsDebug", showSegmentsDebug);
-  config->setProperty("showSomeValuesDebug", showSomeValuesDebug);
+  config->setProperty("showGameValuesDebug", showGameValuesDebug);
   config->setProperty("showUvInterpolationDebug", showUvInterpolationDebug);
   config->setProperty("showActualF0Debug", showActualF0Debug);
   config->setProperty("followSystemAudioOutput", followSystemAudioOutput);
