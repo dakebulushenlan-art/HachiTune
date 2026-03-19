@@ -258,6 +258,14 @@ juce::var ProjectSerializer::noteToJson(const Note& note) {
     if (std::abs(note.getDeltaOffset()) > 0.0001f)
         obj->setProperty("deltaOffset", note.getDeltaOffset());
 
+    // Harmonic-noise separation curves (voicing/breath/tension)
+    if (note.hasVoicingCurve())
+        obj->setProperty("voicingCurve", floatArrayToString(note.getVoicingCurve(), 2));
+    if (note.hasBreathCurve())
+        obj->setProperty("breathCurve", floatArrayToString(note.getBreathCurve(), 2));
+    if (note.hasTensionCurve())
+        obj->setProperty("tensionCurve", floatArrayToString(note.getTensionCurve(), 2));
+
     return juce::var(obj);
 }
 
@@ -310,6 +318,19 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     // Per-note delta scale/offset
     note.setDeltaScale(static_cast<float>(json.getProperty("deltaScale", 1.0)));
     note.setDeltaOffset(static_cast<float>(json.getProperty("deltaOffset", 0.0)));
+
+    // Harmonic-noise separation curves (voicing/breath/tension)
+    auto voicingStr = json.getProperty("voicingCurve", juce::var());
+    if (!voicingStr.isVoid() && voicingStr.toString().isNotEmpty())
+        note.setVoicingCurve(stringToFloatArray(voicingStr.toString()));
+
+    auto breathStr = json.getProperty("breathCurve", juce::var());
+    if (!breathStr.isVoid() && breathStr.toString().isNotEmpty())
+        note.setBreathCurve(stringToFloatArray(breathStr.toString()));
+
+    auto tensionStr = json.getProperty("tensionCurve", juce::var());
+    if (!tensionStr.isVoid() && tensionStr.toString().isNotEmpty())
+        note.setTensionCurve(stringToFloatArray(tensionStr.toString()));
 
     return true;
 }

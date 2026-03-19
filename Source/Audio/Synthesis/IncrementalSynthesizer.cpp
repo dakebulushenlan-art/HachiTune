@@ -1,5 +1,7 @@
 #include "IncrementalSynthesizer.h"
+#include "../TensionProcessor.h"
 #include "../../Utils/Localization.h"
+#include "../../Utils/MelSpectrogram.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -184,7 +186,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
-  if (!project->hasDirtyNotes() && !project->hasF0DirtyRange()) {
+  if (!project->hasDirtyNotes() && !project->hasF0DirtyRange() &&
+      !project->hasParamDirtyRange()) {
     if (onComplete)
       onComplete(false);
     return;
@@ -241,10 +244,129 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 originalSegment.begin());
   }
 
+  // ---------------------------------------------------------------------------
+  // HNSep tension processing: replace originalSegment slices for notes that
+  // have voicing/breath/tension curves and harmonic/noise clip waveforms.
+  // This produces a tension-adjusted "original" signal for blending and also
+  // allows recomputing mel spectrograms for the vocoder input.
+  // ---------------------------------------------------------------------------
+  bool hasAnyHNSepCurves = false;
+  {
+    const auto &harmonicBuf = audioData.harmonicWaveform;
+    const auto &noiseBuf = audioData.noiseWaveform;
+    const bool hasGlobalHNSep = harmonicBuf.getNumSamples() > 0
+                             && noiseBuf.getNumSamples() > 0;
+
+    if (hasGlobalHNSep) {
+      TensionProcessor tensionProc;
+      const float *harmonicPtr = harmonicBuf.getReadPointer(0);
+      const float *noisePtr = noiseBuf.getReadPointer(0);
+      const int totalHarmonicSamples = harmonicBuf.getNumSamples();
+      const int totalNoiseSamples = noiseBuf.getNumSamples();
+
+      for (const auto &note : project->getNotes()) {
+        if (note.isRest())
+          continue;
+
+        // Check if note has any non-default hnsep curves
+        const bool hasVoicing = note.hasVoicingCurve();
+        const bool hasBreath = note.hasBreathCurve();
+        const bool hasTension = note.hasTensionCurve();
+        if (!hasVoicing && !hasBreath && !hasTension)
+          continue;
+
+        const int noteStart = note.getStartFrame();
+        const int noteEnd = note.getEndFrame();
+        const int overlapStart = std::max(startFrame, noteStart);
+        const int overlapEnd = std::min(endFrame, noteEnd);
+        if (overlapEnd <= overlapStart)
+          continue;
+
+        hasAnyHNSepCurves = true;
+
+        // Process each frame in the overlap
+        const auto &voicingCurve = note.getVoicingCurve();
+        const auto &breathCurve = note.getBreathCurve();
+        const auto &tensionCurve = note.getTensionCurve();
+        const int noteDurFrames = noteEnd - noteStart;
+
+        for (int frame = overlapStart; frame < overlapEnd; ++frame) {
+          const int noteLocalFrame = frame - noteStart;
+          if (noteLocalFrame < 0 || noteLocalFrame >= noteDurFrames)
+            continue;
+
+          // Get per-frame parameter values (default if curve absent/short)
+          const float voicingPct = (hasVoicing && noteLocalFrame < static_cast<int>(voicingCurve.size()))
+              ? voicingCurve[noteLocalFrame] : 100.0f;
+          const float breathPct = (hasBreath && noteLocalFrame < static_cast<int>(breathCurve.size()))
+              ? breathCurve[noteLocalFrame] : 100.0f;
+          const float tensionVal = (hasTension && noteLocalFrame < static_cast<int>(tensionCurve.size()))
+              ? tensionCurve[noteLocalFrame] : 0.0f;
+
+          // Skip frames with default values (no processing needed)
+          if (std::abs(voicingPct - 100.0f) < 0.01f
+              && std::abs(breathPct - 100.0f) < 0.01f
+              && std::abs(tensionVal) < 0.01f)
+            continue;
+
+          // Frame sample range in global coordinates
+          const int frameSampleStart = frame * hopSize;
+          const int frameSampleEnd = frameSampleStart + hopSize;
+
+          // Map to local originalSegment coordinates
+          const int localStart = std::max(0, frameSampleStart - startSample);
+          const int localEnd = std::min(numSynthSamples, frameSampleEnd - startSample);
+          if (localEnd <= localStart)
+            continue;
+
+          const int frameNumSamples = localEnd - localStart;
+
+          // Extract harmonic and noise samples for this frame
+          std::vector<float> harmonicFrame(frameNumSamples, 0.0f);
+          std::vector<float> noiseFrame(frameNumSamples, 0.0f);
+
+          for (int i = 0; i < frameNumSamples; ++i) {
+            const int globalSample = (localStart + startSample) + i;
+            if (globalSample >= 0 && globalSample < totalHarmonicSamples)
+              harmonicFrame[i] = harmonicPtr[globalSample];
+            if (globalSample >= 0 && globalSample < totalNoiseSamples)
+              noiseFrame[i] = noisePtr[globalSample];
+          }
+
+          // Apply tension processing
+          tensionProc.processInPlace(
+              originalSegment.data() + localStart,
+              harmonicFrame.data(), noiseFrame.data(),
+              frameNumSamples,
+              voicingPct, breathPct, tensionVal);
+        }
+      }
+    }
+  }
+
   // Extract mel + adjusted F0
-  std::vector<std::vector<float>> melRange(
-      audioData.melSpectrogram.begin() + startFrame,
-      audioData.melSpectrogram.begin() + endFrame);
+  // If any notes had HNSep curves, recompute mel spectrograms from the
+  // tension-adjusted originalSegment so the vocoder receives adjusted input.
+  std::vector<std::vector<float>> melRange;
+  if (hasAnyHNSepCurves) {
+    MelSpectrogram melComputer(audioData.sampleRate);
+    melRange = melComputer.compute(originalSegment.data(), numSynthSamples);
+    // Ensure frame count matches expected range
+    const int expectedFrames = endFrame - startFrame;
+    if (static_cast<int>(melRange.size()) > expectedFrames)
+      melRange.resize(expectedFrames);
+    else {
+      while (static_cast<int>(melRange.size()) < expectedFrames) {
+        // Pad with empty frames if mel computation produces fewer
+        int numMels = melRange.empty() ? 128 : static_cast<int>(melRange.front().size());
+        melRange.emplace_back(numMels, 0.0f);
+      }
+    }
+  } else {
+    melRange.assign(
+        audioData.melSpectrogram.begin() + startFrame,
+        audioData.melSpectrogram.begin() + endFrame);
+  }
   std::vector<float> adjustedF0Range =
       project->getAdjustedF0ForRange(startFrame, endFrame);
 
@@ -397,8 +519,18 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               continue;
 
             // Only update notes that overlap the synthesis range and are dirty
-            // (or have no synthWaveform yet)
-            if (!note.isDirty() && !note.isSynthDirty() && note.hasSynthWaveform())
+            // (or have no synthWaveform yet).
+            // Also resynthesize notes that overlap the param dirty range,
+            // since parameter curve edits (voicing/breath/tension) affect
+            // the tension-adjusted waveform fed to the vocoder.
+            bool paramDirtyOverlap = false;
+            if (capturedProject->hasParamDirtyRange()) {
+              auto [pStart, pEnd] = capturedProject->getParamDirtyRange();
+              paramDirtyOverlap = (note.getStartFrame() < pEnd &&
+                                   note.getEndFrame() > pStart);
+            }
+            if (!note.isDirty() && !note.isSynthDirty() &&
+                !paramDirtyOverlap && note.hasSynthWaveform())
               continue;
 
             // Full note range in samples (the "body")
@@ -448,11 +580,23 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             }
 
             // For parts of the note body outside the synthesis range, use srcClipWaveform
+            // with optional HNSep tension processing applied.
             if (note.hasSrcClipWaveform()) {
               const auto &srcClip = note.getSrcClipWaveform();
               const int srcFrames = note.getSrcEndFrame() - note.getSrcStartFrame();
               const int dstFrames = note.getEndFrame() - note.getStartFrame();
               const int srcSamples = static_cast<int>(srcClip.size());
+
+              // Check if this note has HNSep curves for tension adjustment
+              const bool noteHasVoicing = note.hasVoicingCurve();
+              const bool noteHasBreath = note.hasBreathCurve();
+              const bool noteHasTension = note.hasTensionCurve();
+              const bool noteHasHNSep = noteHasVoicing || noteHasBreath || noteHasTension;
+
+              // Get global harmonic/noise buffers for tension processing
+              const auto &audioData = capturedProject->getAudioData();
+              const bool hasGlobalHNSep = audioData.harmonicWaveform.getNumSamples() > 0
+                                       && audioData.noiseWaveform.getNumSamples() > 0;
 
               for (int i = 0; i < noteSamples; ++i) {
                 const int globalSample = noteStartSample + i;
@@ -471,9 +615,42 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 }
                 int srcIdx = static_cast<int>(srcPos);
                 if (srcIdx >= 0 && srcIdx < srcSamples) {
+                  float sampleVal = srcClip[static_cast<size_t>(srcIdx)];
+
+                  // Apply per-frame HNSep tension adjustment if curves present
+                  if (noteHasHNSep && hasGlobalHNSep) {
+                    const int noteLocalFrame = globalFrame - noteStart;
+                    const int noteDurFrames = noteEnd - noteStart;
+                    if (noteLocalFrame >= 0 && noteLocalFrame < noteDurFrames) {
+                      const auto &voicingCurve = note.getVoicingCurve();
+                      const auto &breathCurve = note.getBreathCurve();
+                      const auto &tensionCurve = note.getTensionCurve();
+
+                      const float vPct = (noteHasVoicing && noteLocalFrame < static_cast<int>(voicingCurve.size()))
+                          ? voicingCurve[noteLocalFrame] : 100.0f;
+                      const float bPct = (noteHasBreath && noteLocalFrame < static_cast<int>(breathCurve.size()))
+                          ? breathCurve[noteLocalFrame] : 100.0f;
+                      const float tVal = (noteHasTension && noteLocalFrame < static_cast<int>(tensionCurve.size()))
+                          ? tensionCurve[noteLocalFrame] : 0.0f;
+
+                      // Simple voicing/breath mixing for single-sample (no STFT for tension here)
+                      if (std::abs(vPct - 100.0f) > 0.01f || std::abs(bPct - 100.0f) > 0.01f) {
+                        const float *harmonicPtr = audioData.harmonicWaveform.getReadPointer(0);
+                        const float *noisePtr = audioData.noiseWaveform.getReadPointer(0);
+                        const int totalH = audioData.harmonicWaveform.getNumSamples();
+                        const int totalN = audioData.noiseWaveform.getNumSamples();
+                        const float h = (globalSample >= 0 && globalSample < totalH)
+                            ? harmonicPtr[globalSample] : 0.0f;
+                        const float n = (globalSample >= 0 && globalSample < totalN)
+                            ? noisePtr[globalSample] : 0.0f;
+                        sampleVal = (bPct / 100.0f) * n + (vPct / 100.0f) * h;
+                      }
+                      (void)tVal; // Tension requires STFT; applied in bulk pass above
+                    }
+                  }
+
                   // Body samples start at offset leftMargin in noteSynth
-                  noteSynth[static_cast<size_t>(leftMargin + i)] =
-                      srcClip[static_cast<size_t>(srcIdx)];
+                  noteSynth[static_cast<size_t>(leftMargin + i)] = sampleVal;
                 }
               }
             }

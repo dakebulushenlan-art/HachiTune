@@ -729,6 +729,33 @@ foreach(GFILE_PATH ${GAME_MODEL_FILES})
     endif()
 endforeach()
 
+# Copy hnsep model subdirectory
+set(HNSEP_DIR "${MODELS_DIR}/hnsep")
+if(EXISTS "${HNSEP_DIR}")
+    file(GLOB HNSEP_MODEL_FILES "${HNSEP_DIR}/*")
+    foreach(HFILE_PATH ${HNSEP_MODEL_FILES})
+        get_filename_component(HFILE_NAME "${HFILE_PATH}" NAME)
+        if(APPLE)
+            add_custom_command(TARGET HachiTune POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTune>/Contents/Resources/models/hnsep/${HFILE_NAME}")
+            add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_VST3>/Contents/Resources/models/hnsep/${HFILE_NAME}")
+            add_custom_command(TARGET HachiTunePlugin_AU POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_BUNDLE_DIR:HachiTunePlugin_AU>/Contents/Resources/models/hnsep/${HFILE_NAME}")
+        else()
+            add_custom_command(TARGET HachiTune POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTune>/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_FILE_DIR:HachiTune>/models/hnsep/${HFILE_NAME}")
+            add_custom_command(TARGET HachiTunePlugin_VST3 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/hnsep"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${HFILE_PATH}" "$<TARGET_FILE_DIR:HachiTunePlugin_VST3>/models/hnsep/${HFILE_NAME}")
+        endif()
+    endforeach()
+endif()
+
 # Copy language files
 set(LANG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources/lang")
 file(GLOB LANG_FILES "${LANG_DIR}/*.json")

@@ -89,6 +89,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
 
   addAndMakeVisible(pianoCard);
   addAndMakeVisible(overviewCard);
+  addChildComponent(hnsepLaneComponent); // Hidden by default, overlays pianoCard when visible
   addAndMakeVisible(overviewToggleButton);
   addAndMakeVisible(zoomXSlider);
   addAndMakeVisible(zoomYSlider);
@@ -128,7 +129,29 @@ void PianoRollWorkspaceView::resized()
     overviewCard.setBounds({});
   }
 
+  // HNSep overlay covers only the piano roll viewport area (excluding
+  // piano keys on the left and timeline ruler on the top). This keeps
+  // navigation elements visible while parameter curves are being edited.
+
   pianoCard.setBounds(bounds);
+
+  if (hnsepVisible)
+  {
+    // Inset by piano keys width and header height so the overlay aligns
+    // exactly with the note content area of the piano roll.
+    // Also trim scrollbar areas (8px on right and bottom edges).
+    auto cardBounds = pianoCard.getBounds();
+    constexpr int keysWidth = 60;     // CoordinateMapper::pianoKeysWidth
+    constexpr int hdrHeight = 40;     // CoordinateMapper::headerHeight
+    constexpr int scrollBarSize = 8;  // matches PianoRollComponent scrollbar size
+    auto viewportBounds = cardBounds.withTrimmedLeft(keysWidth)
+                                     .withTrimmedTop(hdrHeight)
+                                     .withTrimmedRight(scrollBarSize)
+                                     .withTrimmedBottom(scrollBarSize);
+    hnsepLaneComponent.setBounds(viewportBounds);
+    hnsepLaneComponent.setPianoKeysWidth(0); // Component starts at viewport edge
+    hnsepLaneComponent.toFront(false);
+  }
 
   auto overlay = pianoCard.getBounds();
   const int sliderBottom = overlay.getBottom() - toggleMargin;
@@ -163,6 +186,7 @@ void PianoRollWorkspaceView::resized()
 void PianoRollWorkspaceView::setProject(Project *project)
 {
   overviewPanel.setProject(project);
+  hnsepLaneComponent.setProject(project);
 }
 
 void PianoRollWorkspaceView::refreshOverview()
@@ -182,6 +206,23 @@ void PianoRollWorkspaceView::updateOverviewVisibility()
   overviewPanel.setVisible(overviewVisible);
 }
 
+void PianoRollWorkspaceView::setHNSepVisible(bool visible)
+{
+  if (hnsepVisible == visible)
+    return;
+
+  hnsepVisible = visible;
+  hnsepLaneComponent.setVisible(hnsepVisible);
+
+  if (hnsepVisible)
+  {
+    hnsepLaneComponent.setPianoKeysWidth(0);
+    hnsepLaneComponent.toFront(false);
+  }
+
+  resized();
+}
+
 void PianoRollWorkspaceView::timerCallback()
 {
   const float pps = pianoRoll.getPixelsPerSecond();
@@ -191,4 +232,11 @@ void PianoRollWorkspaceView::timerCallback()
   const float ppsY = pianoRoll.getPixelsPerSemitone();
   if (std::abs(zoomYSlider.getValue() - ppsY) > 0.05)
     zoomYSlider.setValue(ppsY, juce::dontSendNotification);
+
+  // Synchronize hnsep lane scroll/zoom with the piano roll
+  if (hnsepVisible)
+  {
+    hnsepLaneComponent.setPixelsPerSecond(pps);
+    hnsepLaneComponent.setScrollX(pianoRoll.getScrollX());
+  }
 }

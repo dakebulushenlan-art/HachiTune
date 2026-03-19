@@ -8,6 +8,7 @@
 #include "PitchDetectorType.h"
 #include "RMVPEPitchDetector.h"
 #include "GAMEDetector.h"
+#include "HNSepModel.h"
 #include "Synthesis/IncrementalSynthesizer.h"
 #include "Vocoder.h"
 #include "../Models/Project.h"
@@ -110,6 +111,7 @@ private:
   std::unique_ptr<FCPEPitchDetector> fcpePitchDetector;
   std::unique_ptr<RMVPEPitchDetector> rmvpePitchDetector;
   std::unique_ptr<GAMEDetector> gameDetector;
+  std::unique_ptr<HNSepModel> hnsepModel;
   std::unique_ptr<Vocoder> vocoder;
   std::unique_ptr<AudioAnalyzer> audioAnalyzer;
   std::unique_ptr<IncrementalSynthesizer> incrementalSynth;
@@ -120,6 +122,7 @@ private:
   juce::File centTablePath;
   juce::File rmvpeModelPath;
   juce::File gameModelDir;
+  juce::File hnsepModelDir;
 
   PitchDetectorType pitchDetectorType = PitchDetectorType::RMVPE;
   juce::String device = "CPU";

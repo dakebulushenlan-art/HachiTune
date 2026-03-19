@@ -33,6 +33,11 @@ struct AudioData
 
     juce::AudioBuffer<float> waveform;
     juce::AudioBuffer<float> originalWaveform; // pristine copy for blend (never modified after analysis)
+
+    // Harmonic-noise separation buffers (same length as waveform, set during hnsep analysis)
+    juce::AudioBuffer<float> harmonicWaveform;  // harmonic (voiced) component
+    juce::AudioBuffer<float> noiseWaveform;     // noise (breath) component
+
     int sampleRate = 44100;
 
     // Extracted features
@@ -191,6 +196,12 @@ public:
     bool hasF0DirtyRange() const;
     std::pair<int, int> getF0DirtyRange() const;
 
+    // Parameter curve dirty tracking (voicing/breath/tension edits)
+    void setParamDirtyRange(int startFrame, int endFrame);
+    void clearParamDirtyRange();
+    bool hasParamDirtyRange() const;
+    std::pair<int, int> getParamDirtyRange() const;
+
     // Modified state
     bool isModified() const { return modified; }
     void setModified(bool mod) { modified = mod; }
@@ -244,6 +255,10 @@ private:
     // F0 direct edit dirty range
     int f0DirtyStart = -1;
     int f0DirtyEnd = -1;
+
+    // Parameter curve edit dirty range (voicing/breath/tension)
+    int paramDirtyStart = -1;
+    int paramDirtyEnd = -1;
 
     bool modified = false;
 

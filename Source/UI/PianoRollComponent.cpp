@@ -1586,6 +1586,11 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
   if (!project)
     return;
 
+  // Hide pitch curves in Parameter mode to avoid visual clashing
+  // with the HNSep overlay that occupies the same viewport area.
+  if (editMode == EditMode::Parameter)
+    return;
+
   const auto &audioData = project->getAudioData();
   if (audioData.f0.empty())
     return;
@@ -2885,6 +2890,9 @@ void PianoRollComponent::setEditMode(EditMode mode)
 #endif
   case EditMode::Split:
     currentHandler_ = splitHandler_.get();
+    break;
+  case EditMode::Parameter:
+    currentHandler_ = nullptr; // Drawing handled by HNSepLaneComponent
     break;
   }
 

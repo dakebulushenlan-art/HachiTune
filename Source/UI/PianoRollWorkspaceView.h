@@ -2,6 +2,7 @@
 
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
+#include "HNSepLaneComponent.h"
 #include "PianoRollComponent.h"
 #include "PianoRoll/OverviewPanel.h"
 #include "Workspace/RoundedCard.h"
@@ -19,17 +20,24 @@ public:
   void setShowSegmentsDebug(bool show);
   PianoRollComponent &getPianoRoll() { return pianoRoll; }
 
+  // HNSep lane visibility and access
+  void setHNSepVisible(bool visible);
+  bool isHNSepVisible() const { return hnsepVisible; }
+  HNSepLaneComponent &getHNSepLane() { return hnsepLaneComponent; }
+
 private:
   void updateOverviewVisibility();
 
   PianoRollComponent &pianoRoll;
   OverviewPanel overviewPanel;
+  HNSepLaneComponent hnsepLaneComponent;
 
   RoundedCard pianoCard;
   RoundedCard overviewCard;
 
   juce::TextButton overviewToggleButton{"[]"};
   bool overviewVisible = true;
+  bool hnsepVisible = false;
 
   juce::Slider zoomXSlider;
   juce::Slider zoomYSlider;

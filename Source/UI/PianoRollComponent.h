@@ -39,8 +39,9 @@ enum class EditMode
 #if HACHITUNE_ENABLE_STRETCH
   Stretch, // Stretch note timing
 #endif
-  Draw, // Pitch drawing mode
-  Split // Note splitting mode
+  Draw,     // Pitch drawing mode
+  Split,    // Note splitting mode
+  Parameter // HNSep parameter curve editing mode
 };
 
 #if HACHITUNE_ENABLE_STRETCH
