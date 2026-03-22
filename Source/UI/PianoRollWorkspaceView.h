@@ -6,6 +6,7 @@
 #include "PianoRollComponent.h"
 #include "PianoRoll/OverviewPanel.h"
 #include "Workspace/RoundedCard.h"
+#include <memory>
 
 class PianoRollWorkspaceView : public juce::Component, private juce::Timer {
 public:
@@ -31,6 +32,7 @@ private:
   PianoRollComponent &pianoRoll;
   OverviewPanel overviewPanel;
   HNSepLaneComponent hnsepLaneComponent;
+  std::unique_ptr<juce::Component> playheadOverlay;
 
   RoundedCard pianoCard;
   RoundedCard overviewCard;

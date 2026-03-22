@@ -2734,6 +2734,9 @@ void PianoRollComponent::setCursorTime(double time)
 
   // Repaint NEW cursor position
   repaint(getCursorRect(cursorTime));
+
+  if (onCursorMoved)
+    onCursorMoved();
 }
 
 void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
