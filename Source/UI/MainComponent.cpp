@@ -185,10 +185,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
   pianoRoll.onZoomChanged = [this](float pps)
   {
     onZoomChanged(pps);
+    pianoRollView.getHNSepLane().setPixelsPerSecond(pps);
     pianoRollView.refreshOverview();
   };
-  pianoRoll.onScrollChanged = [this](double)
+  pianoRoll.onScrollChanged = [this](double x)
   {
+    pianoRollView.getHNSepLane().setScrollX(x);
     pianoRollView.refreshOverview();
   };
   pianoRoll.onLoopRangeChanged = [this](const LoopRange &range)

@@ -50,9 +50,21 @@ public:
   }
 
   // Scroll/zoom synchronization with piano roll
-  void setPixelsPerSecond(float pps) { pixelsPerSecond = pps; repaint(); }
+  void setPixelsPerSecond(float pps)
+  {
+    if (std::abs(pixelsPerSecond - pps) < 0.01f)
+      return;
+    pixelsPerSecond = pps;
+    repaint();
+  }
   float getPixelsPerSecond() const { return pixelsPerSecond; }
-  void setScrollX(double x) { scrollX = x; repaint(); }
+  void setScrollX(double x)
+  {
+    if (std::abs(scrollX - x) < 0.5)
+      return;
+    scrollX = x;
+    repaint();
+  }
   double getScrollX() const { return scrollX; }
 
   // Range dropdowns for voicing and breath max values

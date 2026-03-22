@@ -2,6 +2,8 @@
 #include "../Undo/PitchUndoManager.h"
 #include "../Utils/HNSepCurveProcessor.h"
 
+#include <cmath>
+
 HNSepLaneComponent::HNSepLaneComponent() {
   setWantsKeyboardFocus(false);
   setMouseClickGrabsKeyboardFocus(false);
@@ -411,6 +413,11 @@ void HNSepLaneComponent::drawLaneCurves(juce::Graphics& g,
                            1;
   const int viewMaxFrame = secondsToFrames(static_cast<float>(xToTime(static_cast<float>(viewRight)))) +
                            1;
+  const float pixelsPerFrame =
+      framesToSeconds(1) * pixelsPerSecond;
+  const int frameStep = juce::jmax(
+      1, static_cast<int>(std::ceil(1.0f / juce::jmax(0.001f, pixelsPerFrame))));
+  const float xScale = framesToSeconds(1) * pixelsPerSecond;
 
   for (const auto& note : notes) {
     const int noteStart = note.getStartFrame();
@@ -450,8 +457,8 @@ void HNSepLaneComponent::drawLaneCurves(juce::Graphics& g,
     float lastX = 0.0f;
     float lastY = baselineY;
 
-    for (int frame = startFrame; frame < endFrame; ++frame) {
-      const float x = timeToX(framesToSeconds(frame));
+    for (int frame = startFrame; frame < endFrame; frame += frameStep) {
+      const float x = static_cast<float>((frame * xScale) - scrollX);
       if (x < static_cast<float>(viewLeft) || x > static_cast<float>(viewRight))
         continue;
 
@@ -482,7 +489,7 @@ void HNSepLaneComponent::drawLaneCurves(juce::Graphics& g,
       continue;
 
     // Extend to frame edge to avoid tiny visual gap at note boundaries.
-    const float endX = timeToX(framesToSeconds(endFrame));
+    const float endX = static_cast<float>((endFrame * xScale) - scrollX);
     fillPath.lineTo(endX, lastY);
     fillPath.lineTo(endX, baselineY);
     fillPath.closeSubPath();
