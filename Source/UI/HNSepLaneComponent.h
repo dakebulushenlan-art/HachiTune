@@ -3,7 +3,9 @@
 #include "../JuceHeader.h"
 #include "../Models/Project.h"
 #include "../Undo/ParameterActions.h"
+#include "../UI/Components/StyledWidgets.h"
 #include "../Utils/Constants.h"
+#include "../Utils/Localization.h"
 #include "../Utils/UI/Theme.h"
 
 class PitchUndoManager;
@@ -132,6 +134,10 @@ private:
   /** Convert local y to parameter value within a lane bounds. */
   float yToValue(float y, const Lane &lane, const juce::Rectangle<int> &bounds) const;
 
+  /** Convert RMS energy in dB to local y within a lane bounds. */
+  float dbToY(float dbValue, float maxDb,
+              const juce::Rectangle<int> &bounds) const;
+
   // -----------------------------------------------------------------------
   // Drawing
   // -----------------------------------------------------------------------
@@ -139,9 +145,12 @@ private:
   void drawLane(juce::Graphics &g, int laneIndex);
   void drawLaneBackground(juce::Graphics &g, const juce::Rectangle<int> &bounds,
                           const Lane &lane);
+  void drawLaneEnergyOverlay(juce::Graphics &g, const juce::Rectangle<int> &bounds,
+                             const Lane &lane);
   void drawLaneCurves(juce::Graphics &g, const juce::Rectangle<int> &bounds,
                       const Lane &lane);
   void drawSeparator(juce::Graphics &g, int sepIndex);
+  void updateControlBounds();
 
   // -----------------------------------------------------------------------
   // Mouse interaction state
@@ -191,20 +200,29 @@ private:
   PitchUndoManager *undoManager = nullptr;
   juce::Component *mouseWheelPassthroughTarget = nullptr;
 
+  static constexpr float energyMinDb = -90.0f;
   float pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
   double scrollX = 0.0;
   float maxVoicing = 200.0f;  // Dropdown max for voicing lane
   float maxBreath = 200.0f;   // Dropdown max for breath lane
+  float voicingEnergyMaxDb = -3.0f;
+  float breathEnergyMaxDb = -12.0f;
   int pianoKeysWidth = 60;
 
   // Separate range dropdowns for voicing and breath lanes
   juce::ComboBox voicingRangeDropdown;
   juce::ComboBox breathRangeDropdown;
+  juce::ComboBox voicingEnergyDropdown;
+  juce::ComboBox breathEnergyDropdown;
+  StyledToggleButton voicingEnergyVisibilityToggle;
+  StyledToggleButton breathEnergyVisibilityToggle;
 
   static constexpr int separatorHeight = 6;
   static constexpr int labelWidth = 50;
   static constexpr int labelHeight = 16;
   static constexpr int dropdownWidth = 70;
+  static constexpr int energyDropdownWidth = 76;
+  static constexpr int energyToggleWidth = 72;
   static constexpr int dropdownHeight = 20;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HNSepLaneComponent)

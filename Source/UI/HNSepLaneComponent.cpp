@@ -4,17 +4,43 @@
 
 #include <cmath>
 
+namespace
+{
+float computeSegmentRmsDb(const std::vector<float>& samples, int start, int end)
+{
+  if (samples.empty())
+    return -120.0f;
+
+  start = std::clamp(start, 0, static_cast<int>(samples.size()));
+  end = std::clamp(end, start, static_cast<int>(samples.size()));
+  if (end <= start)
+    return -120.0f;
+
+  double sumSquares = 0.0;
+  for (int i = start; i < end; ++i)
+    sumSquares += static_cast<double>(samples[static_cast<size_t>(i)]) *
+                  static_cast<double>(samples[static_cast<size_t>(i)]);
+
+  const float rms = static_cast<float>(
+      std::sqrt(sumSquares / static_cast<double>(std::max(1, end - start))));
+  return 20.0f * std::log10(std::max(rms, 1.0e-6f));
+}
+} // namespace
+
 HNSepLaneComponent::HNSepLaneComponent() {
   setWantsKeyboardFocus(false);
   setMouseClickGrabsKeyboardFocus(false);
 
   // Lane order: Tension on top (2 units of height), Voicing (1 unit), Breath (1 unit).
   // Tension is the primary editing target, so it gets 50% of vertical space.
-  lanes[0] = {HNSepParamType::Tension, "Tension", juce::Colour(0xFFFFB74D),
+  lanes[0] = {HNSepParamType::Tension, TR("hnsep.lane.tension"),
+              juce::Colour(0xFFFFB74D),
               0.0f, -100.0f, 100.0f, 2.0f / 4.0f};
-  lanes[1] = {HNSepParamType::Voicing, "Voicing", juce::Colour(0xFF4FC3F7),
+  lanes[1] = {HNSepParamType::Voicing, TR("hnsep.lane.voicing"),
+              juce::Colour(0xFF4FC3F7),
               100.0f, 0.0f, 200.0f, 1.0f / 4.0f};
-  lanes[2] = {HNSepParamType::Breath, "Breath", juce::Colour(0xFF81C784),
+  lanes[2] = {HNSepParamType::Breath, TR("hnsep.lane.breath"),
+              juce::Colour(0xFF81C784),
               100.0f, 0.0f, 200.0f, 1.0f / 4.0f};
 
   // Helper to set up a range dropdown (shared between voicing and breath).
@@ -45,6 +71,47 @@ HNSepLaneComponent::HNSepLaneComponent() {
 
   setupRangeDropdown(voicingRangeDropdown, &HNSepLaneComponent::setMaxVoicing);
   setupRangeDropdown(breathRangeDropdown, &HNSepLaneComponent::setMaxBreath);
+
+  auto setupEnergyDropdown = [this](juce::ComboBox& dropdown, float& targetDb) {
+    dropdown.addItem(TR("hnsep.energy.max.-60"), 1);
+    dropdown.addItem(TR("hnsep.energy.max.-45"), 2);
+    dropdown.addItem(TR("hnsep.energy.max.-30"), 3);
+    dropdown.addItem(TR("hnsep.energy.max.-12"), 4);
+    dropdown.addItem(TR("hnsep.energy.max.-3"), 5);
+    const bool isVoicingDropdown = &dropdown == &voicingEnergyDropdown;
+    dropdown.setSelectedId(isVoicingDropdown ? 5 : 4, juce::dontSendNotification);
+
+    dropdown.setColour(juce::ComboBox::backgroundColourId,
+                       APP_COLOR_SURFACE_RAISED.withAlpha(0.9f));
+    dropdown.setColour(juce::ComboBox::outlineColourId,
+                       APP_COLOR_BORDER_SUBTLE.withAlpha(0.6f));
+    dropdown.setColour(juce::ComboBox::textColourId,
+                       APP_COLOR_TEXT_PRIMARY);
+
+    dropdown.onChange = [&dropdown, &targetDb, this]() {
+      static constexpr float dbValues[] = {-60.0f, -45.0f, -30.0f, -12.0f, -3.0f};
+      const int idx = dropdown.getSelectedId() - 1;
+      if (idx >= 0 && idx < 5) {
+        targetDb = dbValues[idx];
+        repaint();
+      }
+    };
+
+    addAndMakeVisible(dropdown);
+  };
+
+  setupEnergyDropdown(voicingEnergyDropdown, voicingEnergyMaxDb);
+  setupEnergyDropdown(breathEnergyDropdown, breathEnergyMaxDb);
+
+  auto setupEnergyToggle = [this](StyledToggleButton& toggle) {
+    toggle.setButtonText(TR("hnsep.energy.show"));
+    toggle.setToggleState(true, juce::dontSendNotification);
+    toggle.onClick = [this]() { repaint(); };
+    addAndMakeVisible(toggle);
+  };
+
+  setupEnergyToggle(voicingEnergyVisibilityToggle);
+  setupEnergyToggle(breathEnergyVisibilityToggle);
 }
 
 void HNSepLaneComponent::paint(juce::Graphics& g) {
@@ -60,6 +127,11 @@ void HNSepLaneComponent::paint(juce::Graphics& g) {
 }
 
 void HNSepLaneComponent::resized() {
+  updateControlBounds();
+  repaint();
+}
+
+void HNSepLaneComponent::updateControlBounds() {
   // Position range dropdowns at the top-right of their respective lanes.
   // Voicing is lane index 1, Breath is lane index 2 (Tension is index 0, no dropdown).
   const int margin = 6;
@@ -67,19 +139,35 @@ void HNSepLaneComponent::resized() {
   for (int i = 0; i < numLanes; ++i) {
     auto bounds = getLaneBounds(i);
     if (lanes[i].paramType == HNSepParamType::Voicing) {
+      const int rightControlOffset = dropdownWidth + 58;
+      voicingEnergyDropdown.setBounds(
+          bounds.getX() + labelWidth + margin,
+          bounds.getY() + margin,
+          energyDropdownWidth, dropdownHeight);
+      voicingEnergyVisibilityToggle.setBounds(
+          voicingEnergyDropdown.getRight() + 4,
+          bounds.getY() + margin,
+          energyToggleWidth, dropdownHeight);
       voicingRangeDropdown.setBounds(
-          bounds.getRight() - dropdownWidth - margin,
+          bounds.getRight() - rightControlOffset,
           bounds.getY() + margin,
           dropdownWidth, dropdownHeight);
     } else if (lanes[i].paramType == HNSepParamType::Breath) {
+      const int rightControlOffset = dropdownWidth + 58;
+      breathEnergyDropdown.setBounds(
+          bounds.getX() + labelWidth + margin,
+          bounds.getY() + margin,
+          energyDropdownWidth, dropdownHeight);
+      breathEnergyVisibilityToggle.setBounds(
+          breathEnergyDropdown.getRight() + 4,
+          bounds.getY() + margin,
+          energyToggleWidth, dropdownHeight);
       breathRangeDropdown.setBounds(
-          bounds.getRight() - dropdownWidth - margin,
+          bounds.getRight() - rightControlOffset,
           bounds.getY() + margin,
           dropdownWidth, dropdownHeight);
     }
   }
-
-  repaint();
 }
 
 void HNSepLaneComponent::mouseDown(const juce::MouseEvent& e) {
@@ -146,6 +234,7 @@ void HNSepLaneComponent::mouseDrag(const juce::MouseEvent& e) {
 
     lanes[draggingSeparator].proportion = p0;
     lanes[draggingSeparator + 1].proportion = p1;
+    updateControlBounds();
     repaint();
     return;
   }
@@ -325,6 +414,15 @@ float HNSepLaneComponent::yToValue(float y, const Lane& lane,
   return minVal + juce::jlimit(0.0f, 1.0f, t) * (maxVal - minVal);
 }
 
+float HNSepLaneComponent::dbToY(float dbValue, float maxDb,
+                                const juce::Rectangle<int>& bounds) const {
+  const float clamped = juce::jlimit(energyMinDb, maxDb, dbValue);
+  const float norm =
+      (clamped - energyMinDb) / std::max(0.001f, maxDb - energyMinDb);
+  return static_cast<float>(bounds.getBottom()) -
+         norm * static_cast<float>(bounds.getHeight());
+}
+
 void HNSepLaneComponent::drawLane(juce::Graphics& g, int laneIndex) {
   if (laneIndex < 0 || laneIndex >= numLanes)
     return;
@@ -336,6 +434,7 @@ void HNSepLaneComponent::drawLane(juce::Graphics& g, int laneIndex) {
   const auto& lane = lanes[laneIndex];
 
   drawLaneBackground(g, bounds, lane);
+  drawLaneEnergyOverlay(g, bounds, lane);
   drawLaneCurves(g, bounds, lane);
 
   // Label in top-left for quick lane recognition while drawing. This avoids
@@ -365,11 +464,25 @@ void HNSepLaneComponent::drawLaneBackground(juce::Graphics& g,
   if (lane.paramType == HNSepParamType::Tension) {
     gridValues = {-100.0f, -50.0f, 0.0f, 50.0f, 100.0f};
   } else {
-    gridValues = {0.0f, 50.0f, 100.0f};
     const float laneMax = (lane.paramType == HNSepParamType::Voicing)
                               ? maxVoicing : maxBreath;
-    if (laneMax > 100.0f)
+    const float step = laneMax <= 200.0f ? 50.0f : 100.0f;
+    for (float value = 0.0f; value <= laneMax + 0.001f; value += step)
+      gridValues.push_back(value);
+
+    if (std::none_of(gridValues.begin(), gridValues.end(),
+                     [](float value) { return std::abs(value - 100.0f) < 0.001f; })) {
+      gridValues.push_back(100.0f);
+    }
+
+    if (std::none_of(gridValues.begin(), gridValues.end(),
+                     [laneMax](float value) {
+                       return std::abs(value - laneMax) < 0.001f;
+                     })) {
       gridValues.push_back(laneMax);
+    }
+
+    std::sort(gridValues.begin(), gridValues.end());
   }
 
   for (float gridValue : gridValues) {
@@ -386,15 +499,150 @@ void HNSepLaneComponent::drawLaneBackground(juce::Graphics& g,
 
     // Small value labels on the right help precision when drawing with a pen.
     g.setColour(APP_COLOR_TEXT_MUTED.withAlpha(isDefaultLine ? 0.8f : 0.45f));
-    g.setFont(juce::Font(10.0f));
-    const int valueLabelWidth = 40;
+    g.setFont(juce::Font(11.5f));
+    const int valueLabelWidth = 48;
+    const int valueLabelRightInset = 5;
+    int labelY = juce::roundToInt(y) - 8;
+    const int minLabelY = bounds.getY() + 3;
+    const int maxLabelY = bounds.getBottom() - 19;
+    labelY = juce::jlimit(minLabelY, maxLabelY, labelY);
     g.drawText(juce::String(juce::roundToInt(gridValue)),
-               bounds.getRight() - valueLabelWidth - 4, juce::roundToInt(y) - 7,
-               valueLabelWidth, 14, juce::Justification::centredRight, false);
+               bounds.getRight() - valueLabelWidth - valueLabelRightInset, labelY,
+               valueLabelWidth, 16, juce::Justification::centredRight, false);
   }
 
   g.setColour(APP_COLOR_BORDER_SUBTLE.withAlpha(0.4f));
   g.drawRect(bounds);
+}
+
+void HNSepLaneComponent::drawLaneEnergyOverlay(
+    juce::Graphics& g, const juce::Rectangle<int>& bounds, const Lane& lane) {
+  if (!project)
+    return;
+
+  if (lane.paramType != HNSepParamType::Voicing &&
+      lane.paramType != HNSepParamType::Breath)
+    return;
+
+  const bool isVisible =
+      lane.paramType == HNSepParamType::Voicing
+          ? voicingEnergyVisibilityToggle.getToggleState()
+          : breathEnergyVisibilityToggle.getToggleState();
+  if (!isVisible)
+    return;
+
+  const auto& notes = project->getNotes();
+  if (notes.empty())
+    return;
+
+  const float maxDb = lane.paramType == HNSepParamType::Voicing
+                          ? voicingEnergyMaxDb
+                          : breathEnergyMaxDb;
+  const int viewLeft = 0;
+  const int viewRight = getWidth();
+  const int viewMinFrame =
+      secondsToFrames(static_cast<float>(xToTime(static_cast<float>(viewLeft)))) - 1;
+  const int viewMaxFrame =
+      secondsToFrames(static_cast<float>(xToTime(static_cast<float>(viewRight)))) + 1;
+  const float pixelsPerFrame = framesToSeconds(1) * pixelsPerSecond;
+  const int frameStep = juce::jmax(
+      1, static_cast<int>(std::ceil(1.0f / juce::jmax(0.001f, pixelsPerFrame))));
+  const float xScale = framesToSeconds(1) * pixelsPerSecond;
+  const float dashPattern[] = {4.0f, 3.0f};
+
+  for (const auto& note : notes) {
+    const int noteStart = note.getStartFrame();
+    const int noteEnd = note.getEndFrame();
+    const int noteFrames = noteEnd - noteStart;
+    if (noteFrames <= 0)
+      continue;
+    if (noteEnd <= viewMinFrame || noteStart >= viewMaxFrame)
+      continue;
+
+    const std::vector<float>* sourceSamples = nullptr;
+    const std::vector<float>* curve = nullptr;
+    if (lane.paramType == HNSepParamType::Voicing) {
+      sourceSamples = &note.getClipHarmonicWaveform();
+      curve = &note.getVoicingCurve();
+    } else {
+      sourceSamples = &note.getClipNoiseWaveform();
+      curve = &note.getBreathCurve();
+    }
+
+    if (!sourceSamples || sourceSamples->empty())
+      continue;
+
+    const int startFrame = juce::jmax(noteStart, viewMinFrame);
+    const int endFrame = juce::jmin(noteEnd, viewMaxFrame);
+    juce::Path originalPath;
+    juce::Path scaledPath;
+    bool hasOriginal = false;
+    bool hasScaled = false;
+    bool anyScaleApplied = false;
+
+    const int noteSamples = static_cast<int>(sourceSamples->size());
+
+    for (int frame = startFrame; frame < endFrame; frame += frameStep) {
+      const int localFrame = frame - noteStart;
+      const int sampleStart =
+          static_cast<int>((static_cast<int64_t>(localFrame) * noteSamples) /
+                           std::max(1, noteFrames));
+      int sampleEnd =
+          static_cast<int>((static_cast<int64_t>(localFrame + frameStep) * noteSamples) /
+                           std::max(1, noteFrames));
+      sampleEnd = std::max(sampleEnd, sampleStart + 1);
+
+      const float originalDb =
+          computeSegmentRmsDb(*sourceSamples, sampleStart, sampleEnd);
+      const float x = static_cast<float>((frame * xScale) - scrollX);
+      const float originalY = dbToY(originalDb, maxDb, bounds);
+
+      if (!hasOriginal) {
+        originalPath.startNewSubPath(x, originalY);
+        hasOriginal = true;
+      } else {
+        originalPath.lineTo(x, originalY);
+      }
+
+      const float curveValue =
+          (curve && localFrame >= 0 && localFrame < static_cast<int>(curve->size()))
+              ? (*curve)[static_cast<size_t>(localFrame)]
+              : 100.0f;
+      const float scale = curveValue / 100.0f;
+      if (std::abs(scale - 1.0f) > 0.001f)
+        anyScaleApplied = true;
+
+      const float scaledDb =
+          scale > 0.0f ? originalDb + 20.0f * std::log10(scale) : energyMinDb;
+      const float scaledY = dbToY(scaledDb, maxDb, bounds);
+
+      if (!hasScaled) {
+        scaledPath.startNewSubPath(x, scaledY);
+        hasScaled = true;
+      } else {
+        scaledPath.lineTo(x, scaledY);
+      }
+    }
+
+    if (hasOriginal && !anyScaleApplied) {
+      g.setColour(lane.curveColour.withAlpha(0.18f));
+      g.strokePath(originalPath, juce::PathStrokeType(1.0f));
+    }
+
+    if (hasOriginal && anyScaleApplied) {
+      juce::Path dashedPath;
+      juce::PathStrokeType(1.0f).createDashedStroke(
+          dashedPath, originalPath, dashPattern,
+          static_cast<int>(std::size(dashPattern)));
+      g.setColour(lane.curveColour.withAlpha(0.18f));
+      g.fillPath(dashedPath);
+    }
+
+    if (hasScaled && anyScaleApplied) {
+      g.setColour(lane.curveColour.withAlpha(0.18f));
+      g.strokePath(scaledPath, juce::PathStrokeType(1.0f));
+    }
+  }
 }
 
 void HNSepLaneComponent::drawLaneCurves(juce::Graphics& g,
