@@ -90,6 +90,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   addAndMakeVisible(pianoCard);
   addAndMakeVisible(overviewCard);
   addChildComponent(hnsepLaneComponent); // Hidden by default, overlays pianoCard when visible
+  hnsepLaneComponent.setMouseWheelPassthroughTarget(&pianoRoll);
   addAndMakeVisible(overviewToggleButton);
   addAndMakeVisible(zoomXSlider);
   addAndMakeVisible(zoomYSlider);

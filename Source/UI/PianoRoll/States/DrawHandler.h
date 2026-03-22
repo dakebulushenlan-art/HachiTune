@@ -39,6 +39,9 @@ private:
   void startNewPitchCurve(int frameIndex, int midiCents);
 
   bool isDrawing = false;
+  bool isPendingDraw = false;
+  float pendingDrawStartX = 0.0f;
+  float pendingDrawStartY = 0.0f;
   std::vector<F0FrameEdit> drawingEdits;
   std::unordered_map<int, size_t> drawingEditIndexByFrame;
   int lastDrawFrame = -1;

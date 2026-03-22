@@ -10,26 +10,28 @@ bool DrawHandler::mouseDown(const juce::MouseEvent &e, float worldX,
                             float worldY) {
   juce::ignoreUnused(e);
 
-  isDrawing = true;
+  isDrawing = false;
+  isPendingDraw = true;
   drawingEdits.clear();
   drawingEditIndexByFrame.clear();
   drawCurves.clear();
   activeDrawCurve = nullptr;
   lastDrawFrame = -1;
   lastDrawValueCents = 0;
-
-  applyPitchDrawing(worldX, worldY);
-
-  if (owner_.onPitchEdited)
-    owner_.onPitchEdited();
-
-  owner_.repaint();
+  pendingDrawStartX = worldX;
+  pendingDrawStartY = worldY;
   return true;
 }
 
 bool DrawHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
                             float worldY) {
   juce::ignoreUnused(e);
+
+  if (isPendingDraw) {
+    isPendingDraw = false;
+    isDrawing = true;
+    applyPitchDrawing(pendingDrawStartX, pendingDrawStartY);
+  }
 
   if (!isDrawing)
     return false;
@@ -47,6 +49,17 @@ bool DrawHandler::mouseUp(const juce::MouseEvent &e, float worldX,
                           float worldY) {
   juce::ignoreUnused(e, worldX, worldY);
 
+  if (isPendingDraw) {
+    isPendingDraw = false;
+    drawingEdits.clear();
+    drawingEditIndexByFrame.clear();
+    lastDrawFrame = -1;
+    lastDrawValueCents = 0;
+    activeDrawCurve = nullptr;
+    drawCurves.clear();
+    return true;
+  }
+
   if (!isDrawing)
     return false;
 
@@ -56,9 +69,21 @@ bool DrawHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   return true;
 }
 
-bool DrawHandler::isActive() const { return isDrawing; }
+bool DrawHandler::isActive() const { return isDrawing || isPendingDraw; }
 
 void DrawHandler::cancel() {
+  if (isPendingDraw) {
+    isPendingDraw = false;
+    drawingEdits.clear();
+    drawingEditIndexByFrame.clear();
+    lastDrawFrame = -1;
+    lastDrawValueCents = 0;
+    activeDrawCurve = nullptr;
+    drawCurves.clear();
+    owner_.repaint();
+    return;
+  }
+
   if (!isDrawing)
     return;
 
@@ -81,6 +106,7 @@ void DrawHandler::cancel() {
   }
 
   isDrawing = false;
+  isPendingDraw = false;
   drawingEdits.clear();
   drawingEditIndexByFrame.clear();
   lastDrawFrame = -1;

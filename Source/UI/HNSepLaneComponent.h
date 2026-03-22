@@ -37,11 +37,17 @@ public:
   void mouseDrag(const juce::MouseEvent &e) override;
   void mouseUp(const juce::MouseEvent &e) override;
   void mouseMove(const juce::MouseEvent &e) override;
+  void mouseWheelMove(const juce::MouseEvent &e,
+                      const juce::MouseWheelDetails &wheel) override;
 
   // Data binding
   void setProject(Project *proj) { project = proj; repaint(); }
   Project *getProject() const { return project; }
   void setUndoManager(PitchUndoManager *mgr) { undoManager = mgr; }
+  void setMouseWheelPassthroughTarget(juce::Component *target)
+  {
+    mouseWheelPassthroughTarget = target;
+  }
 
   // Scroll/zoom synchronization with piano roll
   void setPixelsPerSecond(float pps) { pixelsPerSecond = pps; repaint(); }
@@ -131,9 +137,12 @@ private:
 
   bool isDrawing = false;
   bool isResetting = false; // Right-click-drag resets to default
+  bool isGesturePending = false;
+  bool pendingGestureResetting = false;
   int activeLane = -1;      // Which lane is being drawn in
   int lastDrawFrame = -1;
   float lastDrawValue = 0.0f;
+  juce::Point<float> pendingGestureStart;
 
   // Accumulated edits for current drag gesture
   std::vector<ParameterFrameEdit> pendingEdits;
@@ -168,6 +177,7 @@ private:
 
   Project *project = nullptr;
   PitchUndoManager *undoManager = nullptr;
+  juce::Component *mouseWheelPassthroughTarget = nullptr;
 
   float pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
   double scrollX = 0.0;

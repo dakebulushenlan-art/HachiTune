@@ -2,6 +2,9 @@
 #include "../Undo/PitchUndoManager.h"
 
 HNSepLaneComponent::HNSepLaneComponent() {
+  setWantsKeyboardFocus(false);
+  setMouseClickGrabsKeyboardFocus(false);
+
   // Lane order: Tension on top (2 units of height), Voicing (1 unit), Breath (1 unit).
   // Tension is the primary editing target, so it gets 50% of vertical space.
   lanes[0] = {HNSepParamType::Tension, "Tension", juce::Colour(0xFFFFB74D),
@@ -78,6 +81,7 @@ void HNSepLaneComponent::resized() {
 
 void HNSepLaneComponent::mouseDown(const juce::MouseEvent& e) {
   draggingSeparator = -1;
+  isGesturePending = false;
 
   for (int i = 0; i < numLanes - 1; ++i) {
     if (getSeparatorBounds(i).contains(e.getPosition())) {
@@ -94,28 +98,30 @@ void HNSepLaneComponent::mouseDown(const juce::MouseEvent& e) {
     return;
 
   if (e.mods.isLeftButtonDown()) {
-    isDrawing = true;
+    isDrawing = false;
     isResetting = false;
+    isGesturePending = true;
+    pendingGestureResetting = false;
     activeLane = laneIndex;
     lastDrawFrame = -1;
     lastDrawValue = 0.0f;
     pendingEdits.clear();
     editIndexMap.clear();
-    applyDrawing(static_cast<float>(e.x), static_cast<float>(e.y));
-    repaint();
+    pendingGestureStart = e.position;
     return;
   }
 
   if (e.mods.isRightButtonDown()) {
     isDrawing = false;
-    isResetting = true;
+    isResetting = false;
+    isGesturePending = true;
+    pendingGestureResetting = true;
     activeLane = laneIndex;
     lastDrawFrame = -1;
     lastDrawValue = 0.0f;
     pendingEdits.clear();
     editIndexMap.clear();
-    applyDrawing(static_cast<float>(e.x), static_cast<float>(e.y));
-    repaint();
+    pendingGestureStart = e.position;
   }
 }
 
@@ -141,6 +147,13 @@ void HNSepLaneComponent::mouseDrag(const juce::MouseEvent& e) {
     return;
   }
 
+  if (isGesturePending) {
+    isGesturePending = false;
+    isDrawing = !pendingGestureResetting;
+    isResetting = pendingGestureResetting;
+    applyDrawing(pendingGestureStart.x, pendingGestureStart.y);
+  }
+
   if (isDrawing || isResetting) {
     applyDrawing(static_cast<float>(e.x), static_cast<float>(e.y));
     if (onParamEdited)
@@ -157,11 +170,25 @@ void HNSepLaneComponent::mouseUp(const juce::MouseEvent& e) {
     return;
   }
 
+  if (isGesturePending) {
+    isGesturePending = false;
+    pendingGestureResetting = false;
+    isDrawing = false;
+    isResetting = false;
+    activeLane = -1;
+    lastDrawFrame = -1;
+    lastDrawValue = 0.0f;
+    pendingEdits.clear();
+    editIndexMap.clear();
+    return;
+  }
+
   if (isDrawing || isResetting) {
     commitEdits();
 
     isDrawing = false;
     isResetting = false;
+    pendingGestureResetting = false;
     activeLane = -1;
     lastDrawFrame = -1;
     lastDrawValue = 0.0f;
@@ -185,6 +212,17 @@ void HNSepLaneComponent::mouseMove(const juce::MouseEvent& e) {
   } else {
     setMouseCursor(juce::MouseCursor::NormalCursor);
   }
+}
+
+void HNSepLaneComponent::mouseWheelMove(
+    const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) {
+  if (mouseWheelPassthroughTarget != nullptr) {
+    mouseWheelPassthroughTarget->mouseWheelMove(
+        e.getEventRelativeTo(mouseWheelPassthroughTarget), wheel);
+    return;
+  }
+
+  juce::Component::mouseWheelMove(e, wheel);
 }
 
 juce::Rectangle<int> HNSepLaneComponent::getLaneBounds(int laneIndex) const {
