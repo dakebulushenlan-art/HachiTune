@@ -116,7 +116,7 @@ public:
 
   // Zoom with optional center point
   void setPixelsPerSecond(float pps, bool centerOnCursor = false);
-  void setPixelsPerSemitone(float pps);
+  void setPixelsPerSemitone(float pps, float anchorContentY = -1.0f);
   float getPixelsPerSecond() const { return pixelsPerSecond; }
   float getPixelsPerSemitone() const { return pixelsPerSemitone; }
 

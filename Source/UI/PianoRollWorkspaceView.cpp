@@ -99,7 +99,7 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   zoomXSlider.onValueChange = [this]()
   {
     pianoRoll.setPixelsPerSecond(static_cast<float>(zoomXSlider.getValue()),
-                                 false);
+                                 true);
     if (pianoRoll.onZoomChanged)
       pianoRoll.onZoomChanged(pianoRoll.getPixelsPerSecond());
   };
@@ -114,7 +114,9 @@ PianoRollWorkspaceView::PianoRollWorkspaceView(PianoRollComponent &piano)
   zoomYSlider.setColour(juce::Slider::thumbColourId, APP_COLOR_PRIMARY);
   zoomYSlider.onValueChange = [this]()
   {
-    pianoRoll.setPixelsPerSemitone(static_cast<float>(zoomYSlider.getValue()));
+    pianoRoll.setPixelsPerSemitone(static_cast<float>(zoomYSlider.getValue()),
+                                   static_cast<float>(pianoRoll.getVisibleContentHeight()) *
+                                       0.5f);
   };
 
   overviewToggleButton.setClickingTogglesState(true);
