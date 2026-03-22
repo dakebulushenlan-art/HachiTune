@@ -19,6 +19,13 @@
  * This keeps the waveform edit, mel replacement, and vocoder input aligned to
  * the same segment-level source instead of mixing per-note/per-frame ad hoc in
  * the synthesizer.
+ *
+ * The spectral tilt is now applied in true decibel space:
+ *   ampDb = 20 * log10(amp)
+ *   amp   = 10^(ampDb / 20)
+ *
+ * After filtering, the harmonic branch is RMS-normalized so the timbre shift
+ * changes spectral balance without introducing large loudness drift.
  */
 class TensionProcessor
 {

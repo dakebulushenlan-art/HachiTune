@@ -101,8 +101,14 @@ std::vector<float> TensionProcessor::preEmphasisBaseTensionSegment(
     return {};
 
   float originalMax = 0.0f;
+  double originalEnergySum = 0.0;
   for (float sample : scaledHarmonic)
+  {
     originalMax = std::max(originalMax, std::abs(sample));
+    originalEnergySum += static_cast<double>(sample) * static_cast<double>(sample);
+  }
+  const float originalRms = static_cast<float>(
+      std::sqrt(originalEnergySum / std::max(1, numSamples)));
 
   if (originalMax < 1e-10f)
     return scaledHarmonic;
@@ -126,6 +132,7 @@ std::vector<float> TensionProcessor::preEmphasisBaseTensionSegment(
   std::vector<float> outFrame(static_cast<size_t>(kFFTSize), 0.0f);
 
   float maxAmpCorrection = 1.0f;
+  float maxTiltDb = 12.0f;
 
   for (int f = 0; f < stftFrames; ++f)
   {
@@ -133,7 +140,7 @@ std::vector<float> TensionProcessor::preEmphasisBaseTensionSegment(
     const int curveFrame = std::clamp(f, 0, numFrames - 1);
     const float userTension = tensionCurve ? tensionCurve[curveFrame] : 0.0f;
     const float clampedTension = juce::jlimit(-100.0f, 100.0f, userTension);
-    const float b = -clampedTension / 50.0f;
+    const float b = -clampedTension / 100.0f * maxTiltDb;
 
     maxAmpCorrection = std::max(
         maxAmpCorrection,
@@ -153,8 +160,8 @@ std::vector<float> TensionProcessor::preEmphasisBaseTensionSegment(
     for (int k = 0; k < kFFTBin; ++k)
     {
       float filterDb = (-b / x0) * static_cast<float>(k) + b;
-      filterDb = juce::jlimit(-2.0f, 2.0f, filterDb);
-      const float filterGain = std::exp(filterDb);
+      filterDb = juce::jlimit(-maxTiltDb, maxTiltDb, filterDb);
+      const float filterGain = std::pow(10.0f, filterDb / 20.0f);
       fftReal[static_cast<size_t>(k)] *= filterGain;
       fftImag[static_cast<size_t>(k)] *= filterGain;
     }
@@ -184,14 +191,34 @@ std::vector<float> TensionProcessor::preEmphasisBaseTensionSegment(
     result[static_cast<size_t>(i)] = output[static_cast<size_t>(offset + i)];
 
   float filteredMax = 0.0f;
+  double filteredEnergySum = 0.0;
   for (float sample : result)
-    filteredMax = std::max(filteredMax, std::abs(sample));
-
-  if (filteredMax > 1e-10f)
   {
-    const float scale = (originalMax / filteredMax) * maxAmpCorrection;
+    filteredMax = std::max(filteredMax, std::abs(sample));
+    filteredEnergySum += static_cast<double>(sample) * static_cast<double>(sample);
+  }
+  const float filteredRms = static_cast<float>(
+      std::sqrt(filteredEnergySum / std::max(1, numSamples)));
+
+  if (filteredRms > 1e-10f)
+  {
+    const float scale = originalRms / filteredRms;
     for (float &sample : result)
       sample *= scale;
+  }
+
+  // Guard against large overs introduced by RMS normalization on strongly
+  // peaked content. This keeps the output in the same peak ballpark while
+  // still primarily matching energy, not peak.
+  float renormalizedMax = 0.0f;
+  for (float sample : result)
+    renormalizedMax = std::max(renormalizedMax, std::abs(sample));
+
+  if (originalMax > 1e-10f && renormalizedMax > originalMax * 1.5f)
+  {
+    const float peakScale = (originalMax * 1.5f) / renormalizedMax;
+    for (float &sample : result)
+      sample *= peakScale;
   }
 
   return result;
