@@ -6,32 +6,19 @@
 #include <complex>
 
 /**
- * TensionProcessor: STFT-based spectral re-emphasis for vocal tension adjustment.
+ * Segment-level hnsep timbre processor.
  *
- * This module implements non-destructive tension control by mixing
- * harmonic and noise waveform components with adjustable energy levels
- * (voicing, breath) and applying a frequency-dependent spectral filter
- * (tension) to the harmonic part.
+ * The editor stores voicing/breath/tension as frame-domain control curves,
+ * but the vocoder ultimately consumes an audio-derived mel spectrogram. This
+ * processor is the bridge between the two:
+ *   1. Sample-hold the frame curves across a synthesis segment.
+ *   2. Scale harmonic/noise components by voicing/breath.
+ *   3. Apply tension as a per-STFT-frame spectral tilt on the harmonic part.
+ *   4. Recombine the processed harmonic and noise signals.
  *
- * Processing formula:
- *   if tension != 0:
- *     wave = (breath/100)*noise + preEmphasisBaseTension((voicing/100)*harmonic, -tension/50)
- *   else:
- *     wave = (breath/100)*noise + (voicing/100)*harmonic
- *
- * The preEmphasisBaseTension function applies STFT, multiplies by a
- * frequency-dependent linear ramp filter, normalizes amplitude, and
- * performs inverse STFT.
- *
- * STFT Config: n_fft=2048, hop_size=512, win_size=2048, sample_rate=44100
- *
- * Usage:
- *   TensionProcessor proc;
- *   auto result = proc.process(harmonic, noise, numSamples,
- *                              voicingDb, breathDb, tensionVal);
- *
- * All parameters are per-sample (constant across the segment) or can
- * be extended to per-frame in future iterations.
+ * This keeps the waveform edit, mel replacement, and vocoder input aligned to
+ * the same segment-level source instead of mixing per-note/per-frame ad hoc in
+ * the synthesizer.
  */
 class TensionProcessor
 {
@@ -40,63 +27,32 @@ public:
   ~TensionProcessor() = default;
 
   /**
-   * Process a segment of separated harmonic + noise waveforms with
-   * voicing, breath, and tension parameters.
+   * Process a synthesis segment using dense frame-domain hnsep curves.
    *
    * @param harmonicData  Pointer to harmonic waveform samples
    * @param noiseData     Pointer to noise waveform samples
    * @param numSamples    Number of samples in each buffer
-   * @param voicingPct    Voicing level as percentage (0 to maxPct, default 100)
-   * @param breathPct     Breath level as percentage (0 to maxPct, default 100)
-   * @param tension       Tension value (-100 to 100, 0 = no change)
+   * @param voicingCurve  Per-frame voicing values in percent
+   * @param breathCurve   Per-frame breath values in percent
+   * @param tensionCurve  Per-frame tension values in [-100, 100]
+   * @param numFrames     Number of control frames in the segment
    * @return              Mixed output waveform
    */
-  std::vector<float> process(const float *harmonicData,
-                             const float *noiseData,
-                             int numSamples,
-                             float voicingPct,
-                             float breathPct,
-                             float tension) const;
+  std::vector<float> processSegment(const float *harmonicData,
+                                    const float *noiseData,
+                                    int numSamples,
+                                    const float *voicingCurve,
+                                    const float *breathCurve,
+                                    const float *tensionCurve,
+                                    int numFrames) const;
 
   /**
-   * Process in-place into a destination buffer.
-   * @param dest          Output buffer (must have numSamples capacity)
-   * @param harmonicData  Pointer to harmonic waveform samples
-   * @param noiseData     Pointer to noise waveform samples
-   * @param numSamples    Number of samples
-   * @param voicingPct    Voicing percentage
-   * @param breathPct     Breath percentage
-   * @param tension       Tension value (-100 to 100)
+   * True when any frame in the control block departs from the neutral defaults.
    */
-  void processInPlace(float *dest,
-                      const float *harmonicData,
-                      const float *noiseData,
-                      int numSamples,
-                      float voicingPct,
-                      float breathPct,
-                      float tension) const;
-
-  /**
-   * Apply pre-emphasis base tension filter via STFT.
-   *
-   * Steps:
-   * 1. Forward STFT with Hann window
-   * 2. Apply frequency-dependent linear ramp filter:
-   *    filter[k] = clamp((-b / x0) * k + b, -2, 2)
-   *    where x0 = fftBin / (sampleRate/2 / 1500), b = tensionParam
-   * 3. Multiply each frequency bin's magnitude by 10^(filter[k]/20)
-   * 4. Amplitude normalization:
-   *    scale = (originalMax / filteredMax) * (clamp(b/-15, 0, 0.33) + 1)
-   * 5. Inverse STFT with overlap-add
-   *
-   * @param signal      Input signal buffer (modified version of harmonic)
-   * @param numSamples  Number of samples
-   * @param b           Tension parameter (= -tension/50 from the user-facing value)
-   * @return            Filtered signal
-   */
-  std::vector<float> preEmphasisBaseTension(const float *signal,
-                                            int numSamples,
-                                            float b) const;
+  bool hasActiveEdits(const float *voicingCurve,
+                      const float *breathCurve,
+                      const float *tensionCurve,
+                      int numFrames) const;
 
 private:
   // STFT parameters
@@ -109,8 +65,10 @@ private:
   // Pre-computed Hann window
   std::vector<float> hannWindow;
 
-  // Pre-computed twiddle factors for DFT/IDFT
-  // We use a simple radix-2 Cooley-Tukey FFT
+  std::vector<float> preEmphasisBaseTensionSegment(
+      const std::vector<float> &scaledHarmonic,
+      const float *tensionCurve,
+      int numFrames) const;
 
   /**
    * Compute forward FFT of a real-valued windowed frame.

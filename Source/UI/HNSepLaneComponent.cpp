@@ -1,5 +1,6 @@
 #include "HNSepLaneComponent.h"
 #include "../Undo/PitchUndoManager.h"
+#include "../Utils/HNSepCurveProcessor.h"
 
 HNSepLaneComponent::HNSepLaneComponent() {
   setWantsKeyboardFocus(false);
@@ -679,8 +680,10 @@ void HNSepLaneComponent::commitEdits() {
         maxFrame = std::max(maxFrame, notes[i].getEndFrame());
       }
 
-      if (minFrame <= maxFrame)
+      if (minFrame <= maxFrame) {
+        HNSepCurveProcessor::rebuildCurvesForRange(*project, minFrame, maxFrame);
         project->setParamDirtyRange(minFrame, maxFrame);
+      }
     }
 
     if (onParamEditFinished)

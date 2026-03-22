@@ -2,6 +2,7 @@
 #include "../Utils/SHA256Utils.h"
 #include "../Utils/Constants.h"
 #include "../Utils/F0Smoother.h"
+#include "../Utils/HNSepCurveProcessor.h"
 #include "../Utils/Localization.h"
 #include "../Utils/MelSpectrogram.h"
 #include "../Utils/PitchCurveProcessor.h"
@@ -928,6 +929,7 @@ void EditorController::analyzeAudio(
   segmentIntoNotes(targetProject);
 
   PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
+  HNSepCurveProcessor::initializeCurves(targetProject);
 
   if (onComplete)
     onComplete();
@@ -967,6 +969,12 @@ void EditorController::analyzeAudioAsync(
           projectCopy->getAudioData().basePitch;
       project->getAudioData().deltaPitch =
           projectCopy->getAudioData().deltaPitch;
+      project->getAudioData().voicingCurve =
+          projectCopy->getAudioData().voicingCurve;
+      project->getAudioData().breathCurve =
+          projectCopy->getAudioData().breathCurve;
+      project->getAudioData().tensionCurve =
+          projectCopy->getAudioData().tensionCurve;
       project->getAudioData().harmonicWaveform.makeCopyOf(
           projectCopy->getAudioData().harmonicWaveform);
       project->getAudioData().noiseWaveform.makeCopyOf(
@@ -1307,6 +1315,7 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
     if (!audioData.f0.empty())
       PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
+    HNSepCurveProcessor::initializeCurves(targetProject);
 
     return;
   }
@@ -1414,4 +1423,5 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
   if (!audioData.f0.empty())
     PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
+  HNSepCurveProcessor::initializeCurves(targetProject);
 }

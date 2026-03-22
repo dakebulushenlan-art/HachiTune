@@ -1,5 +1,8 @@
 #include "ProjectSerializer.h"
+#include "../Utils/HNSepCurveProcessor.h"
 #include "../Utils/PitchCurveProcessor.h"
+
+#include <algorithm>
 
 bool ProjectSerializer::saveToFile(const Project& project, const juce::File& file) {
     auto json = toJson(project);
@@ -211,6 +214,26 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
         }
     }
 
+    const bool hasMasterHNSep =
+        !audioData.voicingCurve.empty() ||
+        !audioData.breathCurve.empty() ||
+        !audioData.tensionCurve.empty();
+    const bool hasNoteHNSep = std::any_of(project.getNotes().begin(),
+                                          project.getNotes().end(),
+                                          [](const Note& note)
+                                          {
+                                              return note.hasVoicingCurve() ||
+                                                     note.hasBreathCurve() ||
+                                                     note.hasTensionCurve();
+                                          });
+
+    if (hasMasterHNSep)
+        HNSepCurveProcessor::extractNoteCurvesFromMaster(project);
+    else if (hasNoteHNSep)
+        HNSepCurveProcessor::rebuildCurvesFromNotes(project);
+    else
+        HNSepCurveProcessor::initializeCurves(project);
+
     project.setModified(false);
     return true;
 }
@@ -342,6 +365,9 @@ juce::var ProjectSerializer::pitchDataToJson(const AudioData& audioData) {
     obj->setProperty("f0", floatArrayToString(audioData.f0, 2));
     obj->setProperty("basePitch", floatArrayToString(audioData.basePitch, 4));
     obj->setProperty("deltaPitch", floatArrayToString(audioData.deltaPitch, 4));
+    obj->setProperty("voicingCurve", floatArrayToString(audioData.voicingCurve, 2));
+    obj->setProperty("breathCurve", floatArrayToString(audioData.breathCurve, 2));
+    obj->setProperty("tensionCurve", floatArrayToString(audioData.tensionCurve, 2));
     obj->setProperty("voicedMask", boolArrayToString(audioData.voicedMask));
     obj->setProperty("vadMask", boolArrayToString(audioData.vadMask));
 
@@ -356,6 +382,9 @@ bool ProjectSerializer::pitchDataFromJson(AudioData& audioData, const juce::var&
     audioData.baseF0 = audioData.f0; // Initialize baseF0 from loaded f0
     audioData.basePitch = stringToFloatArray(json.getProperty("basePitch", "").toString());
     audioData.deltaPitch = stringToFloatArray(json.getProperty("deltaPitch", "").toString());
+    audioData.voicingCurve = stringToFloatArray(json.getProperty("voicingCurve", "").toString());
+    audioData.breathCurve = stringToFloatArray(json.getProperty("breathCurve", "").toString());
+    audioData.tensionCurve = stringToFloatArray(json.getProperty("tensionCurve", "").toString());
     audioData.voicedMask = stringToBoolArray(json.getProperty("voicedMask", "").toString());
     audioData.vadMask = stringToBoolArray(json.getProperty("vadMask", "").toString());
 
