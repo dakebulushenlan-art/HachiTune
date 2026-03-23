@@ -20,6 +20,10 @@ ToolbarComponent::ToolbarComponent()
 #endif
     auto pitchEditIcon = SvgUtils::loadSvg(BinaryData::pitch_edit_24_filled_svg, BinaryData::pitch_edit_24_filled_svgSize, juce::Colours::white);
     auto scissorsIcon = SvgUtils::loadSvg(BinaryData::scissors_24_filled_svg, BinaryData::scissors_24_filled_svgSize, juce::Colours::white);
+    // HNSep mode icon: three horizontal bars representing voicing/breath/tension curves
+    const juce::String hnsepIconSvg =
+        R"(<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M3 6c0-.6.4-1 1-1h2c.6 0 1 .4 1 1s-.4 1-1 1H4c-.6 0-1-.4-1-1z" opacity="0.5"/><path d="M9 6c1.5-1.5 3-1.5 4.5 0s3 1.5 4.5 0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M3 12c0-.6.4-1 1-1h2c.6 0 1 .4 1 1s-.4 1-1 1H4c-.6 0-1-.4-1-1z" opacity="0.5"/><path d="M9 12c1 2 3 2 4.5.5s3-.5 4.5 1" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M3 18c0-.6.4-1 1-1h2c.6 0 1 .4 1 1s-.4 1-1 1H4c-.6 0-1-.4-1-1z" opacity="0.5"/><path d="M9 18h9" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="3 2"/></svg>)";
+    auto hnsepIcon = SvgUtils::createDrawableFromSvg(hnsepIconSvg, juce::Colours::white);
     auto followIcon = SvgUtils::loadSvg(BinaryData::follow24filled_svg, BinaryData::follow24filled_svgSize, juce::Colours::white);
     auto loopIcon = SvgUtils::loadSvg(BinaryData::loop24filled_svg, BinaryData::loop24filled_svgSize, juce::Colours::white);
     const juce::String parametersIconSvg =
@@ -48,6 +52,7 @@ ToolbarComponent::ToolbarComponent()
 #endif
     drawModeButton.setImages(pitchEditIcon.get());
     splitModeButton.setImages(scissorsIcon.get());
+    hnsepModeButton.setImages(hnsepIcon.get());
     followButton.setImages(followIcon.get());
     loopButton.setImages(loopIcon.get());
     parametersButton.setImages(parametersIcon.get());
@@ -66,6 +71,7 @@ ToolbarComponent::ToolbarComponent()
 #endif
     drawModeButton.setEdgeIndent(6);
     splitModeButton.setEdgeIndent(6);
+    hnsepModeButton.setEdgeIndent(6);
     followButton.setEdgeIndent(6);
     loopButton.setEdgeIndent(6);
     parametersButton.setEdgeIndent(6);
@@ -92,6 +98,7 @@ ToolbarComponent::ToolbarComponent()
 #endif
     addAndMakeVisible(drawModeButton);
     addAndMakeVisible(splitModeButton);
+    addAndMakeVisible(hnsepModeButton);
     addAndMakeVisible(followButton);
     addAndMakeVisible(loopButton);
     addAndMakeVisible(parametersButton);
@@ -119,6 +126,7 @@ ToolbarComponent::ToolbarComponent()
 #endif
     drawModeButton.addListener(this);
     splitModeButton.addListener(this);
+    hnsepModeButton.addListener(this);
     followButton.addListener(this);
     loopButton.addListener(this);
     parametersButton.addListener(this);
@@ -134,6 +142,7 @@ ToolbarComponent::ToolbarComponent()
 #endif
     drawModeButton.setTooltip(TR("toolbar.draw"));
     splitModeButton.setTooltip(TR("toolbar.split"));
+    hnsepModeButton.setTooltip(TR("toolbar.hnsep"));
     followButton.setTooltip(TR("toolbar.follow"));
     loopButton.setTooltip(TR("toolbar.loop"));
     parametersButton.setTooltip(TR("panel.parameters"));
@@ -235,18 +244,18 @@ void ToolbarComponent::paint(juce::Graphics &g)
         // Draw a subtle divider between edit tools and playback tools (standalone only)
         if (!pluginMode)
         {
-            // Divider after the 4th tool button (split), before follow (or ripple toggle)
-            int dividerAfterSplit = splitModeButton.getRight() + 1;
+            // Divider after the last edit tool button (hnsep), before follow (or ripple toggle)
+            int dividerAfterEditTools = hnsepModeButton.getRight() + 1;
 #if HACHITUNE_ENABLE_STRETCH
             if (rippleToggleButton.isVisible())
-                dividerAfterSplit = rippleToggleButton.getRight() + 1;
+                dividerAfterEditTools = rippleToggleButton.getRight() + 1;
 #endif
-            if (followButton.isVisible() && dividerAfterSplit > toolBounds.getX() && dividerAfterSplit < toolBounds.getRight())
+            if (followButton.isVisible() && dividerAfterEditTools > toolBounds.getX() && dividerAfterEditTools < toolBounds.getRight())
             {
                 g.setColour(APP_COLOR_BORDER.withAlpha(0.35f));
                 float divY = toolBounds.getY() + 6.0f;
                 float divH = toolBounds.getHeight() - 12.0f;
-                g.fillRect(juce::Rectangle<float>((float)dividerAfterSplit, divY, 1.0f, divH));
+                g.fillRect(juce::Rectangle<float>((float)dividerAfterEditTools, divY, 1.0f, divH));
             }
         }
 
@@ -254,7 +263,7 @@ void ToolbarComponent::paint(juce::Graphics &g)
         // Draw divider between edit tools and ripple toggle (when visible)
         if (rippleToggleButton.isVisible())
         {
-            int dividerX = splitModeButton.getRight() + 1;
+            int dividerX = hnsepModeButton.getRight() + 1;
             if (dividerX > toolBounds.getX() && dividerX < toolBounds.getRight())
             {
                 g.setColour(APP_COLOR_BORDER.withAlpha(0.35f));
@@ -404,10 +413,10 @@ void ToolbarComponent::resized()
     const int toolButtonSize = 32;
     const int toolContainerPadding = 5;
 #if HACHITUNE_ENABLE_STRETCH
-    const int numEditTools = 4;
+    const int numEditTools = 5; // select, stretch, draw, split, hnsep
     const bool showRippleToggle = rippleToggleButton.isVisible();
 #else
-    const int numEditTools = 3;
+    const int numEditTools = 4; // select, draw, split, hnsep
     const bool showRippleToggle = false;
 #endif
     const int numRippleToggle = showRippleToggle ? 1 : 0;
@@ -438,7 +447,7 @@ void ToolbarComponent::resized()
     int toolBtnY = toolArea.getY();
     int toolX = toolArea.getX();
 
-    // Edit tools group: select, stretch, draw, split
+    // Edit tools group: select, stretch, draw, split, hnsep
     selectModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     toolX += toolButtonSize;
 #if HACHITUNE_ENABLE_STRETCH
@@ -448,6 +457,8 @@ void ToolbarComponent::resized()
     drawModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     toolX += toolButtonSize;
     splitModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
+    toolX += toolButtonSize;
+    hnsepModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
     toolX += toolButtonSize;
 
 #if HACHITUNE_ENABLE_STRETCH
@@ -519,6 +530,12 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
         if (onEditModeChanged)
             onEditModeChanged(EditMode::Split);
     }
+    else if (button == &hnsepModeButton)
+    {
+        setEditMode(EditMode::Parameter);
+        if (onEditModeChanged)
+            onEditModeChanged(EditMode::Parameter);
+    }
     else if (button == &followButton)
     {
         followPlayback = !followPlayback;
@@ -583,6 +600,7 @@ void ToolbarComponent::setEditMode(EditMode mode)
 #endif
     drawModeButton.setActive(mode == EditMode::Draw);
     splitModeButton.setActive(mode == EditMode::Split);
+    hnsepModeButton.setActive(mode == EditMode::Parameter);
 
 #if HACHITUNE_ENABLE_STRETCH
     // Show ripple toggle only in Stretch mode

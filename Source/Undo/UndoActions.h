@@ -12,4 +12,5 @@
 #include "DragActions.h"
 #include "TimingActions.h"
 #include "PitchToolAction.h"
+#include "ParameterActions.h"
 #include "PitchUndoManager.h"

@@ -1,5 +1,6 @@
 #include "AudioAnalyzer.h"
 #include "../../Utils/Constants.h"
+#include "../../Utils/HNSepCurveProcessor.h"
 #include "../../Utils/PlatformPaths.h"
 #include <climits>
 
@@ -154,6 +155,7 @@ void AudioAnalyzer::analyze(Project &project, ProgressCallback onProgress,
 
   // Build dense base/delta curves
   PitchCurveProcessor::rebuildCurvesFromSource(project, audioData.f0);
+  HNSepCurveProcessor::initializeCurves(project);
 
   if (onComplete)
     onComplete();
@@ -467,6 +469,7 @@ void AudioAnalyzer::segmentWithGAME(Project &project)
 
   if (!audioData.f0.empty())
     PitchCurveProcessor::rebuildCurvesFromSource(project, audioData.f0);
+  HNSepCurveProcessor::initializeCurves(project);
 }
 
 void AudioAnalyzer::segmentFallback(Project &project)
@@ -623,6 +626,7 @@ void AudioAnalyzer::segmentFallback(Project &project)
 
   if (!audioData.f0.empty())
     PitchCurveProcessor::rebuildCurvesFromSource(project, audioData.f0);
+  HNSepCurveProcessor::initializeCurves(project);
 }
 
 void AudioAnalyzer::computeVadMask(AudioData &audioData)

@@ -1586,6 +1586,11 @@ void PianoRollComponent::drawPitchCurves(juce::Graphics &g)
   if (!project)
     return;
 
+  // Hide pitch curves in Parameter mode to avoid visual clashing
+  // with the HNSep overlay that occupies the same viewport area.
+  if (editMode == EditMode::Parameter)
+    return;
+
   const auto &audioData = project->getAudioData();
   if (audioData.f0.empty())
     return;
@@ -2178,9 +2183,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
     // Over piano keys: vertical zoom
     if (isOverPianoKeys)
     {
-      // Calculate MIDI note at mouse position before zoom
       float mouseY = e.y - headerHeight;
-      float midiAtMouse = (mouseY + scrollY) / pixelsPerSemitone;
 
       float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
       if (zoomFactor < 1.0f)
@@ -2191,17 +2194,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
       }
       float newPps = pixelsPerSemitone * zoomFactor;
       newPps = juce::jlimit(minPps, MAX_PIXELS_PER_SEMITONE, newPps);
-      pixelsPerSemitone = newPps;
-      coordMapper->setPixelsPerSemitone(newPps);
-
-      // Adjust scroll position to keep MIDI note at mouse position fixed
-      double newScrollY = midiAtMouse * pixelsPerSemitone - mouseY;
-      newScrollY = std::max(0.0, newScrollY);
-      scrollY = newScrollY;
-      coordMapper->setScrollY(newScrollY);
-
-      updateScrollBars();
-      repaint();
+      setPixelsPerSemitone(newPps, mouseY);
       return;
     }
 
@@ -2275,17 +2268,8 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
         const float t = range > 0.0f ? juce::jlimit(0.0f, 1.0f, (pixelsPerSemitone - minPps) / range) : 0.0f;
         newPps = pixelsPerSemitone * (1.0f + (zoomFactor - 1.0f) * t);
       }
-      newPps = juce::jlimit(minPps, MAX_PIXELS_PER_SEMITONE, newPps);
-
-      // Adjust scroll to keep mouse position stable
-      float newMouseY = midiToY(midiAtMouse);
-      scrollY = std::max(0.0, static_cast<double>(newMouseY - mouseY));
-      coordMapper->setScrollY(scrollY);
-
-      pixelsPerSemitone = newPps;
-      coordMapper->setPixelsPerSemitone(newPps);
-      updateScrollBars();
-      repaint();
+      juce::ignoreUnused(midiAtMouse);
+      setPixelsPerSemitone(newPps, mouseY);
     }
     else
     {
@@ -2729,6 +2713,9 @@ void PianoRollComponent::setCursorTime(double time)
 
   // Repaint NEW cursor position
   repaint(getCursorRect(cursorTime));
+
+  if (onCursorMoved)
+    onCursorMoved();
 }
 
 void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
@@ -2769,8 +2756,9 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
   // The caller is responsible for synchronizing other components
 }
 
-void PianoRollComponent::setPixelsPerSemitone(float pps)
+void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
 {
+  const float oldPps = pixelsPerSemitone;
   const int visibleHeight = getVisibleContentHeight();
   const float minPpsForFill =
       visibleHeight > 0
@@ -2778,9 +2766,32 @@ void PianoRollComponent::setPixelsPerSemitone(float pps)
           : MIN_PIXELS_PER_SEMITONE;
   const float minPps = std::max(MIN_PIXELS_PER_SEMITONE, minPpsForFill);
 
-  pixelsPerSemitone =
-      juce::jlimit(minPps, MAX_PIXELS_PER_SEMITONE, pps);
+  const float newPps = juce::jlimit(minPps, MAX_PIXELS_PER_SEMITONE, pps);
+  if (std::abs(oldPps - newPps) < 0.01f)
+    return;
+
+  float effectiveAnchorY = anchorContentY;
+  if (effectiveAnchorY < 0.0f)
+    effectiveAnchorY = static_cast<float>(visibleHeight) * 0.5f;
+  effectiveAnchorY = juce::jlimit(0.0f, static_cast<float>(visibleHeight),
+                                  effectiveAnchorY);
+
+  const float midiAtAnchor =
+      MAX_MIDI_NOTE -
+      (effectiveAnchorY + static_cast<float>(scrollY)) / oldPps;
+
+  pixelsPerSemitone = newPps;
   coordMapper->setPixelsPerSemitone(pixelsPerSemitone);
+
+  const double totalHeight =
+      (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+  const double maxScrollY =
+      std::max(0.0, totalHeight - static_cast<double>(visibleHeight));
+  const double anchoredScrollY =
+      (MAX_MIDI_NOTE - midiAtAnchor) * pixelsPerSemitone - effectiveAnchorY;
+  scrollY = juce::jlimit(0.0, maxScrollY, anchoredScrollY);
+  coordMapper->setScrollY(scrollY);
+
   updateScrollBars();
   repaint();
 }
@@ -2885,6 +2896,9 @@ void PianoRollComponent::setEditMode(EditMode mode)
 #endif
   case EditMode::Split:
     currentHandler_ = splitHandler_.get();
+    break;
+  case EditMode::Parameter:
+    currentHandler_ = nullptr; // Drawing handled by HNSepLaneComponent
     break;
   }
 

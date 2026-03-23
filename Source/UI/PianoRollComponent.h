@@ -39,8 +39,9 @@ enum class EditMode
 #if HACHITUNE_ENABLE_STRETCH
   Stretch, // Stretch note timing
 #endif
-  Draw, // Pitch drawing mode
-  Split // Note splitting mode
+  Draw,     // Pitch drawing mode
+  Split,    // Note splitting mode
+  Parameter // HNSep parameter curve editing mode
 };
 
 #if HACHITUNE_ENABLE_STRETCH
@@ -115,7 +116,7 @@ public:
 
   // Zoom with optional center point
   void setPixelsPerSecond(float pps, bool centerOnCursor = false);
-  void setPixelsPerSemitone(float pps);
+  void setPixelsPerSemitone(float pps, float anchorContentY = -1.0f);
   float getPixelsPerSecond() const { return pixelsPerSecond; }
   float getPixelsPerSemitone() const { return pixelsPerSemitone; }
 
@@ -205,6 +206,7 @@ public:
   std::function<void(Note *)> onNoteSelected;
   std::function<void()> onPitchEdited;
   std::function<void()> onPitchEditFinished; // Called when dragging ends
+  std::function<void()> onCursorMoved;
   std::function<void(double)> onSeek;
   std::function<void(float)> onZoomChanged;
   std::function<void(double)> onScrollChanged;
