@@ -42,34 +42,19 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
   // We want the visual box.
   // Top Y corresponds to the highest MIDI note.
   float topY = mapper.midiToY(maxMidi);
-  
-  // Bottom Y corresponds to the lowest MIDI note + 1 semitone height (since note has height)
-  // midiToY(minMidi) gives the top of the lowest note.
-  // midiToY(minMidi) + pixelsPerSemitone gives the bottom of the lowest note.
+
+  // Bottom Y: bottom edge of lowest note in selection
   float bottomY = mapper.midiToY(minMidi) + mapper.getPixelsPerSemitone();
 
-  // Ensure valid dimensions
   if (rightX < leftX) std::swap(leftX, rightX);
   if (bottomY < topY) std::swap(topY, bottomY);
 
   float centerX = (leftX + rightX) * 0.5f;
-  float centerY = (topY + bottomY) * 0.5f;
 
-  // Add Handles
-  // 1. Tilt Left: Left edge, vertically centered
-  addHandle(HandleType::TiltLeft, leftX, centerY);
-
-  // 2. Tilt Right: Right edge, vertically centered
-  addHandle(HandleType::TiltRight, rightX, centerY);
-
-  // 3. Reduce Variance: Top edge, horizontally centered
   addHandle(HandleType::ReduceVariance, centerX, topY);
-
-  // 4. Smooth Left: Top-Left corner
   addHandle(HandleType::SmoothLeft, leftX, topY);
-
-  // 5. Smooth Right: Top-Right corner
   addHandle(HandleType::SmoothRight, rightX, topY);
+  addHandle(HandleType::PitchDrift, centerX, bottomY);
 }
 
 void PitchToolHandles::draw(juce::Graphics& g) const {
@@ -118,17 +103,16 @@ void PitchToolHandles::addHandle(HandleType type, float worldX, float worldY, No
 
 juce::Colour PitchToolHandles::getColorForType(HandleType type) const {
   switch (type) {
-    case HandleType::TiltLeft:
-    case HandleType::TiltRight:
-      return juce::Colours::orange;
-      
     case HandleType::ReduceVariance:
-      return juce::Colours::mediumpurple; // "Reduce" implies constraint -> purple/magenta
-      
+      return juce::Colours::mediumpurple;
+
+    case HandleType::PitchDrift:
+      return juce::Colours::yellowgreen;
+
     case HandleType::SmoothLeft:
     case HandleType::SmoothRight:
-      return juce::Colours::cyan; // "Smooth" implies liquid/soft -> cyan/blue
-      
+      return juce::Colours::cyan;
+
     default:
       return juce::Colours::white;
   }

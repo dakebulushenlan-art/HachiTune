@@ -11,11 +11,11 @@
 class PitchToolHandles {
 public:
   enum class HandleType {
-    TiltLeft,
-    TiltRight,
     ReduceVariance,
     SmoothLeft,
     SmoothRight,
+    /** Bottom-center: vertical drag adjusts pitch drift trim (0–1). */
+    PitchDrift,
     None
   };
 

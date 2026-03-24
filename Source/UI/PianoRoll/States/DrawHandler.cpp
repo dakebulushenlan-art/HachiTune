@@ -2,6 +2,9 @@
 #include "../../PianoRollComponent.h"
 #include "../../../Utils/Constants.h"
 #include "../../../Utils/PitchCurveProcessor.h"
+#include "../../../Undo/F0DrawWithNoteRestoreAction.h"
+
+#include <unordered_set>
 
 DrawHandler::DrawHandler(PianoRollComponent &owner)
     : InteractionHandler(owner) {}
@@ -14,6 +17,8 @@ bool DrawHandler::mouseDown(const juce::MouseEvent &e, float worldX,
   isPendingDraw = true;
   drawingEdits.clear();
   drawingEditIndexByFrame.clear();
+  drawSessionNoteSnapshots.clear();
+  drawSessionSnapshottedNoteIndices.clear();
   drawCurves.clear();
   activeDrawCurve = nullptr;
   lastDrawFrame = -1;
@@ -53,6 +58,8 @@ bool DrawHandler::mouseUp(const juce::MouseEvent &e, float worldX,
     isPendingDraw = false;
     drawingEdits.clear();
     drawingEditIndexByFrame.clear();
+    drawSessionNoteSnapshots.clear();
+    drawSessionSnapshottedNoteIndices.clear();
     lastDrawFrame = -1;
     lastDrawValueCents = 0;
     activeDrawCurve = nullptr;
@@ -76,6 +83,8 @@ void DrawHandler::cancel() {
     isPendingDraw = false;
     drawingEdits.clear();
     drawingEditIndexByFrame.clear();
+    drawSessionNoteSnapshots.clear();
+    drawSessionSnapshottedNoteIndices.clear();
     lastDrawFrame = -1;
     lastDrawValueCents = 0;
     activeDrawCurve = nullptr;
@@ -109,12 +118,27 @@ void DrawHandler::cancel() {
   isPendingDraw = false;
   drawingEdits.clear();
   drawingEditIndexByFrame.clear();
+  drawSessionNoteSnapshots.clear();
+  drawSessionSnapshottedNoteIndices.clear();
   lastDrawFrame = -1;
   lastDrawValueCents = 0;
   activeDrawCurve = nullptr;
   drawCurves.clear();
 
   owner_.repaint();
+}
+
+void DrawHandler::snapshotNoteBeforeLocalClearIfNeeded(std::size_t noteIndex) {
+  if (!owner_.project)
+    return;
+  if (drawSessionSnapshottedNoteIndices.count(noteIndex) != 0u)
+    return;
+  NotePitchUndoSnapshot snap;
+  if (!PitchCurveProcessor::tryCaptureNotePitchSnapshot(*owner_.project,
+                                                        noteIndex, snap))
+    return;
+  drawSessionNoteSnapshots.push_back(std::move(snap));
+  drawSessionSnapshottedNoteIndices.insert(noteIndex);
 }
 
 // ---------------------------------------------------------------------------
@@ -153,58 +177,67 @@ void DrawHandler::commitPitchDrawing() {
     maxFrame = std::max(maxFrame, e.idx);
   }
 
-  // Persist drawn global delta back into note-local curves for every
-  // overlapping note so later note moves/rebuilds keep the edited shape.
-  if (owner_.project && minFrame <= maxFrame) {
-    const int maxFrameExclusive = maxFrame + 1;
-    auto &audioData = owner_.project->getAudioData();
-    auto &notes = owner_.project->getNotes();
-    for (auto &note : notes) {
-      if (note.getEndFrame() > minFrame &&
-          note.getStartFrame() < maxFrameExclusive) {
-        const int noteStart = note.getStartFrame();
-        const int noteEnd = note.getEndFrame();
-        const int noteFrames = noteEnd - noteStart;
-        if (noteFrames <= 0)
-          continue;
+  const int maxFrameExclusive =
+      (minFrame <= maxFrame) ? (maxFrame + 1) : minFrame;
 
-        std::vector<float> noteDelta(static_cast<size_t>(noteFrames), 0.0f);
-        for (int i = 0; i < noteFrames; ++i) {
-          const int globalFrame = noteStart + i;
-          if (globalFrame >= 0 &&
-              globalFrame < static_cast<int>(audioData.deltaPitch.size())) {
-            noteDelta[static_cast<size_t>(i)] =
-                audioData.deltaPitch[static_cast<size_t>(globalFrame)];
-          }
-        }
-        note.setDeltaPitch(noteDelta);
-        note.setOriginalDeltaPitch(std::move(noteDelta));
-      }
+  std::vector<NotePitchUndoSnapshot> preDrawSnapshots;
+  std::unordered_set<std::size_t> mergedNoteIdx;
+  preDrawSnapshots = std::move(drawSessionNoteSnapshots);
+  drawSessionSnapshottedNoteIndices.clear();
+  for (const auto &s : preDrawSnapshots)
+    mergedNoteIdx.insert(s.noteIndex);
+
+  if (owner_.project && minFrame <= maxFrame) {
+    auto extra = PitchCurveProcessor::captureNotesOverlappingRange(
+        *owner_.project, minFrame, maxFrameExclusive);
+    for (auto &s : extra) {
+      if (mergedNoteIdx.insert(s.noteIndex).second)
+        preDrawSnapshots.push_back(std::move(s));
     }
+
+    PitchCurveProcessor::persistGlobalDeltaToOverlappingNotes(*owner_.project,
+                                                             minFrame,
+                                                             maxFrameExclusive);
+    PitchCurveProcessor::bindOverlappingNotesToDrawnPitch(*owner_.project,
+                                                          minFrame,
+                                                          maxFrameExclusive);
   }
 
   // Set F0 dirty range in project for incremental synthesis
   if (owner_.project && minFrame <= maxFrame) {
-    owner_.project->setF0DirtyRange(minFrame, maxFrame + 1);
+    owner_.project->setF0DirtyRange(minFrame, maxFrameExclusive);
   }
 
-  // Create undo action
+  // Create undo action (F0 + note MIDI / curve snapshots + bind redo)
   if (owner_.undoManager && owner_.project) {
     auto &audioData = owner_.project->getAudioData();
-    auto action = std::make_unique<F0EditAction>(
+    auto f0Inner = std::make_unique<F0EditAction>(
         &audioData.f0, &audioData.deltaPitch, &audioData.voicedMask,
-        drawingEdits, [this](int minFrame, int maxFrame) {
+        std::move(drawingEdits),
+        [this](int dirtyMin, int dirtyMax) {
           if (owner_.project) {
-            owner_.project->setF0DirtyRange(minFrame, maxFrame + 1);
+            owner_.project->setF0DirtyRange(dirtyMin, dirtyMax + 1);
             if (owner_.onPitchEditFinished)
               owner_.onPitchEditFinished();
           }
         });
-    owner_.undoManager->addAction(std::move(action));
+    auto compound = std::make_unique<F0DrawWithNoteRestoreAction>(
+        std::move(f0Inner), std::move(preDrawSnapshots), owner_.project,
+        minFrame, maxFrameExclusive,
+        [this](int dirtyMin, int dirtyMax) {
+          if (owner_.project) {
+            owner_.project->setF0DirtyRange(dirtyMin, dirtyMax + 1);
+            if (owner_.onPitchEditFinished)
+              owner_.onPitchEditFinished();
+          }
+        });
+    owner_.undoManager->addAction(std::move(compound));
   }
 
   drawingEdits.clear();
   drawingEditIndexByFrame.clear();
+  drawSessionNoteSnapshots.clear();
+  drawSessionSnapshottedNoteIndices.clear();
   lastDrawFrame = -1;
   lastDrawValueCents = 0;
   activeDrawCurve = nullptr;
@@ -258,16 +291,28 @@ void DrawHandler::applyPitchPoint(int frameIndex, int midiCents) {
         drawingEditIndexByFrame.emplace(idx, drawingEdits.size());
         drawingEdits.push_back(F0FrameEdit{idx, oldF0, newFreq, oldDelta,
                                            newDelta, oldVoiced, true});
-        // Clear note-local pitch sources for any note containing this frame.
-        auto &notes = owner_.project->getNotes();
-        for (auto &note : notes) {
-          if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
-              (note.hasDeltaPitch() || note.hasOriginalDeltaPitch())) {
-            if (note.hasDeltaPitch())
-              note.setDeltaPitch(std::vector<float>());
-            if (note.hasOriginalDeltaPitch())
-              note.setOriginalDeltaPitch(std::vector<float>());
-            break;
+        {
+          auto &notes = owner_.project->getNotes();
+          std::size_t containingIdx = static_cast<std::size_t>(-1);
+          for (std::size_t ni = 0; ni < notes.size(); ++ni) {
+            if (notes[ni].isRest())
+              continue;
+            if (notes[ni].getStartFrame() <= idx &&
+                notes[ni].getEndFrame() > idx) {
+              containingIdx = ni;
+              break;
+            }
+          }
+          if (containingIdx != static_cast<std::size_t>(-1)) {
+            snapshotNoteBeforeLocalClearIfNeeded(containingIdx);
+            Note &note = notes[containingIdx];
+            if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
+                (note.hasDeltaPitch() || note.hasOriginalDeltaPitch())) {
+              if (note.hasDeltaPitch())
+                note.setDeltaPitch(std::vector<float>());
+              if (note.hasOriginalDeltaPitch())
+                note.setOriginalDeltaPitch(std::vector<float>());
+            }
           }
         }
       } else {
@@ -313,16 +358,28 @@ void DrawHandler::applyPitchPoint(int frameIndex, int midiCents) {
       drawingEdits.push_back(F0FrameEdit{idx, oldF0, newFreq, oldDelta,
                                          newDelta, oldVoiced, true});
 
-      // Clear note-local pitch sources for any note containing this frame.
-      auto &notes = owner_.project->getNotes();
-      for (auto &note : notes) {
-        if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
-            (note.hasDeltaPitch() || note.hasOriginalDeltaPitch())) {
-          if (note.hasDeltaPitch())
-            note.setDeltaPitch(std::vector<float>());
-          if (note.hasOriginalDeltaPitch())
-            note.setOriginalDeltaPitch(std::vector<float>());
-          break;
+      {
+        auto &notes = owner_.project->getNotes();
+        std::size_t containingIdx = static_cast<std::size_t>(-1);
+        for (std::size_t ni = 0; ni < notes.size(); ++ni) {
+          if (notes[ni].isRest())
+            continue;
+          if (notes[ni].getStartFrame() <= idx &&
+              notes[ni].getEndFrame() > idx) {
+            containingIdx = ni;
+            break;
+          }
+        }
+        if (containingIdx != static_cast<std::size_t>(-1)) {
+          snapshotNoteBeforeLocalClearIfNeeded(containingIdx);
+          Note &note = notes[containingIdx];
+          if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
+              (note.hasDeltaPitch() || note.hasOriginalDeltaPitch())) {
+            if (note.hasDeltaPitch())
+              note.setDeltaPitch(std::vector<float>());
+            if (note.hasOriginalDeltaPitch())
+              note.setOriginalDeltaPitch(std::vector<float>());
+          }
         }
       }
     } else {

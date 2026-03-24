@@ -374,6 +374,7 @@ ParameterPanel::ParameterPanel()
     scaleRootButton.setButtonText(getScaleRootLabel(selectedScaleRootNote));
     scaleModeButton.setButtonText(getScaleModeLabel(selectedScaleMode));
     doubleClickSnapButton.setButtonText(getDoubleClickSnapLabel(doubleClickSnapMode));
+
     timelineBeatButton.setButtonText(getTimelineBeatLabel(timelineBeatNumerator, timelineBeatDenominator));
     timelineGridButton.setButtonText(getTimelineGridLabel(timelineGridDivision));
     timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
@@ -381,10 +382,6 @@ ParameterPanel::ParameterPanel()
     refreshModeToggles();
     refreshScaleControlEnabling();
     refreshTimelineModeToggles();
-}
-
-ParameterPanel::~ParameterPanel()
-{
 }
 
 void ParameterPanel::setupTextButton(juce::TextButton& button)
@@ -675,17 +672,6 @@ void ParameterPanel::setProject(Project* proj)
 {
     project = proj;
     updateGlobalSliders();
-}
-
-void ParameterPanel::setSelectedNote(Note* note)
-{
-    selectedNote = note;
-    updateFromNote();
-}
-
-void ParameterPanel::updateFromNote()
-{
-    juce::ignoreUnused(selectedNote);
 }
 
 void ParameterPanel::updateGlobalSliders()

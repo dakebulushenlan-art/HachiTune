@@ -3,6 +3,7 @@
 #include "../Utils/PitchCurveProcessor.h"
 
 #include <algorithm>
+#include <cmath>
 
 bool ProjectSerializer::saveToFile(const Project& project, const juce::File& file) {
     auto json = toJson(project);
@@ -268,6 +269,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note) {
     obj->setProperty("tiltLeft", note.getTiltLeft());
     obj->setProperty("tiltRight", note.getTiltRight());
     obj->setProperty("varianceScale", note.getVarianceScale());
+    if (std::fabs(static_cast<double>(note.getPitchDriftTrim())) > 0.0001)
+        obj->setProperty("pitchDriftTrim", note.getPitchDriftTrim());
     obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
     obj->setProperty("smoothRightFrames", note.getSmoothRightFrames());
 
@@ -330,6 +333,7 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json) {
     note.setTiltLeft(static_cast<float>(json.getProperty("tiltLeft", 0.0)));
     note.setTiltRight(static_cast<float>(json.getProperty("tiltRight", 0.0)));
     note.setVarianceScale(static_cast<float>(json.getProperty("varianceScale", 1.0)));
+    note.setPitchDriftTrim(static_cast<float>(json.getProperty("pitchDriftTrim", 0.0)));
     note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));
     note.setSmoothRightFrames(json.getProperty("smoothRightFrames", 0));
 

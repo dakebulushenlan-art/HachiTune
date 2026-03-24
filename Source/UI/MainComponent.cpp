@@ -1248,13 +1248,12 @@ void MainComponent::resynthesizeIncremental()
 
 void MainComponent::onNoteSelected(Note *note)
 {
-  parameterPanel.setSelectedNote(note);
+  juce::ignoreUnused(note);
 }
 
 void MainComponent::onPitchEdited()
 {
   pianoRoll.repaint();
-  parameterPanel.updateFromNote();
 }
 
 void MainComponent::onZoomChanged(float pixelsPerSecond)
@@ -1286,7 +1285,6 @@ void MainComponent::undo()
   if (undoManager && undoManager->canUndo())
   {
     undoManager->undo();
-    parameterPanel.updateFromNote();
     pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
     pianoRoll.repaint();
 
@@ -1309,7 +1307,6 @@ void MainComponent::redo()
   if (undoManager && undoManager->canRedo())
   {
     undoManager->redo();
-    parameterPanel.updateFromNote();
     pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
     pianoRoll.repaint();
 

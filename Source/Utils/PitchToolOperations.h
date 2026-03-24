@@ -25,6 +25,13 @@ std::vector<float> reduceVariance(const std::vector<float>& deltaPitch,
                                   float factor);
 
 /**
+ * Red slow linear drift (first-order trend) in the delta contour while
+ * preserving the average deviation. amount 0 = off, 1 = fully remove LS slope.
+ */
+std::vector<float> trimLinearPitchDrift(const std::vector<float>& deltaPitch,
+                                        float amount);
+
+/**
  * Smooths one boundary to connect with adjacent pitch context.
  *
  * For left side, fades from `targetPitch` to the note boundary.
@@ -66,6 +73,7 @@ struct AdjacentNoteContext
  * @param tiltLeft Tilt amount at left edge in semitones
  * @param tiltRight Tilt amount at right edge in semitones
  * @param varianceScale Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
+ * @param pitchDriftTrim 0..1 linear-drift removal (after variance, before tilt)
  * @param smoothLeftFrames Smoothing transition length at left boundary
  * @param smoothRightFrames Smoothing transition length at right boundary
  * @param adjacentContext Context for adjacent notes (for boundary smoothing)
@@ -75,6 +83,7 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
                                            float tiltLeft,
                                            float tiltRight,
                                            float varianceScale,
+                                           float pitchDriftTrim,
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
                                            const AdjacentNoteContext& adjacentContext = {});

@@ -10,6 +10,7 @@
 #include <deque>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <functional>
 
 /**
@@ -59,6 +60,7 @@ public:
 private:
     void applyPitchPoint(int frameIndex, int midiCents);
     void startNewPitchCurve(int frameIndex, int midiCents);
+    void snapshotNoteBeforeLocalClearIfNeeded(std::size_t noteIndex);
     void prepareDragBasePreview();
     void applyDragBasePreview(float pitchOffsetSemitones);
     void restoreDragBasePreview();
@@ -99,6 +101,8 @@ private:
     int lastDrawValueCents = 0;
     DrawCurve* activeDrawCurve = nullptr;
     std::deque<std::unique_ptr<DrawCurve>> drawCurves;
+    std::vector<NotePitchUndoSnapshot> drawSessionNoteSnapshots;
+    std::unordered_set<std::size_t> drawSessionSnapshottedNoteIndices;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PitchEditor)
 };

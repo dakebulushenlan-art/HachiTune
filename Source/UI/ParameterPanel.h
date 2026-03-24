@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../JuceHeader.h"
-#include "../Models/Note.h"
 #include "../Models/Project.h"
 #include "../Undo/UndoActions.h"
 #include "../Utils/UI/Theme.h"
@@ -14,7 +13,6 @@ class ParameterPanel : public juce::Component,
 {
 public:
     ParameterPanel();
-    ~ParameterPanel() override;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -25,11 +23,10 @@ public:
 
     void setProject(Project* proj);
     void setUndoManager(PitchUndoManager* mgr) { juce::ignoreUnused(mgr); }
-    void setSelectedNote(Note* note);
-    void updateFromNote();
+
     void updateGlobalSliders();
 
-    int getPreferredHeight() const { return 470; }
+    int getPreferredHeight() const { return 474; }
 
     std::function<void()> onParameterChanged;
     std::function<void()> onParameterEditFinished;
@@ -77,7 +74,6 @@ private:
     void setTimelineSnapCycleInternal(bool enabled, bool notify);
 
     Project* project = nullptr;
-    Note* selectedNote = nullptr;
     bool isUpdating = false;
 
     juce::Label pitchSectionLabel { {}, "Pitch" };

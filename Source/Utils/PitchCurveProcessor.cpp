@@ -317,6 +317,7 @@ namespace PitchCurveProcessor
                 note.getTiltLeft(),
                 note.getTiltRight(),
                 note.getVarianceScale(),
+                note.getPitchDriftTrim(),
                 note.getSmoothLeftFrames(),
                 note.getSmoothRightFrames(),
                 adjacentContext
@@ -413,6 +414,7 @@ namespace PitchCurveProcessor
                 note->getTiltLeft(),
                 note->getTiltRight(),
                 note->getVarianceScale(),
+                note->getPitchDriftTrim(),
                 note->getSmoothLeftFrames(),
                 note->getSmoothRightFrames(),
                 adjacentContext
@@ -496,6 +498,7 @@ namespace PitchCurveProcessor
                 note->getTiltLeft(),
                 note->getTiltRight(),
                 note->getVarianceScale(),
+                note->getPitchDriftTrim(),
                 note->getSmoothLeftFrames(),
                 note->getSmoothRightFrames(),
                 adjacentContext
@@ -567,5 +570,245 @@ namespace PitchCurveProcessor
         auto composed = composeF0(project, applyUvMask, globalPitchOffset);
         auto& audioData = project.getAudioData();
         audioData.f0 = std::move(composed);
+    }
+
+    void persistGlobalDeltaToOverlappingNotes(Project& project,
+                                              int minFrame,
+                                              int maxFrameExclusive)
+    {
+        auto& audioData = project.getAudioData();
+        if (audioData.deltaPitch.empty())
+            return;
+        auto& notes = project.getNotes();
+        for (auto& note : notes)
+        {
+            if (note.isRest())
+                continue;
+            if (note.getEndFrame() <= minFrame ||
+                note.getStartFrame() >= maxFrameExclusive)
+                continue;
+
+            const int noteStart = note.getStartFrame();
+            const int noteEnd = note.getEndFrame();
+            const int noteFrames = noteEnd - noteStart;
+            if (noteFrames <= 0)
+                continue;
+
+            std::vector<float> noteDelta(static_cast<size_t>(noteFrames), 0.0f);
+            for (int i = 0; i < noteFrames; ++i)
+            {
+                const int globalFrame = noteStart + i;
+                if (globalFrame >= 0 &&
+                    globalFrame < static_cast<int>(audioData.deltaPitch.size()))
+                    noteDelta[static_cast<size_t>(i)] =
+                        audioData.deltaPitch[static_cast<size_t>(globalFrame)];
+            }
+            note.setDeltaPitch(noteDelta);
+            note.setOriginalDeltaPitch(noteDelta);
+        }
+    }
+
+    void bindOverlappingNotesToDrawnPitch(Project& project,
+                                          int minFrame,
+                                          int maxFrameExclusive)
+    {
+        auto& audioData = project.getAudioData();
+        const int totalFrames = audioData.getNumFrames();
+        if (totalFrames <= 0 || audioData.basePitch.size() != static_cast<size_t>(totalFrames))
+            return;
+        ensureSizes(audioData, totalFrames);
+
+        std::vector<float> absMidi(static_cast<size_t>(totalFrames));
+        for (int f = 0; f < totalFrames; ++f)
+        {
+            const float b = audioData.basePitch[static_cast<size_t>(f)];
+            const float d =
+                (f < static_cast<int>(audioData.deltaPitch.size()))
+                    ? audioData.deltaPitch[static_cast<size_t>(f)]
+                    : 0.0f;
+            absMidi[static_cast<size_t>(f)] = b + d;
+        }
+
+        auto& notes = project.getNotes();
+        std::vector<std::size_t> affected;
+        affected.reserve(notes.size());
+
+        for (std::size_t i = 0; i < notes.size(); ++i)
+        {
+            Note& note = notes[i];
+            if (note.isRest())
+                continue;
+            if (note.getEndFrame() <= minFrame ||
+                note.getStartFrame() >= maxFrameExclusive)
+                continue;
+
+            const int s = note.getStartFrame();
+            const int e = note.getEndFrame();
+            double sum = 0.0;
+            int cnt = 0;
+            for (int f = s; f < e && f < totalFrames; ++f)
+            {
+                const bool voiced =
+                    (f < static_cast<int>(audioData.voicedMask.size()))
+                        ? audioData.voicedMask[static_cast<size_t>(f)]
+                        : (audioData.f0[static_cast<size_t>(f)] > 0.0f);
+                if (!voiced)
+                    continue;
+                sum += static_cast<double>(absMidi[static_cast<size_t>(f)]);
+                ++cnt;
+            }
+            if (cnt == 0)
+                continue;
+
+            const float center = static_cast<float>(sum / static_cast<double>(cnt));
+            note.setMidiNote(center);
+            note.setPitchOffset(0.0f);
+            note.setTiltLeft(0.0f);
+            note.setTiltRight(0.0f);
+            note.setVarianceScale(1.0f);
+            note.setPitchDriftTrim(0.0f);
+            note.setSmoothLeftFrames(0);
+            note.setSmoothRightFrames(0);
+            note.setDeltaScale(1.0f);
+            note.setDeltaOffset(0.0f);
+            affected.push_back(i);
+        }
+
+        if (affected.empty())
+            return;
+
+        auto segments = collectNoteSegments(project.getNotes());
+        if (!segments.empty())
+            audioData.basePitch = BasePitchCurve::generateForNotes(segments, totalFrames);
+
+        for (std::size_t idx : affected)
+        {
+            Note& note = notes[idx];
+            const int s = note.getStartFrame();
+            const int e = note.getEndFrame();
+            const int nf = e - s;
+            if (nf <= 0)
+                continue;
+            std::vector<float> newOrig(static_cast<size_t>(nf));
+            for (int i = 0; i < nf; ++i)
+            {
+                const int gf = s + i;
+                if (gf >= 0 && gf < totalFrames)
+                    newOrig[static_cast<size_t>(i)] =
+                        absMidi[static_cast<size_t>(gf)] -
+                        audioData.basePitch[static_cast<size_t>(gf)];
+                else
+                    newOrig[static_cast<size_t>(i)] = 0.0f;
+            }
+            note.setOriginalDeltaPitch(newOrig);
+            note.setDeltaPitch(newOrig);
+            note.markSynthDirty();
+        }
+
+        rebuildBaseFromNotes(project);
+    }
+
+    bool tryCaptureNotePitchSnapshot(const Project& project,
+                                     std::size_t noteIndex,
+                                     NotePitchUndoSnapshot& s)
+    {
+        const auto& notes = project.getNotes();
+        if (noteIndex >= notes.size())
+            return false;
+
+        const Note& note = notes[noteIndex];
+        if (note.isRest())
+            return false;
+
+        s = NotePitchUndoSnapshot{};
+        s.noteIndex = noteIndex;
+        s.midiNote = note.getMidiNote();
+        s.pitchOffset = note.getPitchOffset();
+        if (note.hasOriginalDeltaPitch())
+            s.originalDeltaPitch = note.getOriginalDeltaPitch();
+        if (note.hasDeltaPitch())
+            s.deltaPitch = note.getDeltaPitch();
+
+        // Notes that only use the global dense delta list still need a per-note
+        // snapshot for draw undo after rebuildBaseFromNotes clears globals.
+        if (s.originalDeltaPitch.empty() && s.deltaPitch.empty())
+        {
+            const auto& ad = project.getAudioData();
+            const int ns = note.getStartFrame();
+            const int ne = note.getEndFrame();
+            const int n = ne - ns;
+            if (n > 0 && !ad.deltaPitch.empty())
+            {
+                std::vector<float> slice(static_cast<size_t>(n), 0.0f);
+                for (int i = 0; i < n; ++i)
+                {
+                    const int gf = ns + i;
+                    if (gf >= 0 &&
+                        gf < static_cast<int>(ad.deltaPitch.size()))
+                        slice[static_cast<size_t>(i)] =
+                            ad.deltaPitch[static_cast<size_t>(gf)];
+                }
+                s.originalDeltaPitch = slice;
+                s.deltaPitch = std::move(slice);
+            }
+        }
+
+        s.tiltLeft = note.getTiltLeft();
+        s.tiltRight = note.getTiltRight();
+        s.varianceScale = note.getVarianceScale();
+        s.pitchDriftTrim = note.getPitchDriftTrim();
+        s.smoothLeftFrames = note.getSmoothLeftFrames();
+        s.smoothRightFrames = note.getSmoothRightFrames();
+        s.deltaScale = note.getDeltaScale();
+        s.deltaOffset = note.getDeltaOffset();
+        return true;
+    }
+
+    std::vector<NotePitchUndoSnapshot>
+    captureNotesOverlappingRange(const Project& project,
+                                 int minFrame,
+                                 int maxFrameExclusive)
+    {
+        std::vector<NotePitchUndoSnapshot> out;
+        const auto& notes = project.getNotes();
+        for (std::size_t i = 0; i < notes.size(); ++i)
+        {
+            const Note& note = notes[i];
+            if (note.isRest())
+                continue;
+            if (note.getEndFrame() <= minFrame ||
+                note.getStartFrame() >= maxFrameExclusive)
+                continue;
+
+            NotePitchUndoSnapshot s;
+            if (!tryCaptureNotePitchSnapshot(project, i, s))
+                continue;
+            out.push_back(std::move(s));
+        }
+        return out;
+    }
+
+    void restoreNotesFromPitchSnapshots(Project& project,
+                                        const std::vector<NotePitchUndoSnapshot>& snapshots)
+    {
+        auto& notes = project.getNotes();
+        for (const auto& s : snapshots)
+        {
+            if (s.noteIndex >= notes.size())
+                continue;
+            Note& note = notes[s.noteIndex];
+            note.setMidiNote(s.midiNote);
+            note.setPitchOffset(s.pitchOffset);
+            note.setOriginalDeltaPitch(s.originalDeltaPitch);
+            note.setDeltaPitch(s.deltaPitch);
+            note.setTiltLeft(s.tiltLeft);
+            note.setTiltRight(s.tiltRight);
+            note.setVarianceScale(s.varianceScale);
+            note.setPitchDriftTrim(s.pitchDriftTrim);
+            note.setSmoothLeftFrames(s.smoothLeftFrames);
+            note.setSmoothRightFrames(s.smoothRightFrames);
+            note.setDeltaScale(s.deltaScale);
+            note.setDeltaOffset(s.deltaOffset);
+        }
     }
 } // namespace PitchCurveProcessor

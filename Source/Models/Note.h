@@ -84,6 +84,12 @@ public:
     void setTiltRight(float tilt) { tiltRight = tilt; }
     float getVarianceScale() const { return varianceScale; }
     void setVarianceScale(float scale) { varianceScale = scale; }
+    /** 0..1: remove slow linear pitch drift from delta (see pitch tool chain). */
+    float getPitchDriftTrim() const { return pitchDriftTrim; }
+    void setPitchDriftTrim(float amount)
+    {
+        pitchDriftTrim = juce::jlimit(0.0f, 1.0f, amount);
+    }
     int getSmoothLeftFrames() const { return smoothLeftFrames; }
     void setSmoothLeftFrames(int frames) { smoothLeftFrames = frames; }
     int getSmoothRightFrames() const { return smoothRightFrames; }
@@ -233,6 +239,7 @@ private:
     float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)
     float tiltRight = 0.0f;          // Tilt amount at right edge (semitones)
     float varianceScale = 1.0f;      // Variance scaling factor (1.0=unchanged, 0.0=flat, >1.0=amplify, <0.0=invert)
+    float pitchDriftTrim = 0.0f;     // 0..1 linear trend removal in delta contour
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary
     int smoothRightFrames = 0;       // Smoothing transition length at right boundary
 

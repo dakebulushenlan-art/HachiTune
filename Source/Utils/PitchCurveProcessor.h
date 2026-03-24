@@ -1,7 +1,25 @@
 #pragma once
 
 #include "../Models/Project.h"
+#include <cstddef>
 #include <vector>
+
+struct NotePitchUndoSnapshot
+{
+    std::size_t noteIndex = 0;
+    float midiNote = 60.0f;
+    float pitchOffset = 0.0f;
+    std::vector<float> originalDeltaPitch;
+    std::vector<float> deltaPitch;
+    float tiltLeft = 0.0f;
+    float tiltRight = 0.0f;
+    float varianceScale = 1.0f;
+    float pitchDriftTrim = 0.0f;
+    int smoothLeftFrames = 0;
+    int smoothRightFrames = 0;
+    float deltaScale = 1.0f;
+    float deltaOffset = 0.0f;
+};
 
 namespace PitchCurveProcessor
 {
@@ -59,6 +77,37 @@ namespace PitchCurveProcessor
     void composeF0InPlace(Project& project,
                           bool applyUvMask,
                           float globalPitchOffset = 0.0f);
+
+    /** Copy global deltaPitch into overlapping notes (original + delta arrays). */
+    void persistGlobalDeltaToOverlappingNotes(Project& project,
+                                               int minFrame,
+                                               int maxFrameExclusive);
+
+    /**
+     * Move each affected note's base MIDI toward the mean of the current
+     * absolute pitch curve (base+delta), then rebuild residual deltas.
+     * Resets pitch-tool parameters on affected notes for a consistent model.
+     */
+    void bindOverlappingNotesToDrawnPitch(Project& project,
+                                          int minFrame,
+                                          int maxFrameExclusive);
+
+    std::vector<NotePitchUndoSnapshot>
+    captureNotesOverlappingRange(const Project& project,
+                                 int minFrame,
+                                 int maxFrameExclusive);
+
+    /**
+     * Copies one note's pitch tool + delta state into out. If the note has no
+     * per-note delta curves, copies the global dense delta for that note's span.
+     * Returns false if noteIndex is out of range or the note is a rest.
+     */
+    bool tryCaptureNotePitchSnapshot(const Project& project,
+                                     std::size_t noteIndex,
+                                     NotePitchUndoSnapshot& out);
+
+    void restoreNotesFromPitchSnapshots(Project& project,
+                                        const std::vector<NotePitchUndoSnapshot>& snapshots);
 } // namespace PitchCurveProcessor
 
 

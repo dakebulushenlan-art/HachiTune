@@ -1,8 +1,10 @@
 #include "PitchEditor.h"
+#include "../../Undo/F0DrawWithNoteRestoreAction.h"
 #include "../../Utils/ScaleUtils.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 PitchEditor::PitchEditor() = default;
 
@@ -211,12 +213,27 @@ void PitchEditor::startDrawing(float x, float y)
   isDrawing = true;
   drawingEdits.clear();
   drawingEditIndexByFrame.clear();
+  drawSessionNoteSnapshots.clear();
+  drawSessionSnapshottedNoteIndices.clear();
   drawCurves.clear();
   activeDrawCurve = nullptr;
   lastDrawFrame = -1;
   lastDrawValueCents = 0;
 
   continueDrawing(x, y);
+}
+
+void PitchEditor::snapshotNoteBeforeLocalClearIfNeeded(std::size_t noteIndex)
+{
+  if (!project)
+    return;
+  if (drawSessionSnapshottedNoteIndices.count(noteIndex) != 0u)
+    return;
+  NotePitchUndoSnapshot snap;
+  if (!PitchCurveProcessor::tryCaptureNotePitchSnapshot(*project, noteIndex, snap))
+    return;
+  drawSessionNoteSnapshots.push_back(std::move(snap));
+  drawSessionSnapshottedNoteIndices.insert(noteIndex);
 }
 
 void PitchEditor::continueDrawing(float x, float y)
@@ -257,37 +274,30 @@ void PitchEditor::endDrawing()
     maxFrame = std::max(maxFrame, e.idx);
   }
 
-  // Persist drawn global delta back into all overlapping notes so later
-  // note moves/rebuilds keep the edited pitch shape.
+  const int maxFrameExclusive =
+      (minFrame <= maxFrame) ? (maxFrame + 1) : minFrame;
+
+  std::vector<NotePitchUndoSnapshot> preDrawSnapshots;
+  std::unordered_set<std::size_t> mergedNoteIdx;
+  preDrawSnapshots = std::move(drawSessionNoteSnapshots);
+  drawSessionSnapshottedNoteIndices.clear();
+  for (const auto &s : preDrawSnapshots)
+    mergedNoteIdx.insert(s.noteIndex);
+
   if (project && minFrame <= maxFrame)
   {
-    const int maxFrameExclusive = maxFrame + 1;
-    auto &audioData = project->getAudioData();
-    auto &notes = project->getNotes();
-    for (auto &note : notes)
+    auto extra = PitchCurveProcessor::captureNotesOverlappingRange(
+        *project, minFrame, maxFrameExclusive);
+    for (auto &s : extra)
     {
-      if (note.getEndFrame() > minFrame &&
-          note.getStartFrame() < maxFrameExclusive)
-      {
-        const int noteStart = note.getStartFrame();
-        const int noteEnd = note.getEndFrame();
-        const int noteFrames = noteEnd - noteStart;
-        if (noteFrames <= 0)
-          continue;
-
-        std::vector<float> noteDelta(static_cast<size_t>(noteFrames), 0.0f);
-        for (int i = 0; i < noteFrames; ++i)
-        {
-          int globalFrame = noteStart + i;
-          if (globalFrame >= 0 &&
-              globalFrame < static_cast<int>(audioData.deltaPitch.size()))
-            noteDelta[static_cast<size_t>(i)] =
-                audioData.deltaPitch[static_cast<size_t>(globalFrame)];
-        }
-        note.setDeltaPitch(noteDelta);
-        note.setOriginalDeltaPitch(std::move(noteDelta));
-      }
+      if (mergedNoteIdx.insert(s.noteIndex).second)
+        preDrawSnapshots.push_back(std::move(s));
     }
+
+    PitchCurveProcessor::persistGlobalDeltaToOverlappingNotes(*project, minFrame,
+                                                             maxFrameExclusive);
+    PitchCurveProcessor::bindOverlappingNotesToDrawnPitch(*project, minFrame,
+                                                          maxFrameExclusive);
     project->setF0DirtyRange(minFrame, maxFrameExclusive);
   }
 
@@ -295,20 +305,37 @@ void PitchEditor::endDrawing()
   if (undoManager && project)
   {
     auto &audioData = project->getAudioData();
-    auto action = std::make_unique<F0EditAction>(
+    auto f0Inner = std::make_unique<F0EditAction>(
         &audioData.f0, &audioData.deltaPitch, &audioData.voicedMask,
-        drawingEdits, [this](int minFrame, int maxFrame)
+        std::move(drawingEdits),
+        [this](int dirtyMin, int dirtyMax)
         {
-          if (project) {
-            project->setF0DirtyRange(minFrame, maxFrame + 1);
+          if (project)
+          {
+            project->setF0DirtyRange(dirtyMin, dirtyMax + 1);
             if (onPitchEditFinished)
               onPitchEditFinished();
-          } });
-    undoManager->addAction(std::move(action));
+          }
+        });
+    auto compound = std::make_unique<F0DrawWithNoteRestoreAction>(
+        std::move(f0Inner), std::move(preDrawSnapshots), project, minFrame,
+        maxFrameExclusive,
+        [this](int dirtyMin, int dirtyMax)
+        {
+          if (project)
+          {
+            project->setF0DirtyRange(dirtyMin, dirtyMax + 1);
+            if (onPitchEditFinished)
+              onPitchEditFinished();
+          }
+        });
+    undoManager->addAction(std::move(compound));
   }
 
   drawingEdits.clear();
   drawingEditIndexByFrame.clear();
+  drawSessionNoteSnapshots.clear();
+  drawSessionSnapshottedNoteIndices.clear();
   lastDrawFrame = -1;
   lastDrawValueCents = 0;
   activeDrawCurve = nullptr;
@@ -364,18 +391,32 @@ void PitchEditor::applyPitchPoint(int frameIndex, int midiCents)
       drawingEdits.push_back(F0FrameEdit{idx, oldF0, newFreq, oldDelta,
                                          newDelta, oldVoiced, true});
 
-      // Clear deltaPitch for notes containing this frame
-      auto &notes = project->getNotes();
-      for (auto &note : notes)
       {
-        if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
-            (note.hasDeltaPitch() || note.hasOriginalDeltaPitch()))
+        auto &notes = project->getNotes();
+        std::size_t containingIdx = std::numeric_limits<std::size_t>::max();
+        for (std::size_t ni = 0; ni < notes.size(); ++ni)
         {
-          if (note.hasDeltaPitch())
-            note.setDeltaPitch(std::vector<float>());
-          if (note.hasOriginalDeltaPitch())
-            note.setOriginalDeltaPitch(std::vector<float>());
-          break;
+          if (notes[ni].isRest())
+            continue;
+          if (notes[ni].getStartFrame() <= idx &&
+              notes[ni].getEndFrame() > idx)
+          {
+            containingIdx = ni;
+            break;
+          }
+        }
+        if (containingIdx != std::numeric_limits<std::size_t>::max())
+        {
+          snapshotNoteBeforeLocalClearIfNeeded(containingIdx);
+          Note &note = notes[containingIdx];
+          if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
+              (note.hasDeltaPitch() || note.hasOriginalDeltaPitch()))
+          {
+            if (note.hasDeltaPitch())
+              note.setDeltaPitch(std::vector<float>());
+            if (note.hasOriginalDeltaPitch())
+              note.setOriginalDeltaPitch(std::vector<float>());
+          }
         }
       }
     }

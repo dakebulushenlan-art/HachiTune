@@ -109,8 +109,7 @@ private:
 };
 
 /**
- * Action for resetting tilt values on multiple notes.
- * Used for double-click on TiltLeft/TiltRight handles to reset to 0.
+ * Action for resetting tilt values on multiple notes (left or right side).
  */
 class TiltResetAction : public UndoableAction
 {

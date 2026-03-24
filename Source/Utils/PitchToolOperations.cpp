@@ -51,6 +51,43 @@ std::vector<float> reduceVariance(const std::vector<float>& deltaPitch,
   return result;
 }
 
+std::vector<float> trimLinearPitchDrift(const std::vector<float>& deltaPitch,
+                                         float amount) {
+  if (deltaPitch.empty() || amount <= 0.0001f) {
+    return deltaPitch;
+  }
+
+  const int n = static_cast<int>(deltaPitch.size());
+  if (n <= 1) {
+    return deltaPitch;
+  }
+
+  const float a = std::clamp(amount, 0.0f, 1.0f);
+  float sumTT = 0.0f;
+  float sumTY = 0.0f;
+  for (int i = 0; i < n; ++i) {
+    const float t =
+        static_cast<float>(i) / static_cast<float>(n - 1) - 0.5f; // zero-mean abscissa
+    const float y = deltaPitch[static_cast<size_t>(i)];
+    sumTT += t * t;
+    sumTY += t * y;
+  }
+  if (sumTT <= 1.0e-12f) {
+    return deltaPitch;
+  }
+
+  const float b = sumTY / sumTT; // slope; trend has zero mean over t
+  std::vector<float> result(static_cast<size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    const float t =
+        static_cast<float>(i) / static_cast<float>(n - 1) - 0.5f;
+    const float trend = b * t;
+    result[static_cast<size_t>(i)] =
+        deltaPitch[static_cast<size_t>(i)] - a * trend;
+  }
+  return result;
+}
+
 std::vector<float> smoothBoundary(const std::vector<float>& deltaPitch,
                                   int side,
                                   int transitionFrames,
@@ -115,6 +152,7 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
                                            float tiltLeft,
                                            float tiltRight,
                                            float varianceScale,
+                                           float pitchDriftTrim,
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
                                            const AdjacentNoteContext& adjacentContext) {
@@ -131,7 +169,12 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
     result = reduceVariance(result, varianceScale);
   }
 
-  // 2. Apply tilt transformations (combined left + right)
+  // 2. Reduce slow linear drift (Melodyne / pitch-drift style)
+  if (std::abs(pitchDriftTrim) > 0.001f) {
+    result = trimLinearPitchDrift(result, pitchDriftTrim);
+  }
+
+  // 3. Apply tilt transformations (combined left + right)
   // TiltLeft: pivot at right (1.0), negative amount
   if (std::abs(tiltLeft) > 0.001f) {
     result = tiltDeltaPitch(result, 1.0f, -tiltLeft);
@@ -142,7 +185,7 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
     result = tiltDeltaPitch(result, 0.0f, tiltRight);
   }
 
-  // 3. Apply boundary smoothing
+  // 4. Apply boundary smoothing
   if (smoothLeftFrames > 0) {
     const float leftTarget = adjacentContext.hasLeft ? adjacentContext.leftBoundaryDelta : 0.0f;
     result = smoothBoundary(result, 0, smoothLeftFrames, leftTarget);

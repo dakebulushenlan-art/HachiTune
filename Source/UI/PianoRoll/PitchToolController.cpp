@@ -134,8 +134,7 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
 
   const float pixelsPerSemitone = juce::jmax(1.0f, mapper.getPixelsPerSemitone());
   const float semitoneDelta = -dragDeltaY / pixelsPerSemitone;
-
-  // Debug logging
+  juce::ignoreUnused(semitoneDelta);
 
   for (size_t i = 0; i < notes.size(); ++i)
   {
@@ -150,37 +149,23 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     // Apply new transformation by updating the appropriate parameter
     switch (type)
     {
-      case PitchToolHandles::HandleType::TiltLeft:
+      case PitchToolHandles::HandleType::PitchDrift:
       {
-        // Drag UP = positive semitoneDelta = left edge goes UP
-        const float amount = semitoneDelta;
-        note->setTiltLeft(origParams.tiltLeft + amount);
-        
-        // Calculate tilt mean shift
-        const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        note->setMidiNote(origParams.midiNote + newTiltMean);
-        break;
-      }
-      case PitchToolHandles::HandleType::TiltRight:
-      {
-        const float amount = semitoneDelta;
-        note->setTiltRight(origParams.tiltRight + amount);
-        
-        // Calculate tilt mean shift
-        const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        note->setMidiNote(origParams.midiNote + newTiltMean);
+        const float delta = -dragDeltaY / 200.0f;
+        note->setPitchDriftTrim(origParams.pitchDriftTrim + delta);
+        const float currentTiltMean =
+            (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+        note->setMidiNote(origParams.midiNote + currentTiltMean);
         break;
       }
       case PitchToolHandles::HandleType::ReduceVariance:
       {
-        // Additive accumulation from original value (consistent with tilt handles)
-        // Drag UP (negative Y) = increase variance, drag DOWN (positive Y) = decrease
         const float dragDelta = -dragDeltaY / 100.0f;
         const float newScale = origParams.varianceScale + dragDelta;
         note->setVarianceScale(newScale);
-        
-        // Preserve tilt offset when adjusting variance
-        const float currentTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
+
+        const float currentTiltMean =
+            (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         note->setMidiNote(origParams.midiNote + currentTiltMean);
         break;
       }

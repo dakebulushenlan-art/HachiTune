@@ -968,107 +968,71 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
         return;
       }
 
-      // TiltLeft: Reset tiltLeft to 0
-      if (handle.type ==
-          PitchToolHandles::HandleType::TiltLeft)
+      // PitchDrift: double-click clears trim (same undo path as other pitch tools)
+      if (handle.type == PitchToolHandles::HandleType::PitchDrift)
       {
         auto selectedNotes = project->getSelectedNotes();
+        if (selectedNotes.empty())
+          return;
 
-        if (owner_.undoManager)
+        std::vector<TransformParams> oldParams;
+        oldParams.reserve(selectedNotes.size());
+        for (auto *note : selectedNotes)
         {
-          std::vector<float> oldTilts;
-          std::vector<float> oldMidiNotes;
-          oldTilts.reserve(selectedNotes.size());
-          oldMidiNotes.reserve(selectedNotes.size());
-
-          for (auto *note : selectedNotes)
-          {
-            if (note)
-            {
-              oldTilts.push_back(note->getTiltLeft());
-              oldMidiNotes.push_back(note->getMidiNote());
-            }
-          }
-
-          auto action = std::make_unique<TiltResetAction>(
-              selectedNotes, TiltResetAction::TiltSide::Left,
-              oldTilts, oldMidiNotes,
-              [this]()
-              { rebuildAndNotify(); });
-          owner_.undoManager->addAction(std::move(action));
+          if (note)
+            oldParams.push_back(TransformParams::fromNote(*note));
+          else
+            oldParams.emplace_back();
         }
 
         for (auto *note : selectedNotes)
         {
           if (note)
           {
-            const float oldTiltMean =
-                (note->getTiltLeft() + note->getTiltRight()) /
-                2.0f;
-            const float baseline =
-                note->getMidiNote() - oldTiltMean;
-            note->setTiltLeft(0.0f);
-            const float newTiltMean =
-                (note->getTiltLeft() + note->getTiltRight()) /
-                2.0f;
-            note->setMidiNote(baseline + newTiltMean);
+            note->setPitchDriftTrim(0.0f);
             note->markDirty();
           }
         }
 
-        rebuildAndNotify();
-        return;
-      }
-
-      // TiltRight: Reset tiltRight to 0
-      if (handle.type ==
-          PitchToolHandles::HandleType::TiltRight)
-      {
-        auto selectedNotes = project->getSelectedNotes();
+        std::vector<TransformParams> newParams;
+        newParams.reserve(selectedNotes.size());
+        for (auto *note : selectedNotes)
+        {
+          if (note)
+            newParams.push_back(TransformParams::fromNote(*note));
+          else
+            newParams.emplace_back();
+        }
 
         if (owner_.undoManager)
         {
-          std::vector<float> oldTilts;
-          std::vector<float> oldMidiNotes;
-          oldTilts.reserve(selectedNotes.size());
-          oldMidiNotes.reserve(selectedNotes.size());
-
-          for (auto *note : selectedNotes)
-          {
-            if (note)
-            {
-              oldTilts.push_back(note->getTiltRight());
-              oldMidiNotes.push_back(note->getMidiNote());
-            }
-          }
-
-          auto action = std::make_unique<TiltResetAction>(
-              selectedNotes, TiltResetAction::TiltSide::Right,
-              oldTilts, oldMidiNotes,
-              [this]()
+          auto action = std::make_unique<PitchToolAction>(
+              project, selectedNotes, oldParams, newParams,
+              [this](int, int)
               { rebuildAndNotify(); });
           owner_.undoManager->addAction(std::move(action));
         }
 
+        PitchCurveProcessor::rebuildBaseFromNotes(*project);
+        int minFrame = std::numeric_limits<int>::max();
+        int maxFrame = std::numeric_limits<int>::min();
         for (auto *note : selectedNotes)
         {
           if (note)
           {
-            const float oldTiltMean =
-                (note->getTiltLeft() + note->getTiltRight()) /
-                2.0f;
-            const float baseline =
-                note->getMidiNote() - oldTiltMean;
-            note->setTiltRight(0.0f);
-            const float newTiltMean =
-                (note->getTiltLeft() + note->getTiltRight()) /
-                2.0f;
-            note->setMidiNote(baseline + newTiltMean);
-            note->markDirty();
+            minFrame = std::min(minFrame, note->getStartFrame());
+            maxFrame = std::max(maxFrame, note->getEndFrame());
           }
         }
+        if (minFrame <= maxFrame)
+          project->setF0DirtyRange(minFrame, maxFrame);
 
-        rebuildAndNotify();
+        owner_.updatePitchToolHandlesFromSelection();
+        if (owner_.onPitchEdited)
+          owner_.onPitchEdited();
+        if (owner_.onPitchEditFinished)
+          owner_.onPitchEditFinished();
+        owner_.repaint();
         return;
       }
     }

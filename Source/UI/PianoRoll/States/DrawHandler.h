@@ -2,11 +2,13 @@
 
 #include "InteractionHandler.h"
 #include "../../../Undo/F0FrameEdit.h"
+#include "../../../Utils/PitchCurveProcessor.h"
 #include "../../../Utils/UI/DrawCurve.h"
 
 #include <deque>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 /**
@@ -37,6 +39,7 @@ private:
   void commitPitchDrawing();
   void applyPitchPoint(int frameIndex, int midiCents);
   void startNewPitchCurve(int frameIndex, int midiCents);
+  void snapshotNoteBeforeLocalClearIfNeeded(std::size_t noteIndex);
 
   bool isDrawing = false;
   bool isPendingDraw = false;
@@ -48,4 +51,8 @@ private:
   int lastDrawValueCents = 0;
   DrawCurve *activeDrawCurve = nullptr;
   std::deque<std::unique_ptr<DrawCurve>> drawCurves;
+
+  /** Pre-clear state for undo: drawing clears per-note deltas before commit. */
+  std::vector<NotePitchUndoSnapshot> drawSessionNoteSnapshots;
+  std::unordered_set<std::size_t> drawSessionSnapshottedNoteIndices;
 };
