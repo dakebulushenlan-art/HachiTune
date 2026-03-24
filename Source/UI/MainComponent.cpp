@@ -16,6 +16,11 @@
 #include <optional>
 #include <thread>
 
+namespace {
+constexpr bool kBypassHNSepEditMode = true;
+constexpr bool kBypassStretchEditMode = true;
+} // namespace
+
 MainComponent::MainComponent(bool enableAudioDevice)
     : enableAudioDeviceFlag(enableAudioDevice), pianoRollView(pianoRoll)
 {
@@ -335,6 +340,7 @@ MainComponent::MainComponent(bool enableAudioDevice)
   // This enables automatic keyboard shortcut dispatch
   addKeyListener(commandManager->getKeyMappings());
   setWantsKeyboardFocus(true);
+  tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 500);
 
   // Load config
   if (enableAudioDeviceFlag)
@@ -408,8 +414,13 @@ void MainComponent::resized()
   auto bounds = getLocalBounds();
 
 #if !JUCE_MAC
-  // Menu bar at top for non-mac platforms
-  menuBar.setBounds(bounds.removeFromTop(24));
+  // Menu bar at top for non-mac platforms (scale on high-DPI / 4K)
+  {
+    const float scale = juce::Desktop::getInstance().getGlobalScaleFactor();
+    const int menuBarH =
+        juce::roundToInt(juce::jmax(24.0f, 24.0f * scale));
+    menuBar.setBounds(bounds.removeFromTop(menuBarH));
+  }
 #endif
 
   // Toolbar
@@ -1318,11 +1329,17 @@ void MainComponent::redo()
 
 void MainComponent::setEditMode(EditMode mode)
 {
-  pianoRoll.setEditMode(mode);
-  toolbar.setEditMode(mode);
+  EditMode effective = mode;
+  if (kBypassStretchEditMode && mode == EditMode::Stretch)
+    effective = EditMode::Select;
+  if (kBypassHNSepEditMode && mode == EditMode::Parameter)
+    effective = EditMode::Select;
+
+  pianoRoll.setEditMode(effective);
+  toolbar.setEditMode(effective);
 
   // Show/hide HNSep parameter lanes when toggling Parameter edit mode
-  pianoRollView.setHNSepVisible(mode == EditMode::Parameter);
+  pianoRollView.setHNSepVisible(effective == EditMode::Parameter);
 
   // Update command states (draw mode toggle state changed)
   if (commandManager)
@@ -1764,7 +1781,8 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID> &commands)
 
       // Edit mode commands
       CommandIDs::toggleDrawMode,
-      CommandIDs::exitDrawMode};
+      CommandIDs::exitDrawMode,
+      CommandIDs::toggleSplitMode};
 
   commands.addArray(commandArray, sizeof(commandArray) / sizeof(commandArray[0]));
 }
@@ -1891,6 +1909,13 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
     result.setActive(pianoRoll.getEditMode() == EditMode::Draw);
     break;
 
+  case CommandIDs::toggleSplitMode:
+    result.setInfo(TR("command.toggle_split"), TR("command.toggle_split.desp"), "Edit Mode", 0);
+    result.addDefaultKeypress('b', juce::ModifierKeys::noModifiers);
+    result.setActive(project != nullptr);
+    result.setTicked(pianoRoll.getEditMode() == EditMode::Split);
+    break;
+
   default:
     break;
   }
@@ -2011,6 +2036,13 @@ bool MainComponent::perform(const ApplicationCommandTarget::InvocationInfo &info
     {
       setEditMode(EditMode::Select);
     }
+    return true;
+
+  case CommandIDs::toggleSplitMode:
+    if (pianoRoll.getEditMode() == EditMode::Split)
+      setEditMode(EditMode::Select);
+    else
+      setEditMode(EditMode::Split);
     return true;
 
   default:

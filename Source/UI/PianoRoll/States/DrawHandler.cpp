@@ -153,16 +153,32 @@ void DrawHandler::commitPitchDrawing() {
     maxFrame = std::max(maxFrame, e.idx);
   }
 
-  // Clear deltaPitch for notes in the edited range so they use the drawn F0
+  // Persist drawn global delta back into note-local curves for every
+  // overlapping note so later note moves/rebuilds keep the edited shape.
   if (owner_.project && minFrame <= maxFrame) {
     const int maxFrameExclusive = maxFrame + 1;
+    auto &audioData = owner_.project->getAudioData();
     auto &notes = owner_.project->getNotes();
     for (auto &note : notes) {
       if (note.getEndFrame() > minFrame &&
           note.getStartFrame() < maxFrameExclusive) {
-        if (note.hasDeltaPitch()) {
-          note.setDeltaPitch(std::vector<float>());
+        const int noteStart = note.getStartFrame();
+        const int noteEnd = note.getEndFrame();
+        const int noteFrames = noteEnd - noteStart;
+        if (noteFrames <= 0)
+          continue;
+
+        std::vector<float> noteDelta(static_cast<size_t>(noteFrames), 0.0f);
+        for (int i = 0; i < noteFrames; ++i) {
+          const int globalFrame = noteStart + i;
+          if (globalFrame >= 0 &&
+              globalFrame < static_cast<int>(audioData.deltaPitch.size())) {
+            noteDelta[static_cast<size_t>(i)] =
+                audioData.deltaPitch[static_cast<size_t>(globalFrame)];
+          }
         }
+        note.setDeltaPitch(noteDelta);
+        note.setOriginalDeltaPitch(std::move(noteDelta));
       }
     }
   }
@@ -242,12 +258,15 @@ void DrawHandler::applyPitchPoint(int frameIndex, int midiCents) {
         drawingEditIndexByFrame.emplace(idx, drawingEdits.size());
         drawingEdits.push_back(F0FrameEdit{idx, oldF0, newFreq, oldDelta,
                                            newDelta, oldVoiced, true});
-        // Clear deltaPitch for any note containing this frame
+        // Clear note-local pitch sources for any note containing this frame.
         auto &notes = owner_.project->getNotes();
         for (auto &note : notes) {
           if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
-              note.hasDeltaPitch()) {
-            note.setDeltaPitch(std::vector<float>());
+              (note.hasDeltaPitch() || note.hasOriginalDeltaPitch())) {
+            if (note.hasDeltaPitch())
+              note.setDeltaPitch(std::vector<float>());
+            if (note.hasOriginalDeltaPitch())
+              note.setOriginalDeltaPitch(std::vector<float>());
             break;
           }
         }
@@ -294,12 +313,15 @@ void DrawHandler::applyPitchPoint(int frameIndex, int midiCents) {
       drawingEdits.push_back(F0FrameEdit{idx, oldF0, newFreq, oldDelta,
                                          newDelta, oldVoiced, true});
 
-      // Clear deltaPitch for any note containing this frame
+      // Clear note-local pitch sources for any note containing this frame.
       auto &notes = owner_.project->getNotes();
       for (auto &note : notes) {
         if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
-            note.hasDeltaPitch()) {
-          note.setDeltaPitch(std::vector<float>());
+            (note.hasDeltaPitch() || note.hasOriginalDeltaPitch())) {
+          if (note.hasDeltaPitch())
+            note.setDeltaPitch(std::vector<float>());
+          if (note.hasOriginalDeltaPitch())
+            note.setOriginalDeltaPitch(std::vector<float>());
           break;
         }
       }

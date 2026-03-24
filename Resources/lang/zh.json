@@ -37,6 +37,8 @@
   "command.toggle_draw.desp": "切换音高绘制模式",
   "command.exit_draw": "退出绘制模式",
   "command.exit_draw.desp": "退出音高绘制模式",
+  "command.toggle_split": "切换切割模式",
+  "command.toggle_split.desp": "切换剪刀/分割音符工具",
   "toolbar.play": "播放",
   "toolbar.pause": "暂停",
   "toolbar.stop": "停止",

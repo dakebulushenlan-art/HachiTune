@@ -37,6 +37,8 @@
   "command.toggle_draw.desp": "Toggle pitch drawing mode",
   "command.exit_draw": "Exit Draw Mode",
   "command.exit_draw.desp": "Exit pitch drawing mode",
+  "command.toggle_split": "Toggle Split Mode",
+  "command.toggle_split.desp": "Toggle scissors / split note mode",
   "toolbar.play": "Play",
   "toolbar.pause": "Pause",
   "toolbar.stop": "Stop",

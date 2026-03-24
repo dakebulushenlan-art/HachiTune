@@ -37,6 +37,8 @@
   "command.toggle_draw.desp": "ピッチ描画モードを切り替え",
   "command.exit_draw": "描画モード終了",
   "command.exit_draw.desp": "ピッチ描画モードを終了",
+  "command.toggle_split": "分割モード切替",
+  "command.toggle_split.desp": "ハサミ／ノート分割モードを切り替え",
   "toolbar.play": "再生",
   "toolbar.pause": "一時停止",
   "toolbar.stop": "停止",

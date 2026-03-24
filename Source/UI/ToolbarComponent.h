@@ -113,6 +113,7 @@ public:
 private:
     void updateTimeDisplay();
     juce::String formatTime(double seconds);
+    void refreshTooltips();
 
     juce::DrawableButton playButton{"Play", juce::DrawableButton::ImageFitted};
     juce::DrawableButton stopButton{"Stop", juce::DrawableButton::ImageFitted};

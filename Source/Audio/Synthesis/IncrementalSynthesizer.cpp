@@ -452,6 +452,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 sampleGain[static_cast<size_t>(i)];
           }
 
+          // Keep a stable fallback source for note regions that are outside the
+          // current overlap slice. Without this, partially updated notes can
+          // keep zero-filled tails and sound randomly muted until re-rendered.
+          const float *currentWavePtr =
+              (audioData.waveform.getNumSamples() > 0)
+                  ? audioData.waveform.getReadPointer(0)
+                  : nullptr;
+
           // Distribute synthesized audio into per-note synthWaveforms.
           // Each note gets the slice of targetSegment corresponding to its
           // output frame range [startFrame, endFrame), PLUS margin samples on
@@ -472,17 +480,25 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
             // Only update notes that overlap the synthesis range and are dirty
             // (or have no synthWaveform yet).
-            // Also resynthesize notes that overlap the param dirty range,
-            // since parameter curve edits (voicing/breath/tension) affect
-            // the tension-adjusted waveform fed to the vocoder.
+            // Also resynthesize notes that overlap dirty ranges even if the
+            // note flags were already cleared by a previous pass:
+            // - param dirty range (voicing/breath/tension edits)
+            // - F0 dirty range (draw-tool/global pitch-curve edits)
             bool paramDirtyOverlap = false;
             if (capturedProject->hasParamDirtyRange()) {
               auto [pStart, pEnd] = capturedProject->getParamDirtyRange();
               paramDirtyOverlap = (note.getStartFrame() < pEnd &&
                                    note.getEndFrame() > pStart);
             }
+            bool f0DirtyOverlap = false;
+            if (capturedProject->hasF0DirtyRange()) {
+              auto [f0Start, f0End] = capturedProject->getF0DirtyRange();
+              f0DirtyOverlap = (note.getStartFrame() < f0End &&
+                                note.getEndFrame() > f0Start);
+            }
             if (!note.isDirty() && !note.isSynthDirty() &&
-                !paramDirtyOverlap && note.hasSynthWaveform())
+                !paramDirtyOverlap && !f0DirtyOverlap &&
+                note.hasSynthWaveform())
               continue;
 
             // Full note range in samples (the "body")
@@ -559,6 +575,20 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 if (srcIdx >= 0 && srcIdx < srcSamples) {
                   noteSynth[static_cast<size_t>(leftMargin + i)] =
                       srcClip[static_cast<size_t>(srcIdx)];
+                }
+              }
+            } else if (currentWavePtr != nullptr) {
+              // Fallback path: if src clip is unavailable (can happen on some
+              // edit paths), copy untouched body samples from the current
+              // composed waveform so we never leave zeros in noteSynth.
+              for (int i = 0; i < noteSamples; ++i) {
+                const int globalSample = noteStartSample + i;
+                const int globalFrame = (globalSample / hopSize);
+                if (globalFrame >= overlapStart && globalFrame < overlapEnd)
+                  continue;
+                if (globalSample >= 0 && globalSample < totalSamples) {
+                  noteSynth[static_cast<size_t>(leftMargin + i)] =
+                      currentWavePtr[globalSample];
                 }
               }
             }

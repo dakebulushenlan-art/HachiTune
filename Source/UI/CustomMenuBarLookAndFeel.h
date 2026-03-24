@@ -95,7 +95,8 @@ public:
 
             if (shortcutKeyText.isNotEmpty())
             {
-                g.setFont(AppFont::getFont(12.0f));
+                const float scale = juce::Desktop::getInstance().getGlobalScaleFactor();
+                g.setFont(AppFont::getFont(juce::jmax(12.0f, 13.0f * scale)));
                 g.setColour(textColourToUse.withAlpha(0.6f));
                 g.drawText(shortcutKeyText, r, juce::Justification::centredRight, true);
             }
@@ -131,12 +132,15 @@ public:
         }
 
         g.setColour(APP_COLOR_TEXT_PRIMARY);
-        g.setFont(AppFont::getFont(static_cast<float>(height) * 0.6f));
+        const float scale = juce::Desktop::getInstance().getGlobalScaleFactor();
+        g.setFont(AppFont::getFont(
+            juce::jmax(14.0f, static_cast<float>(height) * 0.58f * scale)));
         g.drawFittedText(itemText, 0, 0, width, height, juce::Justification::centred, 1);
     }
 
     juce::Font getPopupMenuFont() override
     {
-        return AppFont::getFont(14.0f);
+        const float scale = juce::Desktop::getInstance().getGlobalScaleFactor();
+        return AppFont::getFont(juce::jmax(14.0f, 15.0f * scale));
     }
 };

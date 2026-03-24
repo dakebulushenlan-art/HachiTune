@@ -143,7 +143,9 @@ juce::AudioFormat *findFormatForExtension(juce::AudioFormatManager &manager,
 // ExportSettingsContent — dialog component for choosing export parameters
 // =============================================================================
 
-class ExportSettingsContent final : public juce::Component, private juce::Button::Listener {
+class ExportSettingsContent final : public juce::Component,
+                                    private juce::Button::Listener,
+                                    private juce::ComboBox::Listener {
 public:
   ExportSettingsContent(int inputSampleRate,
                         std::function<void(std::optional<ExportSettings>)> done)
@@ -171,6 +173,8 @@ public:
     setupCombo(bitrateBox, bitrateLabel, "Bitrate (kbps)",
                {"64", "96", "128", "160", "192", "256", "320"}, 5);
     setupCombo(channelsBox, channelsLabel, "Channels", {"Mono", "Stereo"}, 1);
+    formatBox.addListener(this);
+    updateBitrateVisibility();
 
     addAndMakeVisible(cancelButton);
     addAndMakeVisible(exportButton);
@@ -183,6 +187,7 @@ public:
   ~ExportSettingsContent() override {
     cancelButton.removeListener(this);
     exportButton.removeListener(this);
+    formatBox.removeListener(this);
   }
 
   void paint(juce::Graphics &g) override {
@@ -201,8 +206,10 @@ public:
     area.removeFromTop(6);
     layoutRow(area.removeFromTop(rowH), bitDepthLabel, bitDepthBox);
     area.removeFromTop(6);
-    layoutRow(area.removeFromTop(rowH), bitrateLabel, bitrateBox);
-    area.removeFromTop(6);
+    if (bitrateLabel.isVisible()) {
+      layoutRow(area.removeFromTop(rowH), bitrateLabel, bitrateBox);
+      area.removeFromTop(6);
+    }
     layoutRow(area.removeFromTop(rowH), channelsLabel, channelsBox);
 
     area.removeFromTop(12);
@@ -264,6 +271,19 @@ private:
       closeWith(getSettings());
     else if (button == &cancelButton)
       closeWith(std::nullopt);
+  }
+
+  void comboBoxChanged(juce::ComboBox *comboBoxThatHasChanged) override {
+    if (comboBoxThatHasChanged == &formatBox) {
+      updateBitrateVisibility();
+      resized();
+    }
+  }
+
+  void updateBitrateVisibility() {
+    const bool showBitrate = (formatBox.getSelectedId() == 4); // OGG only
+    bitrateLabel.setVisible(showBitrate);
+    bitrateBox.setVisible(showBitrate);
   }
 
   std::function<void(std::optional<ExportSettings>)> onDone;

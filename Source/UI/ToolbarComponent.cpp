@@ -6,6 +6,11 @@
 #include "../Utils/UI/TimecodeFont.h"
 #include "BinaryData.h"
 
+namespace {
+constexpr bool kBypassHNSepToolbarMode = true;
+constexpr bool kBypassStretchToolbarMode = true;
+} // namespace
+
 ToolbarComponent::ToolbarComponent()
 {
     // Load SVG icons with white tint
@@ -99,6 +104,12 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(drawModeButton);
     addAndMakeVisible(splitModeButton);
     addAndMakeVisible(hnsepModeButton);
+    if (kBypassHNSepToolbarMode)
+        hnsepModeButton.setVisible(false);
+#if HACHITUNE_ENABLE_STRETCH
+    if (kBypassStretchToolbarMode)
+        stretchModeButton.setVisible(false);
+#endif
     addAndMakeVisible(followButton);
     addAndMakeVisible(loopButton);
     addAndMakeVisible(parametersButton);
@@ -135,20 +146,7 @@ ToolbarComponent::ToolbarComponent()
     rippleToggleButton.addListener(this);
 #endif
 
-    // Set localized text (tooltips for icon buttons)
-    selectModeButton.setTooltip(TR("toolbar.select"));
-#if HACHITUNE_ENABLE_STRETCH
-    stretchModeButton.setTooltip(TR("toolbar.stretch"));
-#endif
-    drawModeButton.setTooltip(TR("toolbar.draw"));
-    splitModeButton.setTooltip(TR("toolbar.split"));
-    hnsepModeButton.setTooltip(TR("toolbar.hnsep"));
-    followButton.setTooltip(TR("toolbar.follow"));
-    loopButton.setTooltip(TR("toolbar.loop"));
-    parametersButton.setTooltip(TR("panel.parameters"));
-#if HACHITUNE_ENABLE_STRETCH
-    rippleToggleButton.setTooltip(TR("toolbar.stretch_absorb"));
-#endif
+    refreshTooltips();
     reanalyzeButton.setButtonText(TR("toolbar.reanalyze"));
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);
 
@@ -244,11 +242,18 @@ void ToolbarComponent::paint(juce::Graphics &g)
         // Draw a subtle divider between edit tools and playback tools (standalone only)
         if (!pluginMode)
         {
-            // Divider after the last edit tool button (hnsep), before follow (or ripple toggle)
-            int dividerAfterEditTools = hnsepModeButton.getRight() + 1;
+            int dividerAfterEditTools = selectModeButton.getRight() + 1;
+#if HACHITUNE_ENABLE_STRETCH
+            if (stretchModeButton.isVisible())
+                dividerAfterEditTools = stretchModeButton.getRight() + 1;
+#endif
+            dividerAfterEditTools = juce::jmax(dividerAfterEditTools, drawModeButton.getRight() + 1);
+            dividerAfterEditTools = juce::jmax(dividerAfterEditTools, splitModeButton.getRight() + 1);
+            if (hnsepModeButton.isVisible())
+                dividerAfterEditTools = juce::jmax(dividerAfterEditTools, hnsepModeButton.getRight() + 1);
 #if HACHITUNE_ENABLE_STRETCH
             if (rippleToggleButton.isVisible())
-                dividerAfterEditTools = rippleToggleButton.getRight() + 1;
+                dividerAfterEditTools = juce::jmax(dividerAfterEditTools, rippleToggleButton.getRight() + 1);
 #endif
             if (followButton.isVisible() && dividerAfterEditTools > toolBounds.getX() && dividerAfterEditTools < toolBounds.getRight())
             {
@@ -263,7 +268,8 @@ void ToolbarComponent::paint(juce::Graphics &g)
         // Draw divider between edit tools and ripple toggle (when visible)
         if (rippleToggleButton.isVisible())
         {
-            int dividerX = hnsepModeButton.getRight() + 1;
+            int dividerX = hnsepModeButton.isVisible() ? hnsepModeButton.getRight() + 1
+                                                       : splitModeButton.getRight() + 1;
             if (dividerX > toolBounds.getX() && dividerX < toolBounds.getRight())
             {
                 g.setColour(APP_COLOR_BORDER.withAlpha(0.35f));
@@ -412,11 +418,16 @@ void ToolbarComponent::resized()
     // Tool container measurements (need these to center time between left section and tools)
     const int toolButtonSize = 32;
     const int toolContainerPadding = 5;
+    int numEditTools = 3; // select, draw, split
 #if HACHITUNE_ENABLE_STRETCH
-    const int numEditTools = 5; // select, stretch, draw, split, hnsep
+    if (!kBypassStretchToolbarMode)
+        ++numEditTools; // stretch
+#endif
+    if (!kBypassHNSepToolbarMode)
+        ++numEditTools; // hnsep
+#if HACHITUNE_ENABLE_STRETCH
     const bool showRippleToggle = rippleToggleButton.isVisible();
 #else
-    const int numEditTools = 4; // select, draw, split, hnsep
     const bool showRippleToggle = false;
 #endif
     const int numRippleToggle = showRippleToggle ? 1 : 0;
@@ -447,19 +458,21 @@ void ToolbarComponent::resized()
     int toolBtnY = toolArea.getY();
     int toolX = toolArea.getX();
 
-    // Edit tools group: select, stretch, draw, split, hnsep
-    selectModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
+    // Edit tools group: select, [stretch], draw, split, [hnsep]
+    auto placeEditTool = [&](ToolButton &btn)
+    {
+        if (!btn.isVisible())
+            return;
+        btn.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
+        toolX += toolButtonSize;
+    };
+    placeEditTool(selectModeButton);
 #if HACHITUNE_ENABLE_STRETCH
-    stretchModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
+    placeEditTool(stretchModeButton);
 #endif
-    drawModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
-    splitModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
-    hnsepModeButton.setBounds(toolX, toolBtnY, toolButtonSize, toolBtnH);
-    toolX += toolButtonSize;
+    placeEditTool(drawModeButton);
+    placeEditTool(splitModeButton);
+    placeEditTool(hnsepModeButton);
 
 #if HACHITUNE_ENABLE_STRETCH
     // Ripple mode toggle (visible only in Stretch mode)
@@ -560,7 +573,7 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     {
         isRippleStretchMode = !isRippleStretchMode;
         rippleToggleButton.setImages(isRippleStretchMode ? rippleDrawable.get() : absorbDrawable.get());
-        rippleToggleButton.setTooltip(isRippleStretchMode ? TR("toolbar.stretch_ripple") : TR("toolbar.stretch_absorb"));
+        refreshTooltips();
         if (onRippleModeToggled)
             onRippleModeToggled(isRippleStretchMode);
     }
@@ -577,6 +590,7 @@ void ToolbarComponent::setPlaying(bool playing)
 {
     isPlaying = playing;
     playButton.setImages(playing ? pauseDrawable.get() : playDrawable.get());
+    refreshTooltips();
 }
 
 void ToolbarComponent::setCurrentTime(double time)
@@ -593,18 +607,26 @@ void ToolbarComponent::setTotalTime(double time)
 
 void ToolbarComponent::setEditMode(EditMode mode)
 {
-    currentEditModeInt = static_cast<int>(mode);
-    selectModeButton.setActive(mode == EditMode::Select);
+    EditMode effective = mode;
 #if HACHITUNE_ENABLE_STRETCH
-    stretchModeButton.setActive(mode == EditMode::Stretch);
+    if (kBypassStretchToolbarMode && mode == EditMode::Stretch)
+        effective = EditMode::Select;
 #endif
-    drawModeButton.setActive(mode == EditMode::Draw);
-    splitModeButton.setActive(mode == EditMode::Split);
-    hnsepModeButton.setActive(mode == EditMode::Parameter);
+    if (kBypassHNSepToolbarMode && mode == EditMode::Parameter)
+        effective = EditMode::Select;
+
+    currentEditModeInt = static_cast<int>(effective);
+    selectModeButton.setActive(effective == EditMode::Select);
+#if HACHITUNE_ENABLE_STRETCH
+    stretchModeButton.setActive(effective == EditMode::Stretch);
+#endif
+    drawModeButton.setActive(effective == EditMode::Draw);
+    splitModeButton.setActive(effective == EditMode::Split);
+    hnsepModeButton.setActive(effective == EditMode::Parameter);
 
 #if HACHITUNE_ENABLE_STRETCH
-    // Show ripple toggle only in Stretch mode
-    rippleToggleButton.setVisible(mode == EditMode::Stretch);
+    rippleToggleButton.setVisible(!kBypassStretchToolbarMode &&
+                                  effective == EditMode::Stretch);
 #endif
     resized();
 }
@@ -632,7 +654,7 @@ void ToolbarComponent::setRippleMode(bool ripple)
 {
     isRippleStretchMode = ripple;
     rippleToggleButton.setImages(ripple ? rippleDrawable.get() : absorbDrawable.get());
-    rippleToggleButton.setTooltip(ripple ? TR("toolbar.stretch_ripple") : TR("toolbar.stretch_absorb"));
+    refreshTooltips();
 }
 #endif
 
@@ -696,6 +718,49 @@ juce::String ToolbarComponent::formatTime(double seconds)
     return juce::String::formatted("%02d:%02d.%03d", mins, secs, ms);
 }
 
+void ToolbarComponent::refreshTooltips()
+{
+    selectModeButton.setTooltip(TR("toolbar.select"));
+#if HACHITUNE_ENABLE_STRETCH
+    if (stretchModeButton.isVisible())
+        stretchModeButton.setTooltip(TR("toolbar.stretch"));
+    else
+        stretchModeButton.setTooltip({});
+#endif
+    drawModeButton.setTooltip(TR("toolbar.draw") + " (D)");
+    splitModeButton.setTooltip(TR("toolbar.split") + " (B)");
+    if (hnsepModeButton.isVisible())
+        hnsepModeButton.setTooltip(TR("toolbar.hnsep"));
+    else
+        hnsepModeButton.setTooltip({});
+
+    followButton.setTooltip(TR("toolbar.follow"));
+    loopButton.setTooltip(TR("toolbar.loop"));
+    parametersButton.setTooltip(TR("panel.parameters"));
+
+#if HACHITUNE_ENABLE_STRETCH
+    if (rippleToggleButton.isVisible())
+        rippleToggleButton.setTooltip(isRippleStretchMode ? TR("toolbar.stretch_ripple")
+                                                         : TR("toolbar.stretch_absorb"));
+#endif
+
+    if (!pluginMode)
+    {
+        goToStartButton.setTooltip(TR("command.go_to_start") + " (Home)");
+        goToEndButton.setTooltip(TR("command.go_to_end") + " (End)");
+        playButton.setTooltip(isPlaying ? (TR("toolbar.pause") + " (Space)")
+                                      : (TR("toolbar.play") + " (Space)"));
+        stopButton.setTooltip(TR("toolbar.stop") + " (Esc)");
+    }
+    else
+    {
+        goToStartButton.setTooltip({});
+        goToEndButton.setTooltip({});
+        playButton.setTooltip({});
+        stopButton.setTooltip({});
+    }
+}
+
 void ToolbarComponent::mouseDown(const juce::MouseEvent &e)
 {
 #if JUCE_MAC
@@ -736,6 +801,7 @@ void ToolbarComponent::setPluginMode(bool isPlugin)
     followButton.setVisible(!isPlugin);
     loopButton.setVisible(!isPlugin);
 
+    refreshTooltips();
     resized();
 }
 

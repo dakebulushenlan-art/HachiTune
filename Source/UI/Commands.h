@@ -38,6 +38,7 @@ namespace CommandIDs
         // Edit Mode Commands (0x2040-0x204F)
         toggleDrawMode      = 0x2040,
         exitDrawMode        = 0x2041,
+        toggleSplitMode     = 0x2042,
         
         // Pitch Tool Commands (0x2050-0x205F)
         fourierFilter       = 0x2050

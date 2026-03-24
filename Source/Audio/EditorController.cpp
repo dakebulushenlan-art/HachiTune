@@ -852,53 +852,12 @@ void EditorController::analyzeAudio(
   }
 
   // -----------------------------------------------------------------------
-  // Harmonic-noise separation (hnsep): split waveform into harmonic + noise
-  // components so that voicing/breath/tension adjustments can be applied
-  // per-note during synthesis.
+  // Default bypass for harmonic-noise separation (hnsep).
+  // Keep buffers empty so synthesis follows the non-hnsep path.
   // -----------------------------------------------------------------------
-  if (hnsepModel && hnsepModel->isLoaded() &&
-      audioData.waveform.getNumSamples() > 0)
-  {
-    onProgress(0.70, "Separating harmonic/noise...");
-    const float *samples = audioData.waveform.getReadPointer(0);
-    const int numSamples = audioData.waveform.getNumSamples();
-
-    std::vector<float> harmonicVec;
-    std::vector<float> noiseVec;
-
-    bool ok = hnsepModel->separateWithProgress(
-        samples, numSamples, harmonicVec, noiseVec,
-        [&onProgress](double p)
-        {
-          // Map hnsep progress 0..1 into overall progress 0.70..0.75
-          onProgress(0.70 + p * 0.05, "Separating harmonic/noise...");
-        });
-
-    if (ok)
-    {
-      // Store results as mono AudioBuffers in audioData
-      audioData.harmonicWaveform.setSize(1, numSamples);
-      juce::FloatVectorOperations::copy(
-          audioData.harmonicWaveform.getWritePointer(0),
-          harmonicVec.data(), numSamples);
-
-      audioData.noiseWaveform.setSize(1, numSamples);
-      juce::FloatVectorOperations::copy(
-          audioData.noiseWaveform.getWritePointer(0),
-          noiseVec.data(), numSamples);
-
-      LOG("hnsep separation complete: " + juce::String(numSamples) +
-          " samples separated into harmonic + noise");
-    }
-    else
-    {
-      LOG("hnsep separation failed — harmonic/noise buffers left empty");
-    }
-  }
-  else if (hnsepModel && !hnsepModel->isLoaded())
-  {
-    LOG("hnsep model not loaded — skipping harmonic-noise separation");
-  }
+  audioData.harmonicWaveform.setSize(0, 0);
+  audioData.noiseWaveform.setSize(0, 0);
+  LOG("hnsep separation bypassed by default");
 
   onProgress(0.75, TR("progress.loading_vocoder"));
   auto modelPath = PlatformPaths::getModelFile("pc_nsf_hifigan.onnx");

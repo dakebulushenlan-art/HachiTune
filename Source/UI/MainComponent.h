@@ -182,6 +182,7 @@ private:
   ParameterPanel parameterPanel;
 
   std::unique_ptr<SettingsOverlay> settingsOverlay;
+  std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
   std::unique_ptr<juce::FileChooser> fileChooser;
   juce::StringArray recentFiles;

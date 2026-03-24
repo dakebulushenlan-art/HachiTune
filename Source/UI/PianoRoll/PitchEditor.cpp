@@ -51,7 +51,8 @@ void PitchEditor::startNoteDrag(Note *note, float y)
         globalFrame < static_cast<int>(audioData.deltaPitch.size()))
       delta[i] = audioData.deltaPitch[static_cast<size_t>(globalFrame)];
   }
-  note->setDeltaPitch(std::move(delta));
+  note->setDeltaPitch(delta);
+  note->setOriginalDeltaPitch(std::move(delta));
 
   isDragging = true;
   draggedNote = note;
@@ -256,20 +257,35 @@ void PitchEditor::endDrawing()
     maxFrame = std::max(maxFrame, e.idx);
   }
 
-  // Clear deltaPitch for notes in edited range
+  // Persist drawn global delta back into all overlapping notes so later
+  // note moves/rebuilds keep the edited pitch shape.
   if (project && minFrame <= maxFrame)
   {
     const int maxFrameExclusive = maxFrame + 1;
+    auto &audioData = project->getAudioData();
     auto &notes = project->getNotes();
     for (auto &note : notes)
     {
       if (note.getEndFrame() > minFrame &&
           note.getStartFrame() < maxFrameExclusive)
       {
-        if (note.hasDeltaPitch())
+        const int noteStart = note.getStartFrame();
+        const int noteEnd = note.getEndFrame();
+        const int noteFrames = noteEnd - noteStart;
+        if (noteFrames <= 0)
+          continue;
+
+        std::vector<float> noteDelta(static_cast<size_t>(noteFrames), 0.0f);
+        for (int i = 0; i < noteFrames; ++i)
         {
-          note.setDeltaPitch(std::vector<float>());
+          int globalFrame = noteStart + i;
+          if (globalFrame >= 0 &&
+              globalFrame < static_cast<int>(audioData.deltaPitch.size()))
+            noteDelta[static_cast<size_t>(i)] =
+                audioData.deltaPitch[static_cast<size_t>(globalFrame)];
         }
+        note.setDeltaPitch(noteDelta);
+        note.setOriginalDeltaPitch(std::move(noteDelta));
       }
     }
     project->setF0DirtyRange(minFrame, maxFrameExclusive);
@@ -353,9 +369,12 @@ void PitchEditor::applyPitchPoint(int frameIndex, int midiCents)
       for (auto &note : notes)
       {
         if (note.getStartFrame() <= idx && note.getEndFrame() > idx &&
-            note.hasDeltaPitch())
+            (note.hasDeltaPitch() || note.hasOriginalDeltaPitch()))
         {
-          note.setDeltaPitch(std::vector<float>());
+          if (note.hasDeltaPitch())
+            note.setDeltaPitch(std::vector<float>());
+          if (note.hasOriginalDeltaPitch())
+            note.setOriginalDeltaPitch(std::vector<float>());
           break;
         }
       }
@@ -532,7 +551,8 @@ void PitchEditor::startMultiNoteDrag(const std::vector<Note *> &notes,
           globalFrame < static_cast<int>(audioData.deltaPitch.size()))
         delta[i] = audioData.deltaPitch[static_cast<size_t>(globalFrame)];
     }
-    note->setDeltaPitch(std::move(delta));
+    note->setDeltaPitch(delta);
+    note->setOriginalDeltaPitch(std::move(delta));
 
     // Save original F0 values
     std::vector<float> f0Values;
